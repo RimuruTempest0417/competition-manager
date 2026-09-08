@@ -1,13 +1,13 @@
 {
   "name": "competition-manager",
-  "version": "1.0.0",
-  "description": "",
+  "version": "1.3.0",
+  "description": "比賽管理系統正式版",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
   "keywords": [],
-  "author": "",
+  "author": "Rimuru",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {

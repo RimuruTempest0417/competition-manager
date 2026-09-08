@@ -3,7 +3,7 @@ const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware 設定
 app.use(cors());
@@ -66,5 +66,5 @@ app.delete('/api/competitions/:id', (req, res) => {
 
 // 啟動伺服器
 app.listen(PORT, () => {
-    console.log(`伺服器運行中：http://localhost:${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
