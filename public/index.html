@@ -5,7 +5,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>比賽管理系統</title>
-    <!-- 引入 Tailwind CSS 快速美化 UI -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
@@ -39,9 +38,10 @@
                         class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽時間 <span
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽時間 (24小時制) <span
                             class="text-slate-400 text-xs">(選填)</span></label>
-                    <input type="time" id="time"
+                    <!-- 文字輸入框：允許自由打字輸入 24 小時制時間 -->
+                    <input type="text" id="time" placeholder="例如 14:30 或 09:05" maxlength="5"
                         class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div class="md:col-span-2">
@@ -57,20 +57,16 @@
             </form>
         </section>
 
-        <!-- 比賽列表區塊（包含搜尋與篩選） -->
+        <!-- 比賽列表區塊 -->
         <section class="space-y-4">
             <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <h2 class="text-xl font-bold text-slate-700">比賽列表</h2>
 
-                <!-- 搜尋與篩選列 -->
                 <div class="flex flex-col sm:flex-row gap-2">
-                    <!-- 關鍵字搜尋框 -->
                     <input type="text" id="searchInput" placeholder="🔍 搜尋比賽名稱、地點或備註..."
                         class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full sm:w-64">
-                    <!-- 日期篩選器 -->
                     <input type="date" id="dateFilterInput"
                         class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <!-- 重置篩選按鈕 -->
                     <button id="resetFilterBtn"
                         class="text-xs bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-300 transition">
                         清除篩選
@@ -78,15 +74,13 @@
                 </div>
             </div>
 
-            <div id="competitionList" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- 資料由 JavaScript 動態載入 -->
-            </div>
+            <div id="competitionList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
         </section>
     </div>
 
     <script>
         const API_URL = 'http://localhost:3000/api/competitions';
-        let allCompetitions = []; // 用來存放從後端取得的所有比賽原始資料
+        let allCompetitions = [];
 
         // 1. 從後端抓取所有比賽資料
         async function fetchCompetitions() {
@@ -106,9 +100,14 @@
             }
 
             competitions.forEach(item => {
-                const dateTimeStr = (item.date || item.time)
-                    ? `${item.date} ${item.time}`.trim()
-                    : '未提供';
+                let dateTimeStr = '未提供';
+                if (item.date && item.time) {
+                    dateTimeStr = `${item.date} ${item.time}`;
+                } else if (item.date) {
+                    dateTimeStr = item.date;
+                } else if (item.time) {
+                    dateTimeStr = item.time;
+                }
 
                 const locationStr = item.location ? item.location : '未提供';
 
@@ -135,13 +134,11 @@
             const selectedDate = document.getElementById('dateFilterInput').value;
 
             const filtered = allCompetitions.filter(item => {
-                // 關鍵字比對（名稱、地點、備註）
                 const matchesKeyword =
                     item.name.toLowerCase().includes(keyword) ||
                     (item.location && item.location.toLowerCase().includes(keyword)) ||
                     (item.description && item.description.toLowerCase().includes(keyword));
 
-                // 日期比對
                 const matchesDate = !selectedDate || item.date === selectedDate;
 
                 return matchesKeyword && matchesDate;
@@ -150,11 +147,9 @@
             renderCompetitions(filtered);
         }
 
-        // 監聽搜尋框與日期選擇器的輸入事件 (即時過濾)
         document.getElementById('searchInput').addEventListener('input', filterCompetitions);
         document.getElementById('dateFilterInput').addEventListener('change', filterCompetitions);
 
-        // 重置篩選
         document.getElementById('resetFilterBtn').addEventListener('click', () => {
             document.getElementById('searchInput').value = '';
             document.getElementById('dateFilterInput').value = '';
@@ -173,15 +168,26 @@
             }
         }
 
-        // 5. 表單送出事件
+        // 5. 表單送出事件（包含 24 小時制格式驗證）
         document.getElementById('competitionForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+
+            const timeVal = document.getElementById('time').value.trim();
+
+            // 如果有填寫時間，驗證是否符合 24 小時制格式 (HH:mm)
+            if (timeVal !== '') {
+                const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+                if (!timeRegex.test(timeVal)) {
+                    alert('請輸入正確的 24 小時制時間格式！例如：14:30 或 09:05');
+                    return;
+                }
+            }
 
             const payload = {
                 name: document.getElementById('name').value,
                 location: document.getElementById('location').value,
                 date: document.getElementById('date').value,
-                time: document.getElementById('time').value,
+                time: timeVal,
                 description: document.getElementById('description').value
             };
 
