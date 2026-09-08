@@ -36,16 +36,17 @@ app.get('/api/competitions', (req, res) => {
     });
 });
 
-// API 2: 發佈新比賽
+// API 2: 發佈新比賽 (已修改：地點、日期、時間改為選填)
 app.post('/api/competitions', (req, res) => {
     const { name, date, time, location, description } = req.body;
 
-    if (!name || !date || !time || !location) {
-        return res.status(400).json({ error: '請填寫所有必填欄位！' });
+    // 只保留比賽名稱為必填
+    if (!name) {
+        return res.status(400).json({ error: '請填寫比賽名稱！' });
     }
 
     const sql = `INSERT INTO competitions (name, date, time, location, description) VALUES (?, ?, ?, ?, ?)`;
-    db.run(sql, [name, date, time, location, description || ''], function (err) {
+    db.run(sql, [name, date || '', time || '', location || '', description || ''], function (err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ id: this.lastID, message: '比賽發佈成功！' });
     });

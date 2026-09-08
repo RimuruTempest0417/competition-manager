@@ -21,27 +21,32 @@
             <h2 class="text-xl font-bold text-slate-700 mb-4">發佈新比賽</h2>
             <form id="competitionForm" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽名稱 *</label>
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽名稱 <span
+                            class="text-red-500">*</span></label>
                     <input type="text" id="name" required
                         class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽地點 *</label>
-                    <input type="text" id="location" required
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽地點 <span
+                            class="text-slate-400 text-xs">(選填)</span></label>
+                    <input type="text" id="location"
                         class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽日期 *</label>
-                    <input type="date" id="date" required
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽日期 <span
+                            class="text-slate-400 text-xs">(選填)</span></label>
+                    <input type="date" id="date"
                         class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽時間 *</label>
-                    <input type="time" id="time" required
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽時間 <span
+                            class="text-slate-400 text-xs">(選填)</span></label>
+                    <input type="time" id="time"
                         class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div class="md:col-span-2">
-                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽簡介 / 備註</label>
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽簡介 / 備註 <span
+                            class="text-slate-400 text-xs">(選填)</span></label>
                     <textarea id="description" rows="2"
                         class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
@@ -56,7 +61,7 @@
         <section>
             <h2 class="text-xl font-bold text-slate-700 mb-4">即將到來的比賽</h2>
             <div id="competitionList" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- 資料會由下方 JavaScript 動態載入至此 -->
+                <!-- 資料由 JavaScript 動態載入 -->
             </div>
         </section>
     </div>
@@ -64,7 +69,7 @@
     <script>
         const API_URL = 'http://localhost:3000/api/competitions';
 
-        // 1. 從後端抓取所有比賽資料並呈現於畫面上
+        // 1. 載入比賽列表
         async function fetchCompetitions() {
             const res = await fetch(API_URL);
             const competitions = await res.json();
@@ -77,18 +82,24 @@
             }
 
             competitions.forEach(item => {
+                // 判斷日期與時間是否填寫
+                const dateTimeStr = (item.date || item.time)
+                    ? `${item.date} ${item.time}`.trim()
+                    : '未提供';
+
+                const locationStr = item.location ? item.location : '未提供';
+
                 const card = document.createElement('div');
                 card.className = 'bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-2 relative group';
                 card.innerHTML = `
           <div class="flex justify-between items-start">
             <h3 class="text-lg font-bold text-slate-800">${item.name}</h3>
-            <!-- 刪除按鈕 -->
             <button onclick="deleteCompetition(${item.id})" class="text-red-500 hover:text-red-700 text-sm font-medium px-2 py-1 rounded bg-red-50 hover:bg-red-100 transition">
               🗑️ 刪除
             </button>
           </div>
-          <p class="text-sm text-slate-600">📅 <b>日期：</b>${item.date} ${item.time}</p>
-          <p class="text-sm text-slate-600">📍 <b>地點：</b>${item.location}</p>
+          <p class="text-sm text-slate-600">📅 <b>日期時間：</b>${dateTimeStr}</p>
+          <p class="text-sm text-slate-600">📍 <b>地點：</b>${locationStr}</p>
           ${item.description ? `<p class="text-sm text-slate-500 pt-2 border-t border-slate-100">${item.description}</p>` : ''}
         `;
                 listElement.appendChild(card);
@@ -99,20 +110,17 @@
         async function deleteCompetition(id) {
             if (!confirm('確定要刪除這筆比賽資訊嗎？')) return;
 
-            const res = await fetch(`${API_URL}/${id}`, {
-                method: 'DELETE'
-            });
-
+            const res = await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
             if (res.ok) {
-                fetchCompetitions(); // 刪除成功後重新整理列表
+                fetchCompetitions();
             } else {
                 alert('刪除失敗！');
             }
         }
 
-        // 3. 發佈比賽表單送出事件
+        // 3. 表單送出事件
         document.getElementById('competitionForm').addEventListener('submit', async (e) => {
-            e.preventDefault(); // 防止網頁重新整理
+            e.preventDefault();
 
             const payload = {
                 name: document.getElementById('name').value,
@@ -129,14 +137,13 @@
             });
 
             if (res.ok) {
-                document.getElementById('competitionForm').reset(); // 清空表單
-                fetchCompetitions(); // 重新整理比賽列表
+                document.getElementById('competitionForm').reset();
+                fetchCompetitions();
             } else {
                 alert('發佈失敗，請檢查欄位！');
             }
         });
 
-        // 頁面初次載入時自動執行一次
         fetchCompetitions();
     </script>
 </body>
