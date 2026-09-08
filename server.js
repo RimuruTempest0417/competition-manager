@@ -51,6 +51,18 @@ app.post('/api/competitions', (req, res) => {
     });
 });
 
+// API 3: 刪除比賽 (新增此段)
+app.delete('/api/competitions/:id', (req, res) => {
+    const { id } = req.params;
+    const sql = 'DELETE FROM competitions WHERE id = ?';
+
+    db.run(sql, id, function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (this.changes === 0) return res.status(404).json({ error: '找不到該比賽資料' });
+        res.json({ message: '比賽已成功刪除！' });
+    });
+});
+
 // 啟動伺服器
 app.listen(PORT, () => {
     console.log(`伺服器運行中：http://localhost:${PORT}`);
