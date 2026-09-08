@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>比賽管理系統</title>
+    <!-- 引入 Tailwind CSS 快速美化 UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-slate-100 font-sans min-h-screen p-6">
+    <div class="max-w-4xl mx-auto space-y-8">
+        <header class="text-center">
+            <h1 class="text-3xl font-bold text-slate-800">🏆 比賽管理系統</h1>
+            <p class="text-slate-500 mt-2">手動發佈與管理各類賽事資訊</p>
+        </header>
+
+        <!-- 發佈比賽表單 -->
+        <section class="bg-white p-6 rounded-xl shadow-md">
+            <h2 class="text-xl font-bold text-slate-700 mb-4">發佈新比賽</h2>
+            <form id="competitionForm" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽名稱 *</label>
+                    <input type="text" id="name" required
+                        class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽地點 *</label>
+                    <input type="text" id="location" required
+                        class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽日期 *</label>
+                    <input type="date" id="date" required
+                        class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽時間 *</label>
+                    <input type="time" id="time" required
+                        class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-slate-600 mb-1">比賽簡介 / 備註</label>
+                    <textarea id="description" rows="2"
+                        class="w-full border border-slate-300 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+                <div class="md:col-span-2">
+                    <button type="submit"
+                        class="w-full bg-blue-600 text-white font-medium py-2 rounded-lg hover:bg-blue-700 transition">發佈比賽</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- 比賽列表顯示 -->
+        <section>
+            <h2 class="text-xl font-bold text-slate-700 mb-4">即將到來的比賽</h2>
+            <div id="competitionList" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- 資料會由 JavaScript 動態載入至此 -->
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/api/competitions';
+
+        // 載入比賽列表
+        async function fetchCompetitions() {
+            const res = await fetch(API_URL);
+            const competitions = await res.json();
+            const listElement = document.getElementById('competitionList');
+            listElement.innerHTML = '';
+
+            if (competitions.length === 0) {
+                listElement.innerHTML = `<p class="text-slate-400 col-span-2 text-center py-4">目前尚無比賽資訊，請從上方表單新增。</p>`;
+                return;
+            }
+
+            competitions.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'bg-white p-5 rounded-xl shadow-sm border border-slate-200 space-y-2';
+                card.innerHTML = `
+          <h3 class="text-lg font-bold text-slate-800">${item.name}</h3>
+          <p class="text-sm text-slate-600">📅 <b>日期：</b>${item.date} ${item.time}</p>
+          <p class="text-sm text-slate-600">📍 <b>地點：</b>${item.location}</p>
+          ${item.description ? `<p class="text-sm text-slate-500 pt-2 border-t border-slate-100">${item.description}</p>` : ''}
+        `;
+                listElement.appendChild(card);
+            });
+        }
+
+        // 發佈比賽表單送出事件
+        document.getElementById('competitionForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const payload = {
+                name: document.getElementById('name').value,
+                location: document.getElementById('location').value,
+                date: document.getElementById('date').value,
+                time: document.getElementById('time').value,
+                description: document.getElementById('description').value
+            };
+
+            const res = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                document.getElementById('competitionForm').reset();
+                fetchCompetitions(); // 重新整理列表
+            } else {
+                alert('發佈失敗，請檢查欄位！');
+            }
+        });
+
+        // 頁面初始化載入
+        fetchCompetitions();
+    </script>
+</body>
+
+</html>
