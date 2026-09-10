@@ -79,14 +79,19 @@
     </div>
 
     <script>
-        const API_URL = 'https://kkniljvshbsaxwfggsai.supabase.co';
+        // 修正重點：改為相對路徑，讓瀏覽器自動指走向你的 Express 後端 API
+        const API_URL = '/api/competitions';
         let allCompetitions = [];
 
         // 1. 從後端抓取所有比賽資料
         async function fetchCompetitions() {
-            const res = await fetch(API_URL);
-            allCompetitions = await res.json();
-            renderCompetitions(allCompetitions);
+            try {
+                const res = await fetch(API_URL);
+                allCompetitions = await res.json();
+                renderCompetitions(allCompetitions);
+            } catch (err) {
+                console.error('無法載入比賽列表：', err);
+            }
         }
 
         // 2. 渲染比賽卡片至畫面上
@@ -94,7 +99,7 @@
             const listElement = document.getElementById('competitionList');
             listElement.innerHTML = '';
 
-            if (competitions.length === 0) {
+            if (!Array.isArray(competitions) || competitions.length === 0) {
                 listElement.innerHTML = `<p class="text-slate-400 col-span-2 text-center py-4">沒有找到符合條件的比賽資訊。</p>`;
                 return;
             }
@@ -174,7 +179,6 @@
 
             const timeVal = document.getElementById('time').value.trim();
 
-            // 如果有填寫時間，驗證是否符合 24 小時制格式 (HH:mm)
             if (timeVal !== '') {
                 const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
                 if (!timeRegex.test(timeVal)) {
