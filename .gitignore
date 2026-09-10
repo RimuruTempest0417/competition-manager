@@ -1,4 +1,3 @@
-node_modules/
 *.db
 .DS_Store
 # 忽略環境變數敏感檔案
