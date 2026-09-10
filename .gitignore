@@ -1,3 +1,13 @@
 node_modules/
 *.db
 .DS_Store
+# 忽略環境變數敏感檔案
+.env
+.env.local
+.env.*.local
+
+# 忽略 Node 模組資料夾
+node_modules/
+
+# 忽略日誌檔
+*.log
