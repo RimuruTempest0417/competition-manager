@@ -65,12 +65,13 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
-// 2. 取得所有比賽清單
+// 2. 取得所有公開比賽清單 (免驗證)
 app.get('/api/competitions', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('competitions')
             .select('*')
+            .eq('is_deleted', false)
             .order('id', { ascending: false });
 
         if (error) throw error;
@@ -80,9 +81,40 @@ app.get('/api/competitions', async (req, res) => {
     }
 });
 
-// 3. 新增比賽 (管理員權限)
-// POST /api/competitions - 發佈新比賽
-app.post('/api/competitions', async (req, res) => {
+// 3. 取得所有已軟刪除的比賽列表 (特定路由須置於通用 :id 之前)
+app.get('/api/competitions/deleted', verifySuperAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('competitions')
+            .select('*')
+            .eq('is_deleted', true)
+            .order('id', { ascending: false });
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 4. 復原已刪除的比賽 (特定路由須置於通用 :id 之前)
+app.put('/api/competitions/:id/restore', verifySuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const { error } = await supabase
+            .from('competitions')
+            .update({ is_deleted: false })
+            .eq('id', id);
+
+        if (error) throw error;
+        res.json({ message: '比賽已成功復原！' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 5. 新增比賽 (已補上 verifyAnyAdmin)
+app.post('/api/competitions', verifyAnyAdmin, async (req, res) => {
     const { name, location, date, time, description, is_registration_open } = req.body;
 
     try {
@@ -111,9 +143,8 @@ app.post('/api/competitions', async (req, res) => {
     }
 });
 
-
-// PUT /api/competitions/:id - 更新比賽資料
-app.put('/api/competitions/:id', async (req, res) => {
+// 6. 更新比賽資料 (已補上 verifyAnyAdmin)
+app.put('/api/competitions/:id', verifyAnyAdmin, async (req, res) => {
     const { id } = req.params;
     const { name, location, date, time, description, is_registration_open } = req.body;
 
@@ -126,7 +157,7 @@ app.put('/api/competitions/:id', async (req, res) => {
                 date: date || null,
                 time: time || '',
                 description: description || '',
-                is_registration_open: !!is_registration_open // 轉為布林值 true/false
+                is_registration_open: !!is_registration_open
             })
             .eq('id', id)
             .select();
@@ -143,24 +174,23 @@ app.put('/api/competitions/:id', async (req, res) => {
     }
 });
 
-// 5. 刪除比賽 (管理員權限)
+// 7. 刪除比賽 (軟刪除)
 app.delete('/api/competitions/:id', verifyAnyAdmin, async (req, res) => {
     const { id } = req.params;
-
     try {
         const { error } = await supabase
             .from('competitions')
-            .delete()
+            .update({ is_deleted: true })
             .eq('id', id);
 
         if (error) throw error;
-        res.json({ success: true, message: '比賽已刪除' });
+        res.json({ message: '比賽已移至資源回收桶 (軟刪除成功)' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// 6. 取得所有管理員清單 (超級管理員專屬)
+// 8. 管理員帳號維護 API (超級管理員專屬)
 app.get('/api/admins', verifySuperAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -174,7 +204,6 @@ app.get('/api/admins', verifySuperAdmin, async (req, res) => {
     }
 });
 
-// 7. 新增管理員 (超級管理員專屬)
 app.post('/api/admins', verifySuperAdmin, async (req, res) => {
     const { username, password, role } = req.body;
     if (!username || !password) return res.status(400).json({ error: '請提供帳號與密碼' });
@@ -192,7 +221,6 @@ app.post('/api/admins', verifySuperAdmin, async (req, res) => {
     }
 });
 
-// 8. 刪除管理員 (超級管理員專屬)
 app.delete('/api/admins/:id', verifySuperAdmin, async (req, res) => {
     const { id } = req.params;
 
