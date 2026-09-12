@@ -5,221 +5,308 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>比賽管理系統</title>
-    <!-- Tailwind CSS CDN -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
-<body class="bg-slate-100 min-h-screen pb-12">
+<body class="bg-slate-100 min-h-screen text-slate-800">
 
     <!-- 頂部導覽列 -->
-    <header class="bg-white shadow-sm border-b border-slate-200 mb-8">
+    <header class="bg-white shadow-sm border-b border-slate-200">
         <div class="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
             <div>
-                <h1 class="text-2xl font-bold text-slate-800">🏆 比賽管理系統</h1>
-                <p class="text-sm text-slate-500">比賽資訊發佈與即時查詢</p>
+                <h1 class="text-xl font-bold text-slate-900 flex items-center gap-2">
+                    🏆 比賽管理系統
+                </h1>
+                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊</p>
             </div>
-            <!-- 管理員權限按鈕 -->
-            <div>
-                <button id="adminLoginBtn" onclick="toggleAdminLogin()"
-                    class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium rounded-lg transition">
-                    🔑 管理員登入
+
+            <!-- 身份切換與登入狀態 -->
+            <div class="flex items-center gap-3">
+                <!-- 登入身份標籤 -->
+                <div id="authStatus"
+                    class="text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                    👤 普通訪客 (唯讀)
+                </div>
+
+                <!-- 超級管理員專屬按鈕 -->
+                <button id="adminMgmtBtn" onclick="openAdminModal()"
+                    class="hidden bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-sm font-medium px-3 py-1.5 rounded-lg border border-indigo-200 transition">
+                    ⚙️ 帳號管理
                 </button>
-                <button id="adminLogoutBtn" onclick="logoutAdmin()"
-                    class="hidden px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-sm font-medium rounded-lg transition">
-                    🚪 退出管理員
+
+                <!-- 登入 / 登出 按鈕 -->
+                <button id="authBtn" onclick="toggleAuthAction()"
+                    class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg shadow-sm transition">
+                    管理員登入
                 </button>
             </div>
         </div>
     </header>
 
-    <main class="max-w-4xl mx-auto px-4 space-y-8">
+    <!-- 主要內容區塊 -->
+    <main class="max-w-4xl mx-auto px-4 py-6 space-y-6">
 
-        <!-- 發佈比賽表單（僅管理員可見） -->
-        <section id="adminFormSection" class="hidden bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h2 class="text-xl font-bold text-slate-800 mb-4 pb-2 border-b border-slate-100">➕ 發佈新比賽 (管理員專用)</h2>
+        <!-- 發佈比賽表單 (預設為隱藏，僅管理員可見) -->
+        <div id="createSection" class="hidden bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <h2 class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                ➕ 發佈新比賽
+            </h2>
             <form id="competitionForm" class="space-y-4">
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">比賽名稱 <span
-                            class="text-rose-500">*</span></label>
-                    <input type="text" id="name" required placeholder="請輸入比賽名稱"
-                        class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">比賽名稱 <span
+                            class="text-red-500">*</span></label>
+                    <input type="text" id="name" required placeholder="例如：2026 全國羽球公開賽"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
+
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">比賽地點 (選填)</label>
-                        <input type="text" id="location" placeholder="例如：體育館 A 場"
-                            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽地點 (選填)</label>
+                        <input type="text" id="location" placeholder="例如：台北體育館"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">比賽日期 (選填)</label>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽日期 (選填)</label>
                         <input type="date" id="date"
-                            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">比賽時間 (選填)</label>
-                        <input type="text" id="time" placeholder="HH:mm (例 14:30)"
-                            class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽時間 (24小時制, 選填)</label>
+                        <input type="text" id="time" placeholder="例如 14:30 或 09:05"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                 </div>
+
                 <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">詳細備註 (選填)</label>
-                    <textarea id="description" rows="3" placeholder="補充比賽規則或說明..."
-                        class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">比賽簡介 / 備註 (選填)</label>
+                    <textarea id="description" rows="3" placeholder="請輸入詳細說明或報名連結..."
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
+
                 <button type="submit"
-                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg transition">發佈比賽</button>
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg shadow transition text-sm">
+                    發佈比賽
+                </button>
             </form>
-        </section>
+        </div>
 
-        <!-- 搜尋與篩選列 (所有人可用) -->
-        <section
-            class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 justify-between items-center">
-            <div class="flex-1 w-full flex gap-3">
-                <input type="text" id="searchInput" placeholder="🔍 搜尋比賽名稱、地點或備註..."
-                    class="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
-                <input type="date" id="filterDate"
-                    class="px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
-            </div>
-            <button onclick="resetFilters()"
-                class="w-full md:w-auto px-4 py-2 text-sm text-slate-600 hover:text-slate-900 border border-slate-300 rounded-lg hover:bg-slate-50 transition">清除篩選</button>
-        </section>
+        <!-- 比賽列表區塊 -->
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                <h2 class="text-lg font-bold text-slate-800">📋 比賽列表</h2>
 
-        <!-- 比賽列表 -->
-        <section>
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-xl font-bold text-slate-800">📋 比賽列表</h2>
-                <span id="roleBadge"
-                    class="text-xs px-2.5 py-1 bg-slate-200 text-slate-700 rounded-full font-medium">普通用戶模式 (唯讀)</span>
+                <!-- 搜尋與篩選列 -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <input type="text" id="searchInput" oninput="filterCompetitions()" placeholder="🔍 搜尋比賽名稱、地點或備註..."
+                        class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <input type="date" id="filterDateInput" onchange="filterCompetitions()"
+                        class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button onclick="clearFilter()"
+                        class="text-xs text-slate-500 hover:text-slate-800 px-2 py-1 bg-slate-100 rounded border">清除篩選</button>
+                </div>
             </div>
-            <div id="competitionsList" class="grid grid-cols-1 gap-4">
-                <!-- 卡片動態渲染位置 -->
+
+            <!-- 比賽卡片容器 -->
+            <div id="competitionList" class="space-y-4">
+                <div class="text-center py-8 text-slate-400">載入賽事資料中...</div>
             </div>
-        </section>
+        </div>
 
     </main>
 
+    <!-- 1. 管理員登入 Modal 彈窗 -->
+    <div id="loginModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center p-4 z-50">
+        <div class="bg-white rounded-xl max-w-sm w-full p-6 shadow-xl border border-slate-100 space-y-4">
+            <h3 class="text-lg font-bold text-slate-800">🔑 管理員登入</h3>
+            <form id="loginForm" onsubmit="handleLogin(event)" class="space-y-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">帳號</label>
+                    <input type="text" id="loginUsername" required placeholder="請輸入管理員帳號"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">密碼</label>
+                    <input type="password" id="loginPassword" required placeholder="請輸入密碼"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeLoginModal()"
+                        class="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
+                    <button type="submit"
+                        class="px-4 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow">登入</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 2. 超級管理員專屬：帳號管理 Modal 彈窗 -->
+    <div id="adminModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center p-4 z-50">
+        <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl border border-slate-100 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800">👑 帳號權限管理 (超級管理員)</h3>
+                <button onclick="closeAdminModal()" class="text-slate-400 hover:text-slate-600 font-bold">✕</button>
+            </div>
+
+            <!-- 新增管理員表單 -->
+            <form onsubmit="handleAddAdmin(event)" class="bg-slate-50 p-3 rounded-lg space-y-2 border border-slate-200">
+                <p class="text-xs font-bold text-slate-700">新增普通管理員帳號</p>
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="text" id="newAdminUsername" required placeholder="新帳號"
+                        class="px-2.5 py-1.5 border rounded text-xs">
+                    <input type="password" id="newAdminPassword" required placeholder="新密碼"
+                        class="px-2.5 py-1.5 border rounded text-xs">
+                </div>
+                <button type="submit"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-1.5 rounded font-medium transition">建立帳號</button>
+            </form>
+
+            <!-- 管理員清單 -->
+            <div>
+                <p class="text-xs font-bold text-slate-700 mb-2">現有管理員列表</p>
+                <div id="adminUsersList" class="space-y-2 max-h-48 overflow-y-auto">
+                    <!-- 動態載入帳號 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JS 前端邏輯 -->
     <script>
         let allCompetitions = [];
+        let currentUser = JSON.parse(localStorage.getItem('currentUser')) || null;
 
-        // 初始化載入
         document.addEventListener('DOMContentLoaded', () => {
-            checkAdminStatus();
+            updateUIByRole();
             fetchCompetitions();
-
-            document.getElementById('searchInput').addEventListener('input', filterCompetitions);
-            document.getElementById('filterDate').addEventListener('change', filterCompetitions);
-            document.getElementById('competitionForm').addEventListener('submit', handleFormSubmit);
         });
 
-        // 檢查管理員登入狀態
-        function checkAdminStatus() {
-            const adminPass = localStorage.getItem('adminPassword');
-            const formSection = document.getElementById('adminFormSection');
-            const loginBtn = document.getElementById('adminLoginBtn');
-            const logoutBtn = document.getElementById('adminLogoutBtn');
-            const roleBadge = document.getElementById('roleBadge');
+        // 依據角色狀態更新 UI 顯示
+        function updateUIByRole() {
+            const authStatus = document.getElementById('authStatus');
+            const authBtn = document.getElementById('authBtn');
+            const createSection = document.getElementById('createSection');
+            const adminMgmtBtn = document.getElementById('adminMgmtBtn');
 
-            if (adminPass) {
-                formSection.classList.remove('hidden');
-                loginBtn.classList.add('hidden');
-                logoutBtn.classList.remove('hidden');
-                roleBadge.className = 'text-xs px-2.5 py-1 bg-amber-100 text-amber-800 rounded-full font-medium';
-                roleBadge.textContent = '👑 管理員模式';
+            if (!currentUser) {
+                authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200";
+                authStatus.innerText = "👤 普通訪客 (唯讀)";
+                authBtn.innerText = "管理員登入";
+                authBtn.className = "bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg shadow-sm transition";
+                createSection.classList.add('hidden');
+                adminMgmtBtn.classList.add('hidden');
             } else {
-                formSection.classList.add('hidden');
-                loginBtn.classList.remove('hidden');
-                logoutBtn.classList.add('hidden');
-                roleBadge.className = 'text-xs px-2.5 py-1 bg-slate-200 text-slate-700 rounded-full font-medium';
-                roleBadge.textContent = '普通用戶模式 (唯讀)';
-            }
-        }
+                authBtn.innerText = "登出";
+                authBtn.className = "bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-medium px-4 py-1.5 rounded-lg transition";
+                createSection.classList.remove('hidden');
 
-        // 管理員登入
-        async function toggleAdminLogin() {
-            const password = prompt('請輸入管理員密碼：');
-            if (!password) return;
-
-            try {
-                const res = await fetch('/api/admin/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password })
-                });
-                const data = await res.json();
-
-                if (data.success) {
-                    localStorage.setItem('adminPassword', password);
-                    alert('驗證成功！已進入管理員模式。');
-                    checkAdminStatus();
-                    renderCompetitions(allCompetitions); // 重新渲染以顯示刪除按鈕
+                if (currentUser.role === 'super_admin') {
+                    authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
+                    authStatus.innerText = `👑 超級管理員: ${currentUser.username}`;
+                    adminMgmtBtn.classList.remove('hidden');
                 } else {
-                    alert('密碼錯誤！');
+                    authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
+                    authStatus.innerText = `🛡️ 管理員: ${currentUser.username}`;
+                    adminMgmtBtn.classList.add('hidden');
                 }
-            } catch (err) {
-                alert('驗證失敗，請檢查網路連線');
             }
-        }
-
-        // 管理員登出
-        function logoutAdmin() {
-            localStorage.removeItem('adminPassword');
-            alert('已退出管理員模式');
-            checkAdminStatus();
             renderCompetitions(allCompetitions);
         }
 
-        // 取得所有比賽 (公開 GET)
+        function toggleAuthAction() {
+            if (currentUser) {
+                localStorage.removeItem('currentUser');
+                currentUser = null;
+                updateUIByRole();
+            } else {
+                document.getElementById('loginModal').classList.remove('hidden');
+            }
+        }
+
+        function closeLoginModal() {
+            document.getElementById('loginModal').classList.add('hidden');
+        }
+
+        // 處理登入請求
+        async function handleLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+
+                if (res.ok && data.success) {
+                    currentUser = data.user;
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                    closeLoginModal();
+                    updateUIByRole();
+                    document.getElementById('loginForm').reset();
+                } else {
+                    alert(data.error || '登入失敗');
+                }
+            } catch (err) {
+                alert('網路請求失敗');
+            }
+        }
+
+        // 取得比賽資料
         async function fetchCompetitions() {
             try {
                 const res = await fetch('/api/competitions');
                 allCompetitions = await res.json();
                 renderCompetitions(allCompetitions);
             } catch (err) {
-                console.error('載入失敗:', err);
+                document.getElementById('competitionList').innerHTML = `<div class="text-center py-8 text-red-500">無法載入賽事資料</div>`;
             }
         }
 
-        // 渲染比賽卡片
-        function renderCompetitions(data) {
-            const container = document.getElementById('competitionsList');
-            const isAdmin = !!localStorage.getItem('adminPassword');
-
-            if (!data || data.length === 0) {
-                container.innerHTML = `<div class="p-8 text-center bg-white rounded-xl text-slate-400">目前沒有符合條件的比賽資訊。</div>`;
+        // 渲染比賽列表
+        function renderCompetitions(list) {
+            const container = document.getElementById('competitionList');
+            if (!list || list.length === 0) {
+                container.innerHTML = `<div class="text-center py-8 text-slate-400">沒有找到符合條件的比賽資訊。</div>`;
                 return;
             }
 
-            container.innerHTML = data.map(item => `
-        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div class="space-y-1">
-            <h3 class="text-lg font-bold text-slate-800">${escapeHtml(item.name)}</h3>
-            <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
-              ${item.location ? `<span>📍 ${escapeHtml(item.location)}</span>` : ''}
-              ${item.date ? `<span>📅 ${escapeHtml(item.date)}</span>` : ''}
-              ${item.time ? `<span>⏰ ${escapeHtml(item.time)}</span>` : ''}
-            </div>
-            ${item.description ? `<p class="text-sm text-slate-600 mt-2 bg-slate-50 p-2 rounded">${escapeHtml(item.description)}</p>` : ''}
+            container.innerHTML = list.map(item => `
+        <div class="p-4 border border-slate-200 rounded-lg hover:border-blue-300 transition bg-white space-y-2">
+          <div class="flex justify-between items-start gap-2">
+            <h3 class="font-bold text-slate-900 text-base">${item.name}</h3>
+            ${currentUser ? `<button onclick="deleteCompetition(${item.id})" class="text-xs text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition">刪除</button>` : ''}
           </div>
-          ${isAdmin ? `
-            <button onclick="deleteCompetition(${item.id})" class="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 text-sm font-medium rounded-lg transition self-end md:self-auto">
-              🗑️ 刪除
-            </button>
-          ` : ''}
+          <div class="flex flex-wrap gap-4 text-xs text-slate-500">
+            ${item.location ? `<span>📍 ${item.location}</span>` : ''}
+            ${item.date ? `<span>📅 ${item.date}</span>` : ''}
+            ${item.time ? `<span>⏰ ${item.time}</span>` : ''}
+          </div>
+          ${item.description ? `<p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-100 whitespace-pre-wrap mt-2">${item.description}</p>` : ''}
         </div>
       `).join('');
         }
 
-        // 新增比賽 (需要帶 Header)
-        async function handleFormSubmit(e) {
+        // 發佈比賽 (需要 Header 帶 User ID)
+        document.getElementById('competitionForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const adminPassword = localStorage.getItem('adminPassword');
-            if (!adminPassword) return alert('權限不足，請先登入管理員！');
+            if (!currentUser) return alert('請先登入管理員！');
 
-            const payload = {
+            const timeInput = document.getElementById('time').value.trim();
+            if (timeInput && !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(timeInput)) {
+                return alert('請輸入正確的 24 小時制時間格式 (如 14:30 或 09:05)');
+            }
+
+            const bodyData = {
                 name: document.getElementById('name').value,
                 location: document.getElementById('location').value,
                 date: document.getElementById('date').value,
-                time: document.getElementById('time').value,
+                time: timeInput,
                 description: document.getElementById('description').value
             };
 
@@ -228,68 +315,148 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-admin-password': adminPassword
+                        'x-user-id': currentUser.id
                     },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(bodyData)
                 });
 
-                if (!res.ok) {
-                    const errData = await res.json();
-                    throw new Error(errData.error || '新增失敗');
+                if (res.ok) {
+                    document.getElementById('competitionForm').reset();
+                    fetchCompetitions();
+                } else {
+                    const err = await res.json();
+                    alert('發佈失敗：' + err.error);
                 }
-
-                document.getElementById('competitionForm').reset();
-                fetchCompetitions();
-                alert('成功發佈比賽！');
             } catch (err) {
-                alert(err.message);
+                alert('網路請求失敗');
             }
-        }
+        });
 
-        // 刪除比賽 (需要帶 Header)
+        // 刪除比賽
         async function deleteCompetition(id) {
-            if (!confirm('確定要刪除此比賽資料嗎？')) return;
-            const adminPassword = localStorage.getItem('adminPassword');
+            if (!currentUser) return alert('權限不足');
+            if (!confirm('確定要刪除這筆比賽嗎？')) return;
 
             try {
                 const res = await fetch(`/api/competitions/${id}`, {
                     method: 'DELETE',
-                    headers: { 'x-admin-password': adminPassword }
+                    headers: { 'x-user-id': currentUser.id }
                 });
 
-                if (!res.ok) throw new Error('刪除失敗');
-                fetchCompetitions();
+                if (res.ok) {
+                    fetchCompetitions();
+                } else {
+                    const err = await res.json();
+                    alert('刪除失敗：' + err.error);
+                }
             } catch (err) {
-                alert('刪除失敗或權限不足！');
+                alert('刪除請求失敗');
             }
         }
 
-        // 篩選與重置
+        // 前端關鍵字與日期篩選
         function filterCompetitions() {
-            const search = document.getElementById('searchInput').value.toLowerCase();
-            const date = document.getElementById('filterDate').value;
+            const keyword = document.getElementById('searchInput').value.toLowerCase();
+            const filterDate = document.getElementById('filterDateInput').value;
 
             const filtered = allCompetitions.filter(item => {
-                const matchSearch = !search ||
-                    item.name?.toLowerCase().includes(search) ||
-                    item.location?.toLowerCase().includes(search) ||
-                    item.description?.toLowerCase().includes(search);
-                const matchDate = !date || item.date === date;
-                return matchSearch && matchDate;
+                const matchKeyword = (item.name && item.name.toLowerCase().includes(keyword)) ||
+                    (item.location && item.location.toLowerCase().includes(keyword)) ||
+                    (item.description && item.description.toLowerCase().includes(keyword));
+                const matchDate = filterDate ? (item.date === filterDate) : true;
+                return matchKeyword && matchDate;
             });
 
             renderCompetitions(filtered);
         }
 
-        function resetFilters() {
+        function clearFilter() {
             document.getElementById('searchInput').value = '';
-            document.getElementById('filterDate').value = '';
+            document.getElementById('filterDateInput').value = '';
             renderCompetitions(allCompetitions);
         }
 
-        function escapeHtml(str) {
-            if (!str) return '';
-            return str.replace(/[&<>"']/g, match => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[match]));
+        // --- 超級管理員帳號管理 Modal 邏輯 ---
+
+        async function openAdminModal() {
+            if (!currentUser || currentUser.role !== 'super_admin') return;
+            document.getElementById('adminModal').classList.remove('hidden');
+            fetchAdminUsers();
+        }
+
+        function closeAdminModal() {
+            document.getElementById('adminModal').classList.add('hidden');
+        }
+
+        async function fetchAdminUsers() {
+            try {
+                const res = await fetch('/api/admins', {
+                    headers: { 'x-user-id': currentUser.id }
+                });
+                const users = await res.json();
+                const container = document.getElementById('adminUsersList');
+
+                if (res.ok) {
+                    container.innerHTML = users.map(u => `
+            <div class="flex justify-between items-center bg-slate-50 p-2 rounded border border-slate-200 text-xs">
+              <div>
+                <span class="font-bold text-slate-800">${u.username}</span>
+                <span class="ml-2 px-1.5 py-0.5 rounded ${u.role === 'super_admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'}">${u.role}</span>
+              </div>
+              ${u.id !== currentUser.id ? `<button onclick="deleteAdminUser(${u.id})" class="text-red-500 hover:text-red-700">刪除</button>` : '<span class="text-slate-400">當前帳號</span>'}
+            </div>
+          `).join('');
+                }
+            } catch (err) {
+                alert('載入管理員清單失敗');
+            }
+        }
+
+        async function handleAddAdmin(e) {
+            e.preventDefault();
+            const username = document.getElementById('newAdminUsername').value;
+            const password = document.getElementById('newAdminPassword').value;
+
+            try {
+                const res = await fetch('/api/admins', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-user-id': currentUser.id
+                    },
+                    body: JSON.stringify({ username, password, role: 'admin' })
+                });
+
+                if (res.ok) {
+                    document.getElementById('newAdminUsername').value = '';
+                    document.getElementById('newAdminPassword').value = '';
+                    fetchAdminUsers();
+                } else {
+                    const err = await res.json();
+                    alert('建立失敗：' + err.error);
+                }
+            } catch (err) {
+                alert('新增帳號失敗');
+            }
+        }
+
+        async function deleteAdminUser(id) {
+            if (!confirm('確定要刪除這個管理員帳號嗎？')) return;
+            try {
+                const res = await fetch(`/api/admins/${id}`, {
+                    method: 'DELETE',
+                    headers: { 'x-user-id': currentUser.id }
+                });
+
+                if (res.ok) {
+                    fetchAdminUsers();
+                } else {
+                    const err = await res.json();
+                    alert('刪除失敗：' + err.error);
+                }
+            } catch (err) {
+                alert('刪除帳號失敗');
+            }
         }
     </script>
 </body>
