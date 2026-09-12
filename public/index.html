@@ -246,6 +246,27 @@
             fetchCompetitions();
         });
 
+        // 一鍵複製比賽資訊函式
+        function copyCompetitionInfo(name, date, time, location, description) {
+            const textToCopy = `🏆 【${name}】
+        📅 日期：${date || '未定'}
+        ⏰ 時間：${time || '未定'}
+        📍 地點：${location || '未定'}
+        📝 備註：${description || '無'}
+
+        👉 歡迎報名與關注！`;
+
+            navigator.clipboard.writeText(textToCopy)
+                .then(() => {
+                    alert('✅ 比賽資訊已成功複製到剪貼簿！');
+                })
+                .catch(err => {
+                    console.error('複製失敗:', err);
+                    alert('❌ 複製失敗，請手動複製。');
+                });
+        }
+
+
         // 計算比賽狀態標籤 HTML (含報名狀態連動)
         function getStatusBadgeHtml(dateStr, isRegOpen) {
             const today = new Date();
@@ -353,7 +374,7 @@
             }
         }
 
-        // 渲染比賽列表
+        // 渲染比賽列表 (已加入「📋 複製」按鈕)
         function renderCompetitions(list) {
             const container = document.getElementById('competitionList');
             if (!list || list.length === 0) {
@@ -370,12 +391,18 @@
                 ${getStatusBadgeHtml(item.date, item.is_registration_open)}
             </div>
             
-            ${currentUser ? `
-                <div class="flex items-center gap-1">
+            <div class="flex items-center gap-1">
+                <!-- 📋 一鍵複製按鈕 (公開訪客與管理員皆可使用) -->
+                <button onclick="copyCompetitionInfo('${item.name}', '${item.date || ''}', '${item.time || ''}', '${item.location || ''}', '${item.description || ''}')" 
+                        class="text-xs text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded transition">
+                    📋 複製
+                </button>
+
+                ${currentUser ? `
                     <button onclick="handleEditClick(${item.id})" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition">編輯</button>
                     <button onclick="deleteCompetition(${item.id})" class="text-xs text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition">刪除</button>
-                </div>
-            ` : ''}
+                ` : ''}
+            </div>
           </div>
           <div class="flex flex-wrap gap-4 text-xs text-slate-500">
             ${item.location ? `<span>📍 ${item.location}</span>` : ''}
