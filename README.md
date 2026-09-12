@@ -51,6 +51,7 @@ competition-manager/
 
 ## 📝 版本紀錄 (Changelog)
 
+- **v1.6.0** - 重大安全與架構升級！實現三層權限控制 (RBAC)，劃分「超級管理員 (Super Admin)」、「普通管理員 (Admin)」與「公開訪客 (User)」，並新增管理員帳號動態管理面板與登入驗證機制。
 - **v1.5.0** - 新增雙層存取權限控制 (RBAC)！劃分「管理員模式 (Admin)」與「普通用戶唯讀模式 (User)」，提升系統安全性。
 - **v1.4.1** - Bug Fix：修復前端 API 請求路徑，解決 Safari 與行動裝置無法發佈/讀取賽事資料的問題。
 - **v1.4.0** - 雲端資料庫架構重構！將本地 SQLite 遷移至 Supabase (PostgreSQL)，實現雲端資料永久保存與 Render 部署整合。
