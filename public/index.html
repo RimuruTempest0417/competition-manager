@@ -78,6 +78,13 @@
                     </div>
                 </div>
 
+                <div class="flex items-center gap-2 my-2">
+                    <input type="checkbox" id="isRegistrationOpen"
+                        class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+                    <label for="isRegistrationOpen"
+                        class="text-xs font-semibold text-slate-700">開放報名中(勾選後顯示「報名中」標籤)</label>
+                </div>
+
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">比賽簡介 / 備註 (選填)</label>
                     <textarea id="description" rows="3" placeholder="請輸入詳細說明或報名連結..."
@@ -207,6 +214,12 @@
                             class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                 </div>
+                <div class="flex items-center gap-2 my-2">
+                    <input type="checkbox" id="editIsRegistrationOpen"
+                        class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+                    <label for="editIsRegistrationOpen" class="text-xs font-semibold text-slate-700">開放報名中</label>
+                </div>
+
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">簡介 / 備註</label>
                     <textarea id="editDescription" rows="3"
@@ -233,14 +246,19 @@
             fetchCompetitions();
         });
 
-        // 計算比賽狀態標籤 HTML
-        function getStatusBadgeHtml(dateStr) {
-            if (!dateStr) return ''; // 沒有填寫日期不顯示標籤
-
-            // 取得今天日期的 YYYY-MM-DD 格式
+        // 計算比賽狀態標籤 HTML (含報名狀態連動)
+        function getStatusBadgeHtml(dateStr, isRegOpen) {
             const today = new Date();
             const todayStr = today.toISOString().split('T')[0];
 
+            // 1. 若勾選「開放報名」
+            if (isRegOpen) {
+                return `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-700 animate-pulse">🔥 報名中</span>`;
+            }
+
+            // 2. 未勾選報名，依據日期判斷開賽狀態
+            if (!dateStr) return ''; // 沒有填寫日期不顯示標籤
+            // 取得今天日期的 YYYY-MM-DD 格式
             if (dateStr < todayStr) {
                 return `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-gray-200 text-gray-600">已結束</span>`;
             } else if (dateStr === todayStr) {
@@ -349,12 +367,12 @@
             <div class="flex items-center gap-2">
                 <h3 class="font-bold text-slate-900 text-base">${item.name}</h3>
                 <!-- 🎯 在比賽名稱旁邊顯示動態標籤 -->
-                ${getStatusBadgeHtml(item.date)}
+                ${getStatusBadgeHtml(item.date, item.is_registration_open)}
             </div>
-
+            
             ${currentUser ? `
                 <div class="flex items-center gap-1">
-                    <button onclick="openEditModal(${item.id})" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition">編輯</button>
+                    <button onclick="handleEditClick(${item.id})" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition">編輯</button>
                     <button onclick="deleteCompetition(${item.id})" class="text-xs text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition">刪除</button>
                 </div>
             ` : ''}
@@ -384,7 +402,8 @@
                 location: document.getElementById('location').value,
                 date: document.getElementById('date').value,
                 time: timeInput,
-                description: document.getElementById('description').value
+                description: document.getElementById('description').value,
+                is_registration_open: document.getElementById('isRegistrationOpen').checked
             };
 
             try {
@@ -536,11 +555,16 @@
                 alert('刪除帳號失敗');
             }
         }
+        // 透過 ID 尋找資料，避免 JSON 字串破壞 HTML 語法
+        function handleEditClick(id) {
+            const item = allCompetitions.find(c => c.id === id);
+            if (item) {
+                openEditModal(item);
+            }
+        }
         // 開啟編輯彈窗並預填舊資料
-        function openEditModal(id) {
-            const target = allCompetitions.find(item => item.id === id);
-            if (!target) return;
-
+        function openEditModal(target) {
+            // 原本的預填 logic...
             document.getElementById('editId').value = target.id;
             document.getElementById('editName').value = target.name || '';
             document.getElementById('editLocation').value = target.location || '';
@@ -548,6 +572,11 @@
             document.getElementById('editTime').value = target.time || '';
             document.getElementById('editDescription').value = target.description || '';
 
+            // 設定 Checkbox 打勾狀態
+            document.getElementById('editIsRegistrationOpen').checked = !!target.is_registration_open;
+
+            // 顯示 Modal...
+            const isOpen = target.is_registration_open === true || target.is_registration_open === 1 || target.is_registration_open === '1';
             document.getElementById('editModal').classList.remove('hidden');
         }
 
@@ -573,6 +602,7 @@
                 location: document.getElementById('editLocation').value,
                 date: document.getElementById('editDate').value,
                 time: timeInput,
+                is_registration_open: document.getElementById('editIsRegistrationOpen').checked,
                 description: document.getElementById('editDescription').value
             };
 

@@ -81,43 +81,65 @@ app.get('/api/competitions', async (req, res) => {
 });
 
 // 3. 新增比賽 (管理員權限)
-app.post('/api/competitions', verifyAnyAdmin, async (req, res) => {
-    const { name, location, date, time, description } = req.body;
-    if (!name) return res.status(400).json({ error: '比賽名稱為必填項目' });
+// POST /api/competitions - 發佈新比賽
+app.post('/api/competitions', async (req, res) => {
+    const { name, location, date, time, description, is_registration_open } = req.body;
 
     try {
         const { data, error } = await supabase
             .from('competitions')
-            .insert([{ name, location, date, time, description }])
+            .insert([
+                {
+                    name,
+                    location: location || '',
+                    date: date || null,
+                    time: time || '',
+                    description: description || '',
+                    is_registration_open: !!is_registration_open
+                }
+            ])
             .select();
 
-        if (error) throw error;
-        res.status(201).json(data[0]);
+        if (error) {
+            console.error('Supabase 新增失敗：', error.message);
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json({ success: true, data });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: '伺服器內部錯誤' });
     }
 });
 
-// 4. 修改/更新比賽資訊 (管理員權限)
-app.put('/api/competitions/:id', verifyAnyAdmin, async (req, res) => {
-    const { id } = req.params;
-    const { name, location, date, time, description } = req.body;
 
-    if (!name) return res.status(400).json({ error: '比賽名稱為必填項目' });
+// PUT /api/competitions/:id - 更新比賽資料
+app.put('/api/competitions/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, location, date, time, description, is_registration_open } = req.body;
 
     try {
         const { data, error } = await supabase
             .from('competitions')
-            .update({ name, location, date, time, description })
+            .update({
+                name,
+                location: location || '',
+                date: date || null,
+                time: time || '',
+                description: description || '',
+                is_registration_open: !!is_registration_open // 轉為布林值 true/false
+            })
             .eq('id', id)
             .select();
 
-        if (error) throw error;
-        if (!data || data.length === 0) return res.status(404).json({ error: '找不到該筆比賽資料' });
+        if (error) {
+            console.error('Supabase 更新失敗：', error.message);
+            return res.status(500).json({ error: error.message });
+        }
 
-        res.json(data[0]);
+        res.json({ success: true, data });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('伺服器異常：', err);
+        res.status(500).json({ error: '伺服器內部錯誤' });
     }
 });
 
