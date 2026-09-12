@@ -233,6 +233,23 @@
             fetchCompetitions();
         });
 
+        // 計算比賽狀態標籤 HTML
+        function getStatusBadgeHtml(dateStr) {
+            if (!dateStr) return ''; // 沒有填寫日期不顯示標籤
+
+            // 取得今天日期的 YYYY-MM-DD 格式
+            const today = new Date();
+            const todayStr = today.toISOString().split('T')[0];
+
+            if (dateStr < todayStr) {
+                return `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-gray-200 text-gray-600">已結束</span>`;
+            } else if (dateStr === todayStr) {
+                return `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-600 animate-pulse">今日開賽</span>`;
+            } else {
+                return `<span class="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">即將開賽</span>`;
+            }
+        }
+
         // 依據角色狀態更新 UI 顯示
         function updateUIByRole() {
             const authStatus = document.getElementById('authStatus');
@@ -329,13 +346,18 @@
             container.innerHTML = list.map(item => `
         <div class="p-4 border border-slate-200 rounded-lg hover:border-blue-300 transition bg-white space-y-2">
           <div class="flex justify-between items-start gap-2">
-            <h3 class="font-bold text-slate-900 text-base">${item.name}</h3>
-              ${currentUser ? `
-                 <div class="flex items-center gap-1">
-                     <button onclick="openEditModal(${item.id})" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition">編輯</button>
+            <div class="flex items-center gap-2">
+                <h3 class="font-bold text-slate-900 text-base">${item.name}</h3>
+                <!-- 🎯 在比賽名稱旁邊顯示動態標籤 -->
+                ${getStatusBadgeHtml(item.date)}
+            </div>
+
+            ${currentUser ? `
+                <div class="flex items-center gap-1">
+                    <button onclick="openEditModal(${item.id})" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition">編輯</button>
                     <button onclick="deleteCompetition(${item.id})" class="text-xs text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition">刪除</button>
-                 </div>
-                 ` : ''}
+                </div>
+            ` : ''}
           </div>
           <div class="flex flex-wrap gap-4 text-xs text-slate-500">
             ${item.location ? `<span>📍 ${item.location}</span>` : ''}
@@ -386,6 +408,7 @@
                 alert('網路請求失敗');
             }
         });
+
 
         // 刪除比賽
         async function deleteCompetition(id) {
