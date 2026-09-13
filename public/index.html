@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統</title>
+    <title>比賽管理系統 v2.2.0</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -18,7 +18,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊</p>
+                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.2.0)</p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -28,7 +28,13 @@
                     👤 普通訪客 (唯讀)
                 </span>
 
-                <!-- 超級管理員專屬功能按鈕 -->
+                <!-- 超級管理員專屬功能按鈕：操作日誌 -->
+                <button id="auditLogBtn" onclick="openAuditLogModal()"
+                    class="hidden text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-300 transition flex items-center gap-1">
+                    📜 操作日誌
+                </button>
+
+                <!-- 超級管理員專屬功能按鈕：帳號管理 -->
                 <button id="adminMgmtBtn" onclick="openAdminModal()"
                     class="hidden text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-300 transition flex items-center gap-1">
                     ⚙️ 帳號管理
@@ -60,21 +66,31 @@
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">比賽地點 (選填)</label>
+                    <input type="text" id="location" placeholder="例如：台北體育館"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <!-- 日期與時間整合欄位 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽地點 (選填)</label>
-                        <input type="text" id="location" placeholder="例如：台北體育館"
-                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽開始日期 / 時間 (選填)</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input type="date" id="date"
+                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <input type="text" id="time" placeholder="例如 09:00"
+                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽日期 (選填)</label>
-                        <input type="date" id="date"
-                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽時間 (24小時制，選填)</label>
-                        <input type="text" id="time" placeholder="例如 14:30 或 09:05"
-                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽結束日期 / 時間 (選填)</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input type="date" id="end_date"
+                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <input type="text" id="end_time" placeholder="例如 18:00"
+                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
                     </div>
                 </div>
 
@@ -120,7 +136,7 @@
                     <button onclick="clearFilter()"
                         class="text-xs text-slate-500 hover:text-slate-800 px-2 py-1 bg-slate-100 rounded border">清除篩選</button>
 
-                    <!-- 📍 移至此處的資源回收桶按鈕 (僅超級管理員可見) -->
+                    <!-- 資源回收桶按鈕 (僅超級管理員可見) -->
                     <button id="mainTrashBtn" onclick="openTrashModal()"
                         class="hidden text-xs bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg border border-slate-600 transition flex items-center gap-1 shadow-sm">
                         🗑️ 資源回收桶
@@ -144,12 +160,12 @@
             <div class="space-y-3">
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">帳號</label>
-                    <input type="text" id="loginUsername"
+                    <input type="text" id="loginUsername" placeholder="帳號"
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
                 </div>
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">密碼</label>
-                    <input type="password" id="loginPassword"
+                    <input type="password" id="loginPassword" placeholder="密碼"
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
                 </div>
             </div>
@@ -162,7 +178,25 @@
         </div>
     </div>
 
-    <!-- 彈出視窗 2：帳號管理 Modal (超級管理員專屬) -->
+    <!-- 彈出視窗 2：系統操作日誌 Modal (超級管理員專屬) -->
+    <div id="auditLogModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-[85vh] flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    📜 系統操作日誌 (Audit Logs)
+                </h3>
+                <button onclick="closeAuditLogModal()" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div id="auditLogList" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs"></div>
+            <div class="flex justify-end pt-3 border-t">
+                <button onclick="closeAuditLogModal()"
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈出視窗 3：帳號管理 Modal (超級管理員專屬) -->
     <div id="adminModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-6 max-h-[90vh] overflow-y-auto">
@@ -176,36 +210,35 @@
                 <h4 class="text-xs font-bold text-slate-700 uppercase">新增管理員帳號</h4>
                 <div class="grid grid-cols-2 gap-2">
                     <input type="text" id="newAdminUser" placeholder="帳號" required
-                        class="px-3 py-1.5 border rounded text-sm">
+                        class="px-3 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
                     <input type="password" id="newAdminPass" placeholder="密碼" required
-                        class="px-3 py-1.5 border rounded text-sm">
+                        class="px-3 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
                 </div>
                 <div class="flex justify-between items-center pt-1">
-                    <select id="newAdminRole" class="px-2 py-1.5 border rounded text-xs">
+                    <select id="newAdminRole"
+                        class="px-2 py-1.5 border border-slate-300 rounded text-xs focus:outline-none">
                         <option value="admin">一般管理員 (admin)</option>
                         <option value="super_admin">超級管理員 (super_admin)</option>
                     </select>
                     <button type="submit"
-                        class="bg-emerald-600 text-white text-xs px-3 py-1.5 rounded hover:bg-emerald-700">新增</button>
+                        class="bg-emerald-600 text-white text-xs font-medium px-3 py-1.5 rounded hover:bg-emerald-700 transition">新增帳號</button>
                 </div>
             </form>
 
             <!-- 帳號清單 -->
             <div>
                 <h4 class="text-xs font-bold text-slate-700 uppercase mb-2">現有帳號列表</h4>
-                <div id="adminList" class="space-y-2 max-h-48 overflow-y-auto">
-                    <!-- 動態載入帳號 -->
-                </div>
+                <div id="adminList" class="space-y-2 max-h-48 overflow-y-auto pr-1"></div>
             </div>
 
             <div class="flex justify-end pt-2 border-t">
                 <button onclick="closeAdminModal()"
-                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition">關閉</button>
             </div>
         </div>
     </div>
 
-    <!-- 彈出視窗 3：資源回收桶 Modal -->
+    <!-- 彈出視窗 4：資源回收桶 Modal (超級管理員專屬) -->
     <div id="trashModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-[85vh] flex flex-col">
@@ -216,9 +249,7 @@
                 <button onclick="closeTrashModal()" class="text-slate-400 hover:text-slate-600">✕</button>
             </div>
 
-            <div id="trashList" class="flex-1 overflow-y-auto space-y-3 pr-1">
-                <!-- 動態渲染刪除列表 -->
-            </div>
+            <div id="trashList" class="flex-1 overflow-y-auto space-y-3 pr-1"></div>
 
             <div class="flex justify-end pt-3 border-t">
                 <button onclick="closeTrashModal()"
@@ -233,9 +264,7 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             const savedUser = localStorage.getItem('competition_user');
-            if (savedUser) {
-                currentUser = JSON.parse(savedUser);
-            }
+            if (savedUser) currentUser = JSON.parse(savedUser);
             updateUIByRole();
             fetchCompetitions();
         });
@@ -245,6 +274,7 @@
             const authStatus = document.getElementById('authStatus');
             const authBtn = document.getElementById('authBtn');
             const createSection = document.getElementById('createSection');
+            const auditLogBtn = document.getElementById('auditLogBtn');
             const adminMgmtBtn = document.getElementById('adminMgmtBtn');
             const mainTrashBtn = document.getElementById('mainTrashBtn');
 
@@ -254,7 +284,8 @@
                 authBtn.innerText = "管理員登入";
                 authBtn.className = "bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg shadow-sm transition";
                 createSection.classList.add('hidden');
-                adminMgmtBtn.classList.add('hidden');
+                if (auditLogBtn) auditLogBtn.classList.add('hidden');
+                if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
                 if (mainTrashBtn) mainTrashBtn.classList.add('hidden');
             } else {
                 authBtn.innerText = "登出";
@@ -264,12 +295,14 @@
                 if (currentUser.role === 'super_admin') {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
                     authStatus.innerText = `👑 超級管理員: ${currentUser.username}`;
-                    adminMgmtBtn.classList.remove('hidden');
+                    if (auditLogBtn) auditLogBtn.classList.remove('hidden');
+                    if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
                     if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
                 } else {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
                     authStatus.innerText = `🛡️ 管理員: ${currentUser.username}`;
-                    adminMgmtBtn.classList.add('hidden');
+                    if (auditLogBtn) auditLogBtn.classList.add('hidden');
+                    if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
                     if (mainTrashBtn) mainTrashBtn.classList.add('hidden');
                 }
             }
@@ -301,27 +334,27 @@
                     <div class="space-y-2 flex-1">
                         <div class="flex items-center gap-2 flex-wrap">
                             <h3 class="text-base font-bold text-slate-800">${escapeHtml(item.name)}</h3>
-                            ${item.is_registration_open ? '<span class="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">🔥 報名中</span>' : ''}
-                            ${getBadgeStatus(item.date)}
+                            ${item.is_registration_open ? '<span class="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">🔥 報名中</span>' : '<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium">已截止</span>'}
+                            ${getBadgeStatus(item.date, item.end_date)}
                         </div>
                         
                         <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                            ${item.location ? `<span>📍 ${escapeHtml(item.location)}</span>` : ''}
-                            ${item.date ? `<span>📅 ${escapeHtml(item.date)}</span>` : ''}
-                            ${item.time ? `<span>⏰ ${escapeHtml(item.time)}</span>` : ''}
+                            ${item.location ? `<span>📍 ${escapeHtml(item.location)}</span>` : '<span>📍 地點：未填</span>'}
+                            <span>📅 開始：${item.date ? escapeHtml(item.date) : '未填'} ${item.time ? escapeHtml(item.time) : ''}</span>
+                            <span>📅 結束：${item.end_date ? escapeHtml(item.end_date) : '未填'} ${item.end_time ? escapeHtml(item.end_time) : ''}</span>
                         </div>
 
                         ${item.description ? `<p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg whitespace-pre-line border border-slate-100">${escapeHtml(item.description)}</p>` : ''}
                     </div>
 
                     <div class="flex items-start gap-1.5 self-end md:self-start">
-                        <!-- 1. 所有人（含普通訪客）都能使用的：一鍵複製文字至剪貼簿 -->
-                        <button onclick="copyToClipboard('${escapeHtml(item.name)}', '${item.date}', '${escapeHtml(item.location)}')" 
+                        <!-- 一鍵複製文字至剪貼簿 -->
+                        <button onclick="copyToClipboard('${escapeHtml(item.name)}', '${item.date || ''}', '${item.end_date || ''}', '${escapeHtml(item.location || '')}')" 
                                 class="text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">
                             📋 複製分享
                         </button>
 
-                        <!-- 2. 僅管理員可見的操作按鈕 -->
+                        <!-- 僅管理員可見的操作按鈕 -->
                         ${currentUser ? `
                             <button onclick="copyCompetition(${item.id})" class="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded transition">複製發佈</button>
                             <button onclick="startEdit(${item.id})" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">編輯</button>
@@ -344,6 +377,8 @@
                 location: document.getElementById('location').value,
                 date: document.getElementById('date').value,
                 time: document.getElementById('time').value,
+                end_date: document.getElementById('end_date').value,
+                end_time: document.getElementById('end_time').value,
                 description: document.getElementById('description').value,
                 is_registration_open: document.getElementById('is_registration_open').checked
             };
@@ -356,20 +391,19 @@
                     method,
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-user-id': currentUser.id
+                        'x-user-id': currentUser.username || currentUser.id
                     },
                     body: JSON.stringify(payload)
                 });
 
-                if (!res.ok) {
-                    const errData = await res.json();
-                    throw new Error(errData.error || '儲存失敗');
-                }
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '儲存失敗');
 
                 resetForm();
                 fetchCompetitions();
+                alert(editingId ? '比賽更新成功！' : '賽事發佈成功！');
             } catch (err) {
-                alert(err.message);
+                alert('操作失敗：' + err.message);
             }
         }
 
@@ -382,6 +416,8 @@
             document.getElementById('location').value = item.location || '';
             document.getElementById('date').value = item.date || '';
             document.getElementById('time').value = item.time || '';
+            document.getElementById('end_date').value = item.end_date || '';
+            document.getElementById('end_time').value = item.end_time || '';
             document.getElementById('description').value = item.description || '';
             document.getElementById('is_registration_open').checked = !!item.is_registration_open;
 
@@ -400,6 +436,8 @@
             document.getElementById('location').value = item.location || '';
             document.getElementById('date').value = item.date || '';
             document.getElementById('time').value = item.time || '';
+            document.getElementById('end_date').value = item.end_date || '';
+            document.getElementById('end_time').value = item.end_time || '';
             document.getElementById('description').value = item.description || '';
             document.getElementById('is_registration_open').checked = !!item.is_registration_open;
 
@@ -409,8 +447,12 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        function copyToClipboard(name, date, location) {
-            const textToCopy = `🏆 【${name}】\n📅 日期：${date || '未定'}\n📍 地點：${location || '未定'}\n\n👉 歡迎關注與報名！`;
+        function copyToClipboard(name, date, endDate, location) {
+            let dateStr = date || '未定';
+            if (date && endDate) {
+                dateStr = `${date} ~ ${endDate}`;
+            }
+            const textToCopy = `🏆 【${name}】\n📅 日期：${dateStr}\n📍 地點：${location || '未定'}\n\n👉 歡迎關注與報名！`;
 
             navigator.clipboard.writeText(textToCopy)
                 .then(() => alert('✅ 比賽資訊已成功複製到剪貼簿！'))
@@ -434,7 +476,7 @@
             try {
                 const res = await fetch(`/api/competitions/${id}`, {
                     method: 'DELETE',
-                    headers: { 'x-user-id': currentUser.id }
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
 
                 if (!res.ok) throw new Error('刪除失敗');
@@ -482,7 +524,41 @@
             }
         }
 
-        // 帳號管理視窗邏輯
+        // 操作日誌 Modal
+        async function openAuditLogModal() {
+            document.getElementById('auditLogModal').classList.remove('hidden');
+            const listEl = document.getElementById('auditLogList');
+            listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入日誌中...</p>';
+
+            try {
+                const res = await fetch('/api/audit-logs');
+                const logs = await res.json();
+
+                if (!logs || logs.length === 0) {
+                    listEl.innerHTML = '<p class="text-center text-slate-400 py-4">目前尚無操作紀錄</p>';
+                    return;
+                }
+
+                listEl.innerHTML = logs.map(log => `
+                    <div class="p-2.5 bg-slate-50 border border-slate-200 rounded flex justify-between items-start">
+                        <div>
+                            <span class="font-bold text-indigo-600">[${escapeHtml(log.action)}]</span>
+                            <span class="text-slate-600 ml-2">使用者: ${escapeHtml(log.user_id)}</span>
+                            ${log.details ? `<p class="text-slate-500 text-[11px] mt-1">詳情: ${escapeHtml(log.details)}</p>` : ''}
+                        </div>
+                        <span class="text-slate-400 text-[11px] whitespace-nowrap ml-2">${new Date(log.created_at).toLocaleString()}</span>
+                    </div>
+                `).join('');
+            } catch (err) {
+                listEl.innerHTML = '<p class="text-red-500 text-center py-4">無法載入日誌</p>';
+            }
+        }
+
+        function closeAuditLogModal() {
+            document.getElementById('auditLogModal').classList.add('hidden');
+        }
+
+        // 帳號管理 Modal 邏輯
         function openAdminModal() {
             document.getElementById('adminModal').classList.remove('hidden');
             fetchAdminList();
@@ -493,72 +569,106 @@
         }
 
         async function fetchAdminList() {
+            const listEl = document.getElementById('adminList');
+            listEl.innerHTML = '<p class="text-center text-slate-400 text-xs py-2">載入帳號清單...</p>';
+
             try {
                 const res = await fetch('/api/admins', {
-                    headers: { 'x-user-id': currentUser.id }
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
+
+                if (!res.ok) throw new Error('無法取得管理員清單');
                 const admins = await res.json();
 
-                const listEl = document.getElementById('adminList');
-                listEl.innerHTML = admins.map(a => `
-                    <div class="flex justify-between items-center bg-slate-100 p-2.5 rounded text-xs border">
-                        <div>
-                            <span class="font-bold text-slate-800">${escapeHtml(a.username)}</span>
-                            <span class="text-slate-400 ml-1">(${a.role})</span>
+                if (!admins || admins.length === 0) {
+                    listEl.innerHTML = '<p class="text-center text-slate-400 text-xs py-2">目前沒有其他管理員帳號</p>';
+                    return;
+                }
+
+                listEl.innerHTML = admins.map(a => {
+                    const targetId = a.id || a._id;
+                    const isSelf = (currentUser && (a.username === currentUser.username || targetId === currentUser.id));
+
+                    return `
+                        <div class="flex justify-between items-center bg-slate-100 p-2.5 rounded text-xs border border-slate-200">
+                            <div>
+                                <span class="font-bold text-slate-800">${escapeHtml(a.username)}</span>
+                                <span class="text-slate-500 ml-1">(${a.role === 'super_admin' ? '超級管理員' : '一般管理員'})</span>
+                            </div>
+                            ${!isSelf ? `
+                                <button onclick="deleteAdmin('${targetId || a.username}')" 
+                                    class="text-red-600 hover:text-red-800 font-medium px-2 py-0.5 rounded bg-red-50 hover:bg-red-100 transition">
+                                    刪除
+                                </button>
+                            ` : '<span class="text-slate-400 font-medium px-2 py-0.5">目前帳號</span>'}
                         </div>
-                        ${a.id !== currentUser.id ? `
-                            <button onclick="deleteAdmin('${a.id}')" class="text-red-500 hover:text-red-700">刪除</button>
-                        ` : '<span class="text-slate-400">目前帳號</span>'}
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
             } catch (err) {
                 console.error(err);
+                listEl.innerHTML = `<p class="text-red-500 text-center text-xs py-2">${err.message}</p>`;
             }
         }
 
         async function handleAddAdmin(e) {
             e.preventDefault();
-            const username = document.getElementById('newAdminUser').value;
-            const password = document.getElementById('newAdminPass').value;
-            const role = document.getElementById('newAdminRole').value;
+            const usernameInput = document.getElementById('newAdminUser');
+            const passwordInput = document.getElementById('newAdminPass');
+            const roleSelect = document.getElementById('newAdminRole');
+
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value.trim();
+            const role = roleSelect.value;
+
+            if (!username || !password) {
+                alert('請完整填寫帳號與密碼');
+                return;
+            }
 
             try {
                 const res = await fetch('/api/admins', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-user-id': currentUser.id
+                        'x-user-id': currentUser.username || currentUser.id
                     },
                     body: JSON.stringify({ username, password, role })
                 });
 
-                if (!res.ok) throw new Error('新增管理員失敗');
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '新增管理員失敗');
 
-                document.getElementById('newAdminUser').value = '';
-                document.getElementById('newAdminPass').value = '';
-                document.getElementById('newAdminRole').value = 'admin';
+                alert(`✅ 成功新增管理員：${username}`);
+                usernameInput.value = '';
+                passwordInput.value = '';
+                roleSelect.value = 'admin';
                 fetchAdminList();
             } catch (err) {
-                alert(err.message);
+                alert('新增失敗：' + err.message);
             }
         }
 
-        async function deleteAdmin(id) {
-            if (!confirm('確定要刪除此管理員？')) return;
+        async function deleteAdmin(idOrUsername) {
+            if (!confirm(`確定要刪除帳號 [${idOrUsername}] 嗎？`)) return;
+
             try {
-                const res = await fetch(`/api/admins/${id}`, {
+                const res = await fetch(`/api/admins/${idOrUsername}`, {
                     method: 'DELETE',
-                    headers: { 'x-user-id': currentUser.id }
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
-                if (!res.ok) throw new Error('刪除失敗');
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '刪除失敗');
+
+                alert('✅ 帳號已成功刪除');
                 fetchAdminList();
             } catch (err) {
-                alert(err.message);
+                alert('刪除失敗：' + err.message);
             }
         }
 
-        // 回收桶視窗邏輯
-        async function openTrashModal() {
+        // 回收桶 Modal 邏輯
+        function openTrashModal() {
             document.getElementById('trashModal').classList.remove('hidden');
             fetchTrashList();
         }
@@ -573,7 +683,7 @@
 
             try {
                 const res = await fetch('/api/competitions/deleted', {
-                    headers: { 'x-user-id': currentUser.id }
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
                 const deletedItems = await res.json();
 
@@ -594,7 +704,7 @@
                     </div>
                 `).join('');
             } catch (err) {
-                listEl.innerHTML = `<p class="text-red-500 text-center py-4">無法取得已刪除項目</p>`;
+                listEl.innerHTML = `<p class="text-red-500 text-center py-4">無法載入回收桶資料</p>`;
             }
         }
 
@@ -602,7 +712,7 @@
             try {
                 const res = await fetch(`/api/competitions/${id}/restore`, {
                     method: 'PUT',
-                    headers: { 'x-user-id': currentUser.id }
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
 
                 if (!res.ok) throw new Error('復原失敗');
@@ -624,7 +734,7 @@
                     (item.location && item.location.toLowerCase().includes(searchVal)) ||
                     (item.description && item.description.toLowerCase().includes(searchVal));
 
-                const matchesDate = !dateVal || item.date === dateVal;
+                const matchesDate = !dateVal || item.date === dateVal || item.end_date === dateVal;
 
                 return matchesSearch && matchesDate;
             });
@@ -638,13 +748,32 @@
             renderCompetitions(allCompetitions);
         }
 
-        // 輔助函式
-        function getBadgeStatus(dateStr) {
+        // 計算動態狀態標籤 (倒數天數 / 進行中 / 已結束)
+        function getBadgeStatus(dateStr, endDateStr) {
             if (!dateStr) return '';
-            const today = new Date().toISOString().split('T')[0];
-            if (dateStr > today) return '<span class="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded-full font-medium">即將開賽</span>';
-            if (dateStr === today) return '<span class="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-medium">今日開賽</span>';
-            return '<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full">已結束</span>';
+
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+            const [sYear, sMonth, sDay] = dateStr.split('-').map(Number);
+            const start = new Date(sYear, sMonth - 1, sDay);
+
+            let end = start;
+            if (endDateStr) {
+                const [eYear, eMonth, eDay] = endDateStr.split('-').map(Number);
+                end = new Date(eYear, eMonth - 1, eDay);
+            }
+
+            const diffTime = start - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            if (diffDays > 0) {
+                return `<span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">⏳ 倒數 ${diffDays} 天</span>`;
+            } else if (today >= start && today <= end) {
+                return `<span class="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-medium">🔥 進行中</span>`;
+            } else {
+                return `<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full">已結束</span>`;
+            }
         }
 
         function escapeHtml(str) {
