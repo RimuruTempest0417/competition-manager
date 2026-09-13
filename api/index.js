@@ -17,6 +17,18 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// 後端讀取並解碼 Header
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ⭕ 新增全域中間件來解析 Header 中的 User ID
+app.use((req, res, next) => {
+    const rawUserId = req.headers['x-user-id'];
+    req.userId = rawUserId ? decodeURIComponent(rawUserId) : 'Guest';
+    next();
+});
+
+
 // Helper: 處理空字串，將未填寫的選填欄位轉為 null
 function sanitizeInput(val) {
     if (val === undefined || val === null) return null;

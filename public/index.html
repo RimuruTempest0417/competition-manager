@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統 v2.2.3</title>
+    <title>比賽管理系統 v2.2.4</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -18,7 +18,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.2.3)</p>
+                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.2.4)</p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -267,6 +267,22 @@
             if (savedUser) currentUser = JSON.parse(savedUser);
             updateUIByRole();
             fetchCompetitions();
+        });
+
+        // 取得安全 HTTP Header Value（避免中文爆發 ISO-8859-1 錯誤）
+        function getAuthHeader() {
+            const user = currentUser || '';
+            return encodeURIComponent(user);
+        }
+
+        // 發送 API 時使用：
+        fetch('/api/competitions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-user-id': getAuthHeader() // 👈 編碼後的安全的 ASCII 字串
+            },
+            body: JSON.stringify(payload)
         });
 
         // 依權限更新 UI 介面
