@@ -51,10 +51,15 @@ competition-manager/
 
 ## 📝 版本紀錄 (Changelog)
 
+### v2.2.5 (2026-09-13)
+- **Fix**: 修復「發佈比賽」API 路由(`POST/api/competitions`) 中 `req` 作用域錯誤與 Header 解析問題。
+
 ### v2.2.4 (2026-09-13)
 - **Fix**: 修正 Express 路由中 `req` 處理機制與全域作用域問題。
 - **Fix**: 優化 Vercel Serverless 無狀態 API 路由相容性與標頭處理。
 - **Refactor**: 修復 Modal 彈窗在行動端的溢出問題並強化前端錯誤攔截。
+
+---
 
 - **v2.2.3** - 登入事件審計日誌 (Login Event Audit Logs)**：系統自動記錄使用者登入/登出狀態、時間戳記與 IP 位址，提升系統安全性。
 - **v2.2.2** - 權限管理閉環！新增超級管理員專屬「資源回收桶永久刪除 (`HARD_DELETE`)」功能與 API 端點 (`DELETE /api/competitions/:id/hard-delete`)，搭配前端二次防誤刪安全確認 UI。
