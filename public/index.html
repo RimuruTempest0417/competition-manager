@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統 v2.3.1</title>
+    <title>比賽管理系統 v2.3.2</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -18,7 +18,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.1)</p>
+                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.2)</p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -142,7 +142,7 @@
                     <button onclick="clearFilter()"
                         class="text-xs text-slate-500 hover:text-slate-800 px-2 py-1 bg-slate-100 rounded border">清除篩選</button>
 
-                    <!-- 資源回收桶按鈕 (僅超級管理員可見) -->
+                    <!-- 資源回收桶按鈕 (管理員與超級管理員可見) -->
                     <button id="mainTrashBtn" onclick="openTrashModal()"
                         class="hidden text-xs bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg border border-slate-600 transition flex items-center gap-1 shadow-sm">
                         🗑️ 資源回收桶
@@ -262,7 +262,7 @@
         </div>
     </div>
 
-    <!-- 彈出視窗 5：資源回收桶 Modal (超級管理員專屬) -->
+    <!-- 彈出視窗 5：資源回收桶 Modal (管理員與超級管理員皆可讀取與復原) -->
     <div id="trashModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-[85vh] flex flex-col">
@@ -368,7 +368,7 @@
             fetchCompetitions();
         });
 
-        // 依權限更新 UI 介面
+        // 依權限更新 UI 介面 (v2.3.2 支援開放回收桶給 admin)
         function updateUIByRole() {
             const authStatus = document.getElementById('authStatus');
             const authBtn = document.getElementById('authBtn');
@@ -401,12 +401,13 @@
                     if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
                     if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
                 } else {
+                    // 一般管理員 admin：可存取發佈與回收桶，隱藏超級管理員專屬日誌與帳號維護
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
                     authStatus.innerText = `🛡️ 管理員: ${currentUser.username}`;
                     if (auditLogBtn) auditLogBtn.classList.add('hidden');
                     if (btnErrorLogs) btnErrorLogs.classList.add('hidden');
                     if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
-                    if (mainTrashBtn) mainTrashBtn.classList.add('hidden');
+                    if (mainTrashBtn) mainTrashBtn.classList.remove('hidden'); // v2.3.2: 開放資源回收桶
                 }
             }
             renderCompetitions(allCompetitions);
@@ -837,7 +838,7 @@
             }
         }
 
-        // 回收桶 Modal 邏輯
+        // 回收桶 Modal 邏輯 (v2.3.2 權限過濾與按鈕渲染)
         function openTrashModal() {
             document.getElementById('trashModal').classList.remove('hidden');
             fetchTrashList();
@@ -853,7 +854,10 @@
 
             try {
                 const res = await customFetch('/api/competitions/deleted', {
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    headers: {
+                        'x-user-id': currentUser.username || currentUser.id,
+                        'x-user-role': currentUser?.role || ''
+                    }
                 });
                 const deletedItems = await res.json();
 
@@ -862,6 +866,8 @@
                     return;
                 }
 
+                const isSuperAdmin = currentUser?.role === 'super_admin';
+
                 listEl.innerHTML = deletedItems.map(item => `
                     <div class="border border-slate-200 rounded-lg p-3 bg-slate-50 flex justify-between items-center text-xs">
                         <div>
@@ -869,12 +875,17 @@
                             <p class="text-slate-400 mt-0.5">地點: ${escapeHtml(item.location || '未填')} | 日期: ${item.date || '未填'}</p>
                         </div>
                         <div class="flex items-center gap-2">
+                            <!-- 一鍵復原按鈕 (admin 與 super_admin 皆可見) -->
                             <button onclick="restoreCompetition(${item.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded transition">
                                 🔄 復原
                             </button>
-                            <button onclick="hardDeleteCompetition(${item.id}, '${escapeHtml(item.name)}')" class="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1.5 rounded transition">
-                                ⚠️ 永久刪除
-                            </button>
+
+                            <!-- 永久刪除按鈕 (僅 super_admin 渲染顯示) -->
+                            ${isSuperAdmin ? `
+                                <button onclick="hardDeleteCompetition(${item.id}, '${escapeHtml(item.name)}')" class="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1.5 rounded transition">
+                                    ⚠️ 永久刪除
+                                </button>
+                            ` : ''}
                         </div>
                     </div>
                 `).join('');
@@ -887,7 +898,10 @@
             try {
                 const res = await customFetch(`/api/competitions/${id}/restore`, {
                     method: 'PUT',
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    headers: {
+                        'x-user-id': currentUser.username || currentUser.id,
+                        'x-user-role': currentUser?.role || ''
+                    }
                 });
 
                 if (!res.ok) throw new Error('復原失敗');
@@ -905,7 +919,10 @@
             try {
                 const res = await customFetch(`/api/competitions/${id}/hard-delete`, {
                     method: 'DELETE',
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    headers: {
+                        'x-user-id': currentUser.username || currentUser.id,
+                        'x-user-role': currentUser?.role || ''
+                    }
                 });
 
                 const data = await res.json();

@@ -21,7 +21,7 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// 全域中間件：解析 Header 中的 User ID
+// 全域中間件：解析 Header 中的 User ID 與 Role
 app.use((req, res, next) => {
     const rawUserId = req.headers['x-user-id'];
     req.userId = rawUserId ? decodeURIComponent(rawUserId) : 'Guest';
@@ -135,41 +135,6 @@ app.get('/api/admin/error-logs', async (req, res) => {
         console.error('[Fetch Error Logs Failed]:', err.message);
         res.status(500).json({ error: 'Failed to fetch error logs' });
     }
-});
-
-// ==========================================
-// 3. 後端全域 Express Error Handler 中間件
-// 注意：必須放在所有 app.use() 與 API 路由的最下方！
-// ==========================================
-app.use(async (err, req, res, next) => {
-    console.error('[Global Server Error]:', err);
-
-    const rawUserId = req.headers ? req.headers['x-user-id'] : null;
-    const userId = rawUserId ? parseInt(rawUserId, 10) : null;
-    const userAgent = req.headers ? req.headers['user-agent'] : '';
-
-    // 自動紀錄後端未預期崩潰/異常至 Supabase
-    try {
-        await supabase.from('error_logs').insert([
-            {
-                user_id: userId,
-                error_type: 'backend_error',
-                message: err.message || 'Internal Server Error',
-                stack_trace: err.stack || '',
-                path: req.originalUrl || req.url,
-                user_agent: userAgent
-            }
-        ]);
-    } catch (loggingErr) {
-        console.error('[Failed to write backend error to DB]:', loggingErr.message);
-    }
-
-    // 回傳標準化 500 JSON 響應
-    res.status(500).json({
-        success: false,
-        error: 'Internal Server Error',
-        message: err.message
-    });
 });
 
 // ----------------------------------------------------
@@ -319,9 +284,14 @@ app.get('/api/competitions', async (req, res) => {
     }
 });
 
-// 🗑️ 讀取回收桶列表 API
+// 🗑️ 讀取回收桶列表 API (開放 super_admin 與 admin 讀取)
 app.get('/api/competitions/deleted', async (req, res) => {
     try {
+        const userRole = req.headers['x-user-role'];
+        if (userRole !== 'super_admin' && userRole !== 'admin') {
+            return res.status(403).json({ error: 'Access denied: Admin access required' });
+        }
+
         const { data, error } = await supabase
             .from('competitions')
             .select('*')
@@ -333,6 +303,12 @@ app.get('/api/competitions/deleted', async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// 別名相容：/api/competitions/trash (提供 RESTful 風格端點)
+app.get('/api/competitions/trash', async (req, res) => {
+    req.url = '/api/competitions/deleted';
+    app._router.handle(req, res);
 });
 
 // ➕ 發佈新比賽
@@ -435,10 +411,15 @@ app.delete('/api/competitions/:id', async (req, res) => {
     }
 });
 
-// 從回收桶復原比賽
-app.put('/api/competitions/:id/restore', async (req, res) => {
+// 從回收桶復原比賽 (允許 super_admin 與 admin 執行)
+const restoreCompetitionHandler = async (req, res) => {
     const { id } = req.params;
+    const userRole = req.headers['x-user-role'];
     const operator = req.headers['x-user-id'] || req.userId || 'Unknown';
+
+    if (userRole !== 'super_admin' && userRole !== 'admin') {
+        return res.status(403).json({ error: 'Access denied: Admin access required' });
+    }
 
     try {
         const { data: competition, error: findErr } = await supabase
@@ -464,7 +445,10 @@ app.put('/api/competitions/:id/restore', async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
-});
+};
+
+app.put('/api/competitions/:id/restore', restoreCompetitionHandler);
+app.post('/api/competitions/:id/restore', restoreCompetitionHandler);
 
 // ⚠️ 專屬超級管理員：硬刪除 (Hard Delete) - 從資料庫徹底抹除
 app.delete('/api/competitions/:id/hard-delete', async (req, res) => {
@@ -530,6 +514,41 @@ app.get('/api/audit-logs', requireSuperAdmin, async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: '伺服器錯誤: ' + err.message });
     }
+});
+
+// ==========================================
+// 3. 後端全域 Express Error Handler 中間件
+// 注意：必須放在所有 app.use() 與 API 路由的最下方！
+// ==========================================
+app.use(async (err, req, res, next) => {
+    console.error('[Global Server Error]:', err);
+
+    const rawUserId = req.headers ? req.headers['x-user-id'] : null;
+    const userId = rawUserId ? parseInt(rawUserId, 10) : null;
+    const userAgent = req.headers ? req.headers['user-agent'] : '';
+
+    // 自動紀錄後端未預期崩潰/異常至 Supabase
+    try {
+        await supabase.from('error_logs').insert([
+            {
+                user_id: userId,
+                error_type: 'backend_error',
+                message: err.message || 'Internal Server Error',
+                stack_trace: err.stack || '',
+                path: req.originalUrl || req.url,
+                user_agent: userAgent
+            }
+        ]);
+    } catch (loggingErr) {
+        console.error('[Failed to write backend error to DB]:', loggingErr.message);
+    }
+
+    // 回傳標準化 500 JSON 響應
+    res.status(500).json({
+        success: false,
+        error: 'Internal Server Error',
+        message: err.message
+    });
 });
 
 // 本地開發監聽

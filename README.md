@@ -48,6 +48,11 @@ competition-manager/
 
 ## 🔖 版本紀錄 (Changelog)
 
+### ♻️ v2.3.2 (2026-09-13) - 資源回收桶權限開放
+- **Feature**: 放寬「資源回收桶」權限，開放普通管理員 (`admin`) 查看已軟刪除的賽事與進行一鍵復原。
+- **Security**: 強化 RBAC 邏輯，繼續限制永久刪除 (`HARD_DELETE`) 權限僅限超級管理員 (`super_admin`) 執行。
+- **Refactor**: 更新前端導覽列與 Trash Modal 的權限按鈕渲染判斷機制。
+
 ### 🚑 v2.3.1 (2026-09-13) - Hotfix: 錯誤日誌導覽按鈕修復
 - **Fix**: 修復 `public/index.html` 權限渲染邏輯，確保超級管理員 (`super_admin`) 登入後正確顯示頂部導覽列「🚨 錯誤日誌」按鈕與觸發 Modal。
 
