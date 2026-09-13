@@ -48,6 +48,9 @@ competition-manager/
 
 ## 🔖 版本紀錄 (Changelog)
 
+### 🚑 v2.3.1 (2026-09-13) - Hotfix: 錯誤日誌導覽按鈕修復
+- **Fix**: 修復 `public/index.html` 權限渲染邏輯，確保超級管理員 (`super_admin`) 登入後正確顯示頂部導覽列「🚨 錯誤日誌」按鈕與觸發 Modal。
+
 ### 🚀 v2.3.0 (2026-09-13) - 自動化 Bug 回報系統與超級管理員專屬日誌
 - **Feature**: 實作自動化錯誤 (Bug) 回報整理系統，前端導入 `window.onerror` 與 `customFetch` 攔截器。
 - **Feature**: Express 後端新增全域 Error Handler 中間件，自動記錄 500 異常至 Supabase `error_logs` 資料表。

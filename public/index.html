@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統 v2.3.0</title>
+    <title>比賽管理系統 v2.3.1</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -18,7 +18,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.0)</p>
+                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.1)</p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -33,9 +33,11 @@
                     class="hidden text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-300 transition flex items-center gap-1">
                     📜 操作日誌
                 </button>
-                <button id="btn-view-errors"
-                    class="hidden bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition">
-                    ⚠️ 錯誤日誌
+
+                <!-- 超級管理員專屬功能按鈕：錯誤日誌 -->
+                <button id="btn-error-logs" onclick="openErrorLogsModal()"
+                    class="hidden px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-sm font-medium hover:bg-red-100 flex items-center gap-1 transition">
+                    🚨 錯誤日誌
                 </button>
 
                 <!-- 超級管理員專屬功能按鈕：帳號管理 -->
@@ -200,7 +202,25 @@
         </div>
     </div>
 
-    <!-- 彈出視窗 3：帳號管理 Modal (超級管理員專屬) -->
+    <!-- 彈出視窗 3：系統錯誤日誌 Modal (超級管理員專屬) -->
+    <div id="errorLogsModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full p-6 space-y-4 max-h-[85vh] flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-red-600 flex items-center gap-2">
+                    🚨 系統異常錯誤日誌 (Error Logs)
+                </h3>
+                <button onclick="closeErrorLogsModal()" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div id="errorLogList" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs font-mono"></div>
+            <div class="flex justify-end pt-3 border-t">
+                <button onclick="closeErrorLogsModal()"
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈出視窗 4：帳號管理 Modal (超級管理員專屬) -->
     <div id="adminModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-6 max-h-[90vh] overflow-y-auto">
@@ -242,7 +262,7 @@
         </div>
     </div>
 
-    <!-- 彈出視窗 4：資源回收桶 Modal (超級管理員專屬) -->
+    <!-- 彈出視窗 5：資源回收桶 Modal (超級管理員專屬) -->
     <div id="trashModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-[85vh] flex flex-col">
@@ -263,26 +283,17 @@
     </div>
 
     <script>
+        let allCompetitions = [];
+        let currentUser = null;
 
         // ==========================================
         // 1. 自動錯誤上報 Helper 函式
         // ==========================================
         async function reportErrorToBackend(errorData) {
             try {
-                // 取得目前登入者的 ID (假設存在 localStorage 或全域變數中)
-                const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-                const userId = currentUser.id || null;
-                if (currentUser && currentUser.role === 'super_admin') {
-                    const errBtn = document.getElementById('btn-view-errors');
-                    if (errBtn) errBtn.classList.remove('hidden');
-                }
-
-                const headers = {
-                    'Content-Type': 'application/json'
-                };
-                if (userId) {
-                    headers['x-user-id'] = userId;
-                }
+                const userId = currentUser?.id || currentUser?.username || null;
+                const headers = { 'Content-Type': 'application/json' };
+                if (userId) headers['x-user-id'] = userId;
 
                 await fetch('/api/logs/error', {
                     method: 'POST',
@@ -295,52 +306,34 @@
                     })
                 });
             } catch (err) {
-                // 避免上報失敗造成無窮迴圈，僅在 Console 印出警告
                 console.warn('[Error Reporter Failed]:', err);
             }
         }
 
-        // ==========================================
-        // 2. 全域未捕捉 JavaScript 異常 (JS Runtime Errors)
-        // ==========================================
+        // 2. 全域未捕捉 JavaScript 異常
         window.addEventListener('error', (event) => {
-            // 過濾掉靜態資源載入失敗的 error (如 <img> 或 <script> 載入 404)
-            if (event.target && (event.target.tagName === 'IMG' || event.target.tagName === 'SCRIPT')) {
-                return;
-            }
-
-            const errorData = {
+            if (event.target && (event.target.tagName === 'IMG' || event.target.tagName === 'SCRIPT')) return;
+            reportErrorToBackend({
                 type: 'frontend_js_error',
                 message: event.message || 'Script Error',
                 stack: event.error ? event.error.stack : `File: ${event.filename}:${event.lineno}:${event.colno}`
-            };
-
-            reportErrorToBackend(errorData);
+            });
         });
 
-        // ==========================================
-        // 3. 全域未處理的 Promise 拒絕 (Unhandled Promise Rejections)
-        // ==========================================
+        // 3. 全域未處理 Promise 拒絕
         window.addEventListener('unhandledrejection', (event) => {
             const reason = event.reason;
-
-            const errorData = {
+            reportErrorToBackend({
                 type: 'frontend_promise_rejection',
                 message: reason instanceof Error ? reason.message : String(reason),
                 stack: reason instanceof Error ? reason.stack : ''
-            };
-
-            reportErrorToBackend(errorData);
+            });
         });
 
-        // ==========================================
-        // 4. 通用 Fetch API 封裝 (自動攔截 4xx / 5xx 請求失敗)
-        // ==========================================
+        // 4. 通用 Custom Fetch API 封裝
         async function customFetch(url, options = {}) {
             try {
                 const response = await fetch(url, options);
-
-                // 如果 HTTP Status 不在 200-299 範圍內，自動寫入日誌
                 if (!response.ok) {
                     const clonedRes = response.clone();
                     let errorText = '';
@@ -350,29 +343,24 @@
                     } catch (e) {
                         errorText = await clonedRes.text();
                     }
-
                     reportErrorToBackend({
                         type: 'api_failure',
                         message: `HTTP ${response.status} - ${errorText}`,
                         stack: `Endpoint: ${url} | Method: ${options.method || 'GET'}`
                     });
                 }
-
                 return response;
             } catch (networkError) {
-                // 網路斷線或無法連線伺服器
                 reportErrorToBackend({
                     type: 'network_failure',
-                    message: networkError.message || 'Network NetworkError',
+                    message: networkError.message || 'Network Error',
                     stack: `Endpoint: ${url}`
                 });
                 throw networkError;
             }
         }
 
-        let allCompetitions = [];
-        let currentUser = null;
-
+        // 初始化
         document.addEventListener('DOMContentLoaded', () => {
             const savedUser = localStorage.getItem('competition_user');
             if (savedUser) currentUser = JSON.parse(savedUser);
@@ -380,18 +368,13 @@
             fetchCompetitions();
         });
 
-        // 取得安全 HTTP Header Value（避免中文爆發 ISO-8859-1 錯誤）
-        function getAuthHeader() {
-            const user = currentUser || '';
-            return encodeURIComponent(user);
-        }
-
         // 依權限更新 UI 介面
         function updateUIByRole() {
             const authStatus = document.getElementById('authStatus');
             const authBtn = document.getElementById('authBtn');
             const createSection = document.getElementById('createSection');
             const auditLogBtn = document.getElementById('auditLogBtn');
+            const btnErrorLogs = document.getElementById('btn-error-logs');
             const adminMgmtBtn = document.getElementById('adminMgmtBtn');
             const mainTrashBtn = document.getElementById('mainTrashBtn');
 
@@ -402,6 +385,7 @@
                 authBtn.className = "bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg shadow-sm transition";
                 createSection.classList.add('hidden');
                 if (auditLogBtn) auditLogBtn.classList.add('hidden');
+                if (btnErrorLogs) btnErrorLogs.classList.add('hidden');
                 if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
                 if (mainTrashBtn) mainTrashBtn.classList.add('hidden');
             } else {
@@ -413,12 +397,14 @@
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
                     authStatus.innerText = `👑 超級管理員: ${currentUser.username}`;
                     if (auditLogBtn) auditLogBtn.classList.remove('hidden');
+                    if (btnErrorLogs) btnErrorLogs.classList.remove('hidden');
                     if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
                     if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
                 } else {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
                     authStatus.innerText = `🛡️ 管理員: ${currentUser.username}`;
                     if (auditLogBtn) auditLogBtn.classList.add('hidden');
+                    if (btnErrorLogs) btnErrorLogs.classList.add('hidden');
                     if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
                     if (mainTrashBtn) mainTrashBtn.classList.add('hidden');
                 }
@@ -429,7 +415,7 @@
         // API：抓取公開比賽
         async function fetchCompetitions() {
             try {
-                const res = await fetch('/api/competitions');
+                const res = await customFetch('/api/competitions');
                 allCompetitions = await res.json();
                 renderCompetitions(allCompetitions);
             } catch (err) {
@@ -465,20 +451,17 @@
                     </div>
 
                     <div class="flex items-start gap-1.5 self-end md:self-start">
-                        <!-- 一鍵複製文字至剪貼簿 -->
                         <button onclick="copyToClipboard('${escapeHtml(item.name)}', '${item.date || ''}', '${item.end_date || ''}', '${escapeHtml(item.location || '')}')" 
                                 class="text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">
                             📋 複製分享
                         </button>
 
-                        <!-- 僅管理員可見的操作按鈕 -->
                         ${currentUser ? `
                             <button onclick="copyCompetition(${item.id})" class="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded transition">複製發佈</button>
                             <button onclick="startEdit(${item.id})" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">編輯</button>
                             <button onclick="deleteCompetition(${item.id})" class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition">刪除</button>
                         ` : ''}
                     </div>
-
                 </div>
             `).join('');
         }
@@ -504,7 +487,7 @@
             const method = editingId ? 'PUT' : 'POST';
 
             try {
-                const res = await fetch(url, {
+                const res = await customFetch(url, {
                     method,
                     headers: {
                         'Content-Type': 'application/json',
@@ -591,7 +574,7 @@
             if (!confirm('確定要刪除這筆比賽嗎？(資料將移至資源回收桶)')) return;
 
             try {
-                const res = await fetch(`/api/competitions/${id}`, {
+                const res = await customFetch(`/api/competitions/${id}`, {
                     method: 'DELETE',
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
@@ -623,7 +606,7 @@
             const password = document.getElementById('loginPassword').value;
 
             try {
-                const res = await fetch('/api/admin/login', {
+                const res = await customFetch('/api/admin/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password })
@@ -650,34 +633,22 @@
 
             function getActionBadgeStyle(action) {
                 switch (action) {
-                    case 'LOGIN_SUCCESS':
-                        return 'bg-blue-100 text-blue-700 border-blue-300';
-                    case 'LOGIN_FAILED':
-                        return 'bg-red-100 text-red-700 border-red-300 font-bold';
-                    case 'PERMANENT_DELETE_COMPETITION':
-                        return 'bg-rose-100 text-rose-700 border-rose-300';
-                    case 'DELETE_COMPETITION':
-                        return 'bg-amber-100 text-amber-700 border-amber-300';
-                    case 'RESTORE_COMPETITION':
-                        return 'bg-emerald-100 text-emerald-700 border-emerald-300';
-                    default:
-                        return 'bg-slate-100 text-slate-700 border-slate-300';
+                    case 'LOGIN_SUCCESS': return 'bg-blue-100 text-blue-700 border-blue-300';
+                    case 'LOGIN_FAILED': return 'bg-red-100 text-red-700 border-red-300 font-bold';
+                    case 'PERMANENT_DELETE_COMPETITION': return 'bg-rose-100 text-rose-700 border-rose-300';
+                    case 'DELETE_COMPETITION': return 'bg-amber-100 text-amber-700 border-amber-300';
+                    case 'RESTORE_COMPETITION': return 'bg-emerald-100 text-emerald-700 border-emerald-300';
+                    default: return 'bg-slate-100 text-slate-700 border-slate-300';
                 }
             }
 
             try {
-                const res = await fetch('/api/audit-logs', {
+                const res = await customFetch('/api/audit-logs', {
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
-                const data = await res.json();
+                const logs = await res.json();
 
-                // 判斷 HTTP 回傳狀態
-                if (!res.ok) {
-                    throw new Error(data.error || '讀取日誌失敗');
-                }
-
-                const logs = data;
-
+                if (!res.ok) throw new Error(logs.error || '讀取日誌失敗');
                 if (!logs || logs.length === 0) {
                     listEl.innerHTML = '<p class="text-center text-slate-400 py-4">目前尚無操作紀錄</p>';
                     return;
@@ -686,9 +657,7 @@
                 listEl.innerHTML = logs.map(log => {
                     let detailsText = '';
                     if (log.details !== null && log.details !== undefined) {
-                        detailsText = typeof log.details === 'object'
-                            ? JSON.stringify(log.details)
-                            : String(log.details);
+                        detailsText = typeof log.details === 'object' ? JSON.stringify(log.details) : String(log.details);
                     }
 
                     return `
@@ -714,6 +683,51 @@
             document.getElementById('auditLogModal').classList.add('hidden');
         }
 
+        // 錯誤日誌 Modal (超級管理員專屬)
+        async function openErrorLogsModal() {
+            const modalEl = document.getElementById('errorLogsModal');
+            modalEl.classList.remove('hidden');
+            const listEl = document.getElementById('errorLogList');
+            listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入錯誤日誌中...</p>';
+
+            try {
+                const res = await customFetch('/api/admin/error-logs', {
+                    headers: {
+                        'x-user-role': currentUser?.role || '',
+                        'x-user-id': currentUser?.id || currentUser?.username || ''
+                    }
+                });
+
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error || '無法讀取錯誤日誌');
+
+                const logs = result.logs || [];
+                if (logs.length === 0) {
+                    listEl.innerHTML = '<p class="text-center text-emerald-600 py-4 font-sans font-medium">🎉 目前沒有任何異常錯誤紀錄！</p>';
+                    return;
+                }
+
+                listEl.innerHTML = logs.map(l => `
+                    <div class="p-3 bg-red-50 border border-red-200 rounded-lg space-y-1">
+                        <div class="flex justify-between items-center">
+                            <span class="bg-red-200 text-red-800 text-[10px] px-2 py-0.5 rounded font-bold">${escapeHtml(l.error_type)}</span>
+                            <span class="text-slate-400 text-[10px]">${new Date(l.created_at).toLocaleString()}</span>
+                        </div>
+                        <p class="text-red-700 font-semibold text-xs">${escapeHtml(l.message)}</p>
+                        ${l.path ? `<p class="text-slate-500 text-[11px]">路徑: ${escapeHtml(l.path)}</p>` : ''}
+                        ${l.stack_trace ? `<pre class="text-[10px] text-slate-600 bg-white p-2 rounded border border-slate-200 overflow-x-auto mt-1">${escapeHtml(l.stack_trace)}</pre>` : ''}
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error(err);
+                listEl.innerHTML = `<p class="text-red-500 text-center py-4">載入失敗: ${escapeHtml(err.message)}</p>`;
+            }
+        }
+
+        function closeErrorLogsModal() {
+            document.getElementById('errorLogsModal').classList.add('hidden');
+        }
+
         // 帳號管理 Modal 邏輯
         function openAdminModal() {
             document.getElementById('adminModal').classList.remove('hidden');
@@ -729,7 +743,7 @@
             listEl.innerHTML = '<p class="text-center text-slate-400 text-xs py-2">載入帳號清單...</p>';
 
             try {
-                const res = await fetch('/api/admins', {
+                const res = await customFetch('/api/admins', {
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
 
@@ -782,7 +796,7 @@
             }
 
             try {
-                const res = await fetch('/api/admins', {
+                const res = await customFetch('/api/admins', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -808,7 +822,7 @@
             if (!confirm(`確定要刪除帳號 [${idOrUsername}] 嗎？`)) return;
 
             try {
-                const res = await fetch(`/api/admins/${idOrUsername}`, {
+                const res = await customFetch(`/api/admins/${idOrUsername}`, {
                     method: 'DELETE',
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
@@ -838,7 +852,7 @@
             listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入中...</p>';
 
             try {
-                const res = await fetch('/api/competitions/deleted', {
+                const res = await customFetch('/api/competitions/deleted', {
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
                 const deletedItems = await res.json();
@@ -871,7 +885,7 @@
 
         async function restoreCompetition(id) {
             try {
-                const res = await fetch(`/api/competitions/${id}/restore`, {
+                const res = await customFetch(`/api/competitions/${id}/restore`, {
                     method: 'PUT',
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
@@ -889,7 +903,7 @@
             if (!confirm(`⚠️ 警告：此操作不可逆！\n您確定要永久刪除「${name}」嗎？資料庫將無法復原此項目。`)) return;
 
             try {
-                const res = await fetch(`/api/competitions/${id}/hard-delete`, {
+                const res = await customFetch(`/api/competitions/${id}/hard-delete`, {
                     method: 'DELETE',
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
@@ -903,47 +917,6 @@
             } catch (err) {
                 alert('永久刪除失敗：' + err.message);
             }
-        }
-
-        // 1. 判斷權限並顯示按鈕
-        currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-        if (currentUser.role === 'super_admin') {
-            document.getElementById('btn-view-errors')?.classList.remove('hidden');
-        }
-
-        // 2. 點擊按鈕時從 API 抓取並顯示 Error Logs
-        document.getElementById('btn-view-errors')?.addEventListener('click', async () => {
-            try {
-                const res = await fetch('/api/admin/error-logs', {
-                    headers: {
-                        'x-user-role': currentUser.role || '',
-                        'x-user-id': currentUser.id || ''
-                    }
-                });
-
-                const result = await res.json();
-                if (!res.ok) throw new Error(result.error || '無法讀取錯誤日誌');
-
-                // 渲染日誌內容至 Modal
-                showErrorLogsModal(result.logs);
-            } catch (err) {
-                alert('讀取失敗: ' + err.message);
-            }
-        });
-
-        // 3. 渲染 Modal 的 Helper 函式
-        function showErrorLogsModal(logs) {
-            // 可透過 console.table 快速在 DevTools 預覽，或寫入 Modal UI
-            console.table(logs);
-
-            if (logs.length === 0) {
-                alert('🎉 目前沒有任何錯誤紀錄！');
-                return;
-            }
-
-            // 彈出簡短預覽 (或渲染至你專案的 Modal 元件中)
-            const logMessages = logs.map(l => `[${new Date(l.created_at).toLocaleString()}] ${l.error_type}: ${l.message}`).join('\n\n');
-            alert(`📋 最新 ${logs.length} 筆錯誤紀錄：\n\n` + logMessages);
         }
 
         // 搜尋與篩選
@@ -1000,9 +973,7 @@
 
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
-            if (typeof str !== 'string') {
-                str = String(str);
-            }
+            if (typeof str !== 'string') str = String(str);
             return str
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
