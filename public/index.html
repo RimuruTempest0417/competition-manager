@@ -698,9 +698,14 @@
                             <p class="font-bold text-slate-800">${escapeHtml(item.name)}</p>
                             <p class="text-slate-400 mt-0.5">地點: ${escapeHtml(item.location || '未填')} | 日期: ${item.date || '未填'}</p>
                         </div>
-                        <button onclick="restoreCompetition(${item.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded transition">
-                            🔄 復原
-                        </button>
+                        <div class="flex items-center gap-2">
+                            <button onclick="restoreCompetition(${item.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded transition">
+                                🔄 復原
+                            </button>
+                            <button onclick="hardDeleteCompetition(${item.id}, '${escapeHtml(item.name)}')" class="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1.5 rounded transition">
+                                ⚠️ 永久刪除
+                            </button>
+                        </div>
                     </div>
                 `).join('');
             } catch (err) {
@@ -721,6 +726,26 @@
                 fetchCompetitions();
             } catch (err) {
                 alert(err.message);
+            }
+        }
+
+        async function hardDeleteCompetition(id, name) {
+            if (!confirm(`⚠️ 警告：此操作不可逆！\n您確定要永久刪除「${name}」嗎？資料庫將無法復原此項目。`)) return;
+
+            try {
+                const res = await fetch(`/api/competitions/${id}/hard-delete`, {
+                    method: 'DELETE',
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '永久刪除失敗');
+
+                alert('✅ 項目已永久刪除！');
+                fetchTrashList();
+                fetchCompetitions();
+            } catch (err) {
+                alert('永久刪除失敗：' + err.message);
             }
         }
 

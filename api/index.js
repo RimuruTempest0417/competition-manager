@@ -307,6 +307,65 @@ app.delete('/api/competitions/:id', async (req, res) => {
     }
 });
 
+// ⚠️ 專屬超級管理員：硬刪除 (Hard Delete) - 從資料庫徹底抹除
+app.delete('/api/competitions/:id/hard-delete', async (req, res) => {
+    const { id } = req.params;
+    const userId = req.headers['x-user-id'];
+
+    if (!userId) {
+        return res.status(401).json({ error: '未提供身份驗證 Header (x-user-id)' });
+    }
+
+    try {
+        // 1. 建立動態查詢：判斷 userId 是數字 (id) 還是字串 (username)
+        let query = supabase.from('admin_users').select('*');
+
+        const isNumeric = /^\d+$/.test(userId);
+        if (isNumeric) {
+            // 如果 Header 傳來的是純數字 ID
+            query = query.eq('id', parseInt(userId, 10));
+        } else {
+            // 如果 Header 傳來的是字串帳號 (例如: "rimuru")
+            query = query.eq('username', userId);
+        }
+
+        const { data: admin, error: adminErr } = await query.maybeSingle();
+
+        if (adminErr || !admin) {
+            console.error('權限檢查失敗:', adminErr);
+            return res.status(403).json({ error: '找不到對應的管理員帳號' });
+        }
+
+        // 2. 檢查角色權限
+        if (admin.role !== 'super_admin') {
+            return res.status(403).json({ error: '權限不足：僅限超級管理員執行永久刪除' });
+        }
+
+        // 3. 執行硬刪除 (Hard Delete)
+        const { error: deleteErr } = await supabase
+            .from('competitions')
+            .delete()
+            .eq('id', id);
+
+        if (deleteErr) throw deleteErr;
+
+        // 4. 寫入 Audit Log
+        await supabase.from('audit_logs').insert([
+            {
+                user_id: admin.username || userId,
+                action: 'HARD_DELETE_COMPETITION',
+                details: `永久刪除賽事 ID: ${id}`
+            }
+        ]);
+
+        return res.json({ success: true, message: '已成功永久刪除賽事' });
+
+    } catch (err) {
+        console.error('Hard Delete Error:', err);
+        return res.status(500).json({ error: '伺服器錯誤: ' + err.message });
+    }
+});
+
 // 從回收桶復原比賽
 app.put('/api/competitions/:id/restore', async (req, res) => {
     const { id } = req.params;
