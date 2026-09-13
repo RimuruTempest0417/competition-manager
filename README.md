@@ -51,6 +51,7 @@ competition-manager/
 
 ## 📝 版本紀錄 (Changelog)
 
+- **v2.2.3** - 登入事件審計日誌 (Login Event Audit Logs)**：系統自動記錄使用者登入/登出狀態、時間戳記與 IP 位址，提升系統安全性。
 - **v2.2.2** - 權限管理閉環！新增超級管理員專屬「資源回收桶永久刪除 (`HARD_DELETE`)」功能與 API 端點 (`DELETE /api/competitions/:id/hard-delete`)，搭配前端二次防誤刪安全確認 UI。
 - **v2.2.1** - 部署架構重構與雲端遷移！正式將全站託管與 API 無伺服器架構遷移部署至 [Vercel](https://vercel.com/)，配置 `vercel.json` 路由重定向與 Serverless Functions，大幅提升全域連線載入速度與穩定度。
 - **v2.2.0** - 系統資安與時間維度升級！完成賽事「結束日期/時間 (`end_date`/`end_time`)」支援，並導入 Supabase `audit_logs` 資料表與超級管理員專屬「📜 操作日誌 Modal」，完整追蹤增刪改查之安全審計軌跡。

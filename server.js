@@ -24,6 +24,29 @@ function sanitizeInput(val) {
     return str === '' ? null : str;
 }
 
+// 📜 Audit Log 審計日誌寫入輔助函式
+async function logAuditAction(userId, action, competitionId = null, details = {}) {
+    try {
+        const { error } = await supabase
+            .from('audit_logs')
+            .insert([
+                {
+                    user_id: userId || 'UNKNOWN',
+                    action: action,
+                    competition_id: competitionId,
+                    details: details,
+                    created_at: new Date().toISOString()
+                }
+            ]);
+
+        if (error) {
+            console.error('⚠️ Audit Log 寫入失敗:', error.message);
+        }
+    } catch (err) {
+        console.error('⚠️ Audit Log 執行例外:', err);
+    }
+}
+
 // Helper: 寫入 Supabase 審計日誌 (audit_logs 表格)
 async function logAudit(userId, action, targetId = null, details = null) {
     try {
@@ -163,31 +186,39 @@ app.delete('/api/admins/:id', requireSuperAdmin, async (req, res) => {
 });
 
 // 🔐 管理員登入驗證 API
-app.post('/api/auth/login', async (req, res) => {
+// 範例：管理員登入驗證端點
+app.post('/api/admin/login', async (req, res) => {
     const { username, password } = req.body;
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
-    try {
-        const { data: user, error } = await supabase
-            .from('admin_users')
-            .select('id, username, role, password')
-            .eq('username', username)
-            .single();
+    // 1. 查詢管理員帳號與驗證密碼
+    const { data: user, error } = await supabase
+        .from('admin_users')
+        .select('*')
+        .eq('username', username)
+        .single();
 
-        if (error || !user || user.password !== password) {
-            return res.status(401).json({ error: '帳號或密碼錯誤' });
-        }
-
-        res.json({
-            user: {
-                id: user.id,
-                username: user.username,
-                role: user.role
-            }
+    // 驗證失敗情況（帳號不存在或密碼不符）
+    if (error || !user || user.password !== password) {
+        // ❌ 紀錄登入失敗日誌 (v2.2.3)
+        await logAuditAction(username || 'UNKNOWN', 'LOGIN_FAILED', null, {
+            reason: '帳號或密碼錯誤',
+            ip: clientIp
         });
-    } catch (err) {
-        console.error('❌ 登入失敗:', err.message);
-        res.status(500).json({ error: '伺服器錯誤: ' + err.message });
+
+        return res.status(401).json({ error: '帳號或密碼錯誤' });
     }
+
+    // ✅ 紀錄登入成功日誌 (v2.2.3)
+    await logAuditAction(user.username, 'LOGIN_SUCCESS', null, {
+        role: user.role,
+        ip: clientIp
+    });
+
+    res.json({
+        message: '登入成功',
+        user: { id: user.id, username: user.username, role: user.role }
+    });
 });
 
 // 📋 取得所有未刪除比賽
@@ -398,17 +429,24 @@ app.put('/api/competitions/:id/restore', async (req, res) => {
 });
 
 // 📜 讀取審計日誌 API
-app.get('/api/audit-logs', async (req, res) => {
+// 取得操作日誌列表 (僅限超級管理員)
+app.get('/api/audit-logs', requireSuperAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('audit_logs')
             .select('*')
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false })
+            .limit(50); // 預設拉取最新 50 筆
 
-        if (error) throw error;
+        if (error) {
+            console.error(' Fetch audit_logs error:', error.message);
+            return res.status(500).json({ error: error.message });
+        }
+
+        // 修正此處：將原先的 logs 改為 data
         res.json(data || []);
     } catch (err) {
-        res.status(500).json({ error: '無法讀取審計日誌: ' + err.message });
+        res.status(500).json({ error: '伺服器錯誤: ' + err.message });
     }
 });
 

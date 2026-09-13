@@ -506,7 +506,7 @@
             const password = document.getElementById('loginPassword').value;
 
             try {
-                const res = await fetch('/api/auth/login', {
+                const res = await fetch('/api/admin/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password })
@@ -526,30 +526,69 @@
 
         // 操作日誌 Modal
         async function openAuditLogModal() {
-            document.getElementById('auditLogModal').classList.remove('hidden');
+            const modalEl = document.getElementById('auditLogModal');
+            modalEl.classList.remove('hidden');
             const listEl = document.getElementById('auditLogList');
             listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入日誌中...</p>';
 
+            function getActionBadgeStyle(action) {
+                switch (action) {
+                    case 'LOGIN_SUCCESS':
+                        return 'bg-blue-100 text-blue-700 border-blue-300';
+                    case 'LOGIN_FAILED':
+                        return 'bg-red-100 text-red-700 border-red-300 font-bold';
+                    case 'PERMANENT_DELETE_COMPETITION':
+                        return 'bg-rose-100 text-rose-700 border-rose-300';
+                    case 'DELETE_COMPETITION':
+                        return 'bg-amber-100 text-amber-700 border-amber-300';
+                    case 'RESTORE_COMPETITION':
+                        return 'bg-emerald-100 text-emerald-700 border-emerald-300';
+                    default:
+                        return 'bg-slate-100 text-slate-700 border-slate-300';
+                }
+            }
+
             try {
-                const res = await fetch('/api/audit-logs');
-                const logs = await res.json();
+                const res = await fetch('/api/audit-logs', {
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
+                });
+                const data = await res.json();
+
+                // 判斷 HTTP 回傳狀態
+                if (!res.ok) {
+                    throw new Error(data.error || '讀取日誌失敗');
+                }
+
+                const logs = data;
 
                 if (!logs || logs.length === 0) {
                     listEl.innerHTML = '<p class="text-center text-slate-400 py-4">目前尚無操作紀錄</p>';
                     return;
                 }
 
-                listEl.innerHTML = logs.map(log => `
-                    <div class="p-2.5 bg-slate-50 border border-slate-200 rounded flex justify-between items-start">
-                        <div>
-                            <span class="font-bold text-indigo-600">[${escapeHtml(log.action)}]</span>
-                            <span class="text-slate-600 ml-2">使用者: ${escapeHtml(log.user_id)}</span>
-                            ${log.details ? `<p class="text-slate-500 text-[11px] mt-1">詳情: ${escapeHtml(log.details)}</p>` : ''}
+                listEl.innerHTML = logs.map(log => {
+                    let detailsText = '';
+                    if (log.details !== null && log.details !== undefined) {
+                        detailsText = typeof log.details === 'object'
+                            ? JSON.stringify(log.details)
+                            : String(log.details);
+                    }
+
+                    return `
+                        <div class="p-2.5 bg-slate-50 border border-slate-200 rounded flex justify-between items-start">
+                            <div>
+                                <span class="text-[10px] px-2 py-0.5 rounded border font-mono ${getActionBadgeStyle(log.action)}">
+                                    ${escapeHtml(log.action || '')}
+                                </span>
+                                <span class="text-slate-600 ml-2 font-medium">使用者: ${escapeHtml(log.user_id || '未知')}</span>
+                                ${detailsText ? `<p class="text-slate-500 text-[11px] mt-1">詳情: ${escapeHtml(detailsText)}</p>` : ''}
+                            </div>
+                            <span class="text-slate-400 text-[11px] whitespace-nowrap ml-2">${new Date(log.created_at).toLocaleString()}</span>
                         </div>
-                        <span class="text-slate-400 text-[11px] whitespace-nowrap ml-2">${new Date(log.created_at).toLocaleString()}</span>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
             } catch (err) {
+                console.error('Audit Log Error:', err);
                 listEl.innerHTML = '<p class="text-red-500 text-center py-4">無法載入日誌</p>';
             }
         }
@@ -802,10 +841,16 @@
         }
 
         function escapeHtml(str) {
-            if (!str) return '';
-            return str.replace(/[&<>"']/g, m => ({
-                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-            }[m]));
+            if (str === null || str === undefined) return '';
+            if (typeof str !== 'string') {
+                str = String(str);
+            }
+            return str
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
         }
     </script>
 </body>
