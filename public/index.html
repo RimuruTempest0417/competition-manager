@@ -33,6 +33,9 @@
                     class="hidden text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-300 transition flex items-center gap-1">
                     📜 操作日誌
                 </button>
+                <button id="btn-view-errors" class="hidden bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition">
+                    ⚠️ 錯誤日誌
+                </button>
 
                 <!-- 超級管理員專屬功能按鈕：帳號管理 -->
                 <button id="adminMgmtBtn" onclick="openAdminModal()"
@@ -259,93 +262,190 @@
     </div>
 
     <script>
-        let allCompetitions = [];
-        let currentUser = null;
 
-        document.addEventListener('DOMContentLoaded', () => {
-            const savedUser = localStorage.getItem('competition_user');
-            if (savedUser) currentUser = JSON.parse(savedUser);
-            updateUIByRole();
-            fetchCompetitions();
-        });
+        // ==========================================
+        // 1. 自動錯誤上報 Helper 函式
+        // ==========================================
+        async function reportErrorToBackend(errorData) {
+            try {
+                // 取得目前登入者的 ID (假設存在 localStorage 或全域變數中)
+                const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+                const userId = currentUser.id || null;
+                if (currentUser && currentUser.role === 'super_admin') {
+                    const errBtn = document.getElementById('btn-view-errors');
+                    if (errBtn) errBtn.classList.remove('hidden');
+                }
 
-        // 取得安全 HTTP Header Value（避免中文爆發 ISO-8859-1 錯誤）
-        function getAuthHeader() {
-            const user = currentUser || '';
-            return encodeURIComponent(user);
-        }
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                if (userId) {
+                    headers['x-user-id'] = userId;
+                }
 
-        // 發送 API 時使用：
-        fetch('/api/competitions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-user-id': getAuthHeader() // 👈 編碼後的安全的 ASCII 字串
-            },
-            body: JSON.stringify(payload)
-        });
+                    await fetch('/api/logs/error', {
+                        method: 'POST',
+                        headers: headers,
+                        body: JSON.stringify({
+                            error_type: errorData.type || 'frontend_error',
+                            message: errorData.message || 'Unknown Error',
+                            stack_trace: errorData.stack || '',
+                            path: window.location.pathname + window.location.search
+                        })
+                    });
+                } catch (err) {
+                    // 避免上報失敗造成無窮迴圈，僅在 Console 印出警告
+                    console.warn('[Error Reporter Failed]:', err);
+                }
+            }
 
-        // 依權限更新 UI 介面
-        function updateUIByRole() {
-            const authStatus = document.getElementById('authStatus');
-            const authBtn = document.getElementById('authBtn');
-            const createSection = document.getElementById('createSection');
-            const auditLogBtn = document.getElementById('auditLogBtn');
-            const adminMgmtBtn = document.getElementById('adminMgmtBtn');
-            const mainTrashBtn = document.getElementById('mainTrashBtn');
+        // ==========================================
+        // 2. 全域未捕捉 JavaScript 異常 (JS Runtime Errors)
+        // ==========================================
+        window.addEventListener('error', (event) => {
+                // 過濾掉靜態資源載入失敗的 error (如 <img> 或 <script> 載入 404)
+                if (event.target && (event.target.tagName === 'IMG' || event.target.tagName === 'SCRIPT')) {
+                    return;
+                }
 
-            if (!currentUser) {
-                authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200";
-                authStatus.innerText = "👤 普通訪客 (唯讀)";
-                authBtn.innerText = "管理員登入";
-                authBtn.className = "bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg shadow-sm transition";
-                createSection.classList.add('hidden');
-                if (auditLogBtn) auditLogBtn.classList.add('hidden');
-                if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
-                if (mainTrashBtn) mainTrashBtn.classList.add('hidden');
-            } else {
-                authBtn.innerText = "登出";
-                authBtn.className = "bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-medium px-4 py-1.5 rounded-lg transition";
-                createSection.classList.remove('hidden');
+                const errorData = {
+                    type: 'frontend_js_error',
+                    message: event.message || 'Script Error',
+                    stack: event.error ? event.error.stack : `File: ${event.filename}:${event.lineno}:${event.colno}`
+                };
 
-                if (currentUser.role === 'super_admin') {
-                    authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
-                    authStatus.innerText = `👑 超級管理員: ${currentUser.username}`;
-                    if (auditLogBtn) auditLogBtn.classList.remove('hidden');
-                    if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
-                    if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
-                } else {
-                    authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
-                    authStatus.innerText = `🛡️ 管理員: ${currentUser.username}`;
+                reportErrorToBackend(errorData);
+            });
+
+            // ==========================================
+            // 3. 全域未處理的 Promise 拒絕 (Unhandled Promise Rejections)
+            // ==========================================
+            window.addEventListener('unhandledrejection', (event) => {
+                const reason = event.reason;
+
+                const errorData = {
+                    type: 'frontend_promise_rejection',
+                    message: reason instanceof Error ? reason.message : String(reason),
+                    stack: reason instanceof Error ? reason.stack : ''
+                };
+
+                reportErrorToBackend(errorData);
+            });
+
+            // ==========================================
+            // 4. 通用 Fetch API 封裝 (自動攔截 4xx / 5xx 請求失敗)
+            // ==========================================
+            async function customFetch(url, options = {}) {
+                try {
+                    const response = await fetch(url, options);
+
+                    // 如果 HTTP Status 不在 200-299 範圍內，自動寫入日誌
+                    if (!response.ok) {
+                        const clonedRes = response.clone();
+                        let errorText = '';
+                        try {
+                            const errJson = await clonedRes.json();
+                            errorText = errJson.message || errJson.error || response.statusText;
+                        } catch (e) {
+                            errorText = await clonedRes.text();
+                        }
+
+                        reportErrorToBackend({
+                            type: 'api_failure',
+                            message: `HTTP ${response.status} - ${errorText}`,
+                            stack: `Endpoint: ${url} | Method: ${options.method || 'GET'}`
+                        });
+                    }
+
+                    return response;
+                } catch (networkError) {
+                    // 網路斷線或無法連線伺服器
+                    reportErrorToBackend({
+                        type: 'network_failure',
+                        message: networkError.message || 'Network NetworkError',
+                        stack: `Endpoint: ${url}`
+                    });
+                    throw networkError;
+                }
+            }
+
+            let allCompetitions = [];
+            let currentUser = null;
+
+            document.addEventListener('DOMContentLoaded', () => {
+                const savedUser = localStorage.getItem('competition_user');
+                if (savedUser) currentUser = JSON.parse(savedUser);
+                updateUIByRole();
+                fetchCompetitions();
+            });
+
+            // 取得安全 HTTP Header Value（避免中文爆發 ISO-8859-1 錯誤）
+            function getAuthHeader() {
+                const user = currentUser || '';
+                return encodeURIComponent(user);
+            }
+
+            // 依權限更新 UI 介面
+            function updateUIByRole() {
+                const authStatus = document.getElementById('authStatus');
+                const authBtn = document.getElementById('authBtn');
+                const createSection = document.getElementById('createSection');
+                const auditLogBtn = document.getElementById('auditLogBtn');
+                const adminMgmtBtn = document.getElementById('adminMgmtBtn');
+                const mainTrashBtn = document.getElementById('mainTrashBtn');
+
+                if (!currentUser) {
+                    authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200";
+                    authStatus.innerText = "👤 普通訪客 (唯讀)";
+                    authBtn.innerText = "管理員登入";
+                    authBtn.className = "bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg shadow-sm transition";
+                    createSection.classList.add('hidden');
                     if (auditLogBtn) auditLogBtn.classList.add('hidden');
                     if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
                     if (mainTrashBtn) mainTrashBtn.classList.add('hidden');
+                } else {
+                    authBtn.innerText = "登出";
+                    authBtn.className = "bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-medium px-4 py-1.5 rounded-lg transition";
+                    createSection.classList.remove('hidden');
+
+                    if (currentUser.role === 'super_admin') {
+                        authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
+                        authStatus.innerText = `👑 超級管理員: ${currentUser.username}`;
+                        if (auditLogBtn) auditLogBtn.classList.remove('hidden');
+                        if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
+                        if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
+                    } else {
+                        authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
+                        authStatus.innerText = `🛡️ 管理員: ${currentUser.username}`;
+                        if (auditLogBtn) auditLogBtn.classList.add('hidden');
+                        if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
+                        if (mainTrashBtn) mainTrashBtn.classList.add('hidden');
+                    }
+                }
+                renderCompetitions(allCompetitions);
+            }
+
+            // API：抓取公開比賽
+            async function fetchCompetitions() {
+                try {
+                    const res = await fetch('/api/competitions');
+                    allCompetitions = await res.json();
+                    renderCompetitions(allCompetitions);
+                } catch (err) {
+                    console.error(err);
+                    document.getElementById('competitionList').innerHTML = `<p class="text-red-500 text-center py-4">無法載入比賽資料</p>`;
                 }
             }
-            renderCompetitions(allCompetitions);
-        }
 
-        // API：抓取公開比賽
-        async function fetchCompetitions() {
-            try {
-                const res = await fetch('/api/competitions');
-                allCompetitions = await res.json();
-                renderCompetitions(allCompetitions);
-            } catch (err) {
-                console.error(err);
-                document.getElementById('competitionList').innerHTML = `<p class="text-red-500 text-center py-4">無法載入比賽資料</p>`;
-            }
-        }
+            // 渲染比賽列表
+            function renderCompetitions(data) {
+                const listEl = document.getElementById('competitionList');
+                if (!data || data.length === 0) {
+                    listEl.innerHTML = `<p class="text-center text-slate-400 py-8">目前無符合條件的比賽資料</p>`;
+                    return;
+                }
 
-        // 渲染比賽列表
-        function renderCompetitions(data) {
-            const listEl = document.getElementById('competitionList');
-            if (!data || data.length === 0) {
-                listEl.innerHTML = `<p class="text-center text-slate-400 py-8">目前無符合條件的比賽資料</p>`;
-                return;
-            }
-
-            listEl.innerHTML = data.map(item => `
+                listEl.innerHTML = data.map(item => `
                 <div class="border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition bg-white shadow-sm flex flex-col md:flex-row justify-between gap-4">
                     <div class="space-y-2 flex-1">
                         <div class="flex items-center gap-2 flex-wrap">
@@ -380,217 +480,217 @@
 
                 </div>
             `).join('');
-        }
-
-        // 表單提交（新增或編輯）
-        async function handleFormSubmit(e) {
-            e.preventDefault();
-            if (!currentUser) return alert('請先登入');
-
-            const editingId = document.getElementById('editingId').value;
-            const payload = {
-                name: document.getElementById('name').value,
-                location: document.getElementById('location').value,
-                date: document.getElementById('date').value,
-                time: document.getElementById('time').value,
-                end_date: document.getElementById('end_date').value,
-                end_time: document.getElementById('end_time').value,
-                description: document.getElementById('description').value,
-                is_registration_open: document.getElementById('is_registration_open').checked
-            };
-
-            const url = editingId ? `/api/competitions/${editingId}` : '/api/competitions';
-            const method = editingId ? 'PUT' : 'POST';
-
-            try {
-                const res = await fetch(url, {
-                    method,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-user-id': currentUser.username || currentUser.id
-                    },
-                    body: JSON.stringify(payload)
-                });
-
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '儲存失敗');
-
-                resetForm();
-                fetchCompetitions();
-                alert(editingId ? '比賽更新成功！' : '賽事發佈成功！');
-            } catch (err) {
-                alert('操作失敗：' + err.message);
             }
-        }
 
-        function startEdit(id) {
-            const item = allCompetitions.find(c => c.id === id);
-            if (!item) return;
+            // 表單提交（新增或編輯）
+            async function handleFormSubmit(e) {
+                e.preventDefault();
+                if (!currentUser) return alert('請先登入');
 
-            document.getElementById('editingId').value = item.id;
-            document.getElementById('name').value = item.name || '';
-            document.getElementById('location').value = item.location || '';
-            document.getElementById('date').value = item.date || '';
-            document.getElementById('time').value = item.time || '';
-            document.getElementById('end_date').value = item.end_date || '';
-            document.getElementById('end_time').value = item.end_time || '';
-            document.getElementById('description').value = item.description || '';
-            document.getElementById('is_registration_open').checked = !!item.is_registration_open;
+                const editingId = document.getElementById('editingId').value;
+                const payload = {
+                    name: document.getElementById('name').value,
+                    location: document.getElementById('location').value,
+                    date: document.getElementById('date').value,
+                    time: document.getElementById('time').value,
+                    end_date: document.getElementById('end_date').value,
+                    end_time: document.getElementById('end_time').value,
+                    description: document.getElementById('description').value,
+                    is_registration_open: document.getElementById('is_registration_open').checked
+                };
 
-            document.getElementById('formTitle').innerText = '✏️ 編輯比賽資料';
-            document.getElementById('submitBtn').innerText = '儲存變更';
-            document.getElementById('cancelEditBtn').classList.remove('hidden');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
+                const url = editingId ? `/api/competitions/${editingId}` : '/api/competitions';
+                const method = editingId ? 'PUT' : 'POST';
 
-        function copyCompetition(id) {
-            const item = allCompetitions.find(c => c.id === id);
-            if (!item) return;
+                try {
+                    const res = await fetch(url, {
+                        method,
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-user-id': currentUser.username || currentUser.id
+                        },
+                        body: JSON.stringify(payload)
+                    });
 
-            document.getElementById('editingId').value = '';
-            document.getElementById('name').value = `${item.name} (複製)`;
-            document.getElementById('location').value = item.location || '';
-            document.getElementById('date').value = item.date || '';
-            document.getElementById('time').value = item.time || '';
-            document.getElementById('end_date').value = item.end_date || '';
-            document.getElementById('end_time').value = item.end_time || '';
-            document.getElementById('description').value = item.description || '';
-            document.getElementById('is_registration_open').checked = !!item.is_registration_open;
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '儲存失敗');
 
-            document.getElementById('formTitle').innerText = '➕ 發佈新比賽 (複製內容)';
-            document.getElementById('submitBtn').innerText = '發佈比賽';
-            document.getElementById('cancelEditBtn').classList.remove('hidden');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-
-        function copyToClipboard(name, date, endDate, location) {
-            let dateStr = date || '未定';
-            if (date && endDate) {
-                dateStr = `${date} ~ ${endDate}`;
-            }
-            const textToCopy = `🏆 【${name}】\n📅 日期：${dateStr}\n📍 地點：${location || '未定'}\n\n👉 歡迎關注與報名！`;
-
-            navigator.clipboard.writeText(textToCopy)
-                .then(() => alert('✅ 比賽資訊已成功複製到剪貼簿！'))
-                .catch(err => {
-                    console.error('複製失敗:', err);
-                    alert('❌ 複製失敗，請手動複製。');
-                });
-        }
-
-        function resetForm() {
-            document.getElementById('competitionForm').reset();
-            document.getElementById('editingId').value = '';
-            document.getElementById('formTitle').innerText = '➕ 發佈新比賽';
-            document.getElementById('submitBtn').innerText = '發佈比賽';
-            document.getElementById('cancelEditBtn').classList.add('hidden');
-        }
-
-        async function deleteCompetition(id) {
-            if (!confirm('確定要刪除這筆比賽嗎？(資料將移至資源回收桶)')) return;
-
-            try {
-                const res = await fetch(`/api/competitions/${id}`, {
-                    method: 'DELETE',
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
-                });
-
-                if (!res.ok) throw new Error('刪除失敗');
-                fetchCompetitions();
-            } catch (err) {
-                alert(err.message);
-            }
-        }
-
-        // 登入相關邏輯
-        function toggleAuth() {
-            if (currentUser) {
-                currentUser = null;
-                localStorage.removeItem('competition_user');
-                updateUIByRole();
-            } else {
-                document.getElementById('loginModal').classList.remove('hidden');
-            }
-        }
-
-        function closeLoginModal() {
-            document.getElementById('loginModal').classList.add('hidden');
-        }
-
-        async function performLogin() {
-            const username = document.getElementById('loginUsername').value;
-            const password = document.getElementById('loginPassword').value;
-
-            try {
-                const res = await fetch('/api/admin/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
-
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '登入失敗');
-
-                currentUser = data.user;
-                localStorage.setItem('competition_user', JSON.stringify(currentUser));
-                closeLoginModal();
-                updateUIByRole();
-            } catch (err) {
-                alert(err.message);
-            }
-        }
-
-        // 操作日誌 Modal
-        async function openAuditLogModal() {
-            const modalEl = document.getElementById('auditLogModal');
-            modalEl.classList.remove('hidden');
-            const listEl = document.getElementById('auditLogList');
-            listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入日誌中...</p>';
-
-            function getActionBadgeStyle(action) {
-                switch (action) {
-                    case 'LOGIN_SUCCESS':
-                        return 'bg-blue-100 text-blue-700 border-blue-300';
-                    case 'LOGIN_FAILED':
-                        return 'bg-red-100 text-red-700 border-red-300 font-bold';
-                    case 'PERMANENT_DELETE_COMPETITION':
-                        return 'bg-rose-100 text-rose-700 border-rose-300';
-                    case 'DELETE_COMPETITION':
-                        return 'bg-amber-100 text-amber-700 border-amber-300';
-                    case 'RESTORE_COMPETITION':
-                        return 'bg-emerald-100 text-emerald-700 border-emerald-300';
-                    default:
-                        return 'bg-slate-100 text-slate-700 border-slate-300';
+                    resetForm();
+                    fetchCompetitions();
+                    alert(editingId ? '比賽更新成功！' : '賽事發佈成功！');
+                } catch (err) {
+                    alert('操作失敗：' + err.message);
                 }
             }
 
-            try {
-                const res = await fetch('/api/audit-logs', {
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
-                });
-                const data = await res.json();
+            function startEdit(id) {
+                const item = allCompetitions.find(c => c.id === id);
+                if (!item) return;
 
-                // 判斷 HTTP 回傳狀態
-                if (!res.ok) {
-                    throw new Error(data.error || '讀取日誌失敗');
+                document.getElementById('editingId').value = item.id;
+                document.getElementById('name').value = item.name || '';
+                document.getElementById('location').value = item.location || '';
+                document.getElementById('date').value = item.date || '';
+                document.getElementById('time').value = item.time || '';
+                document.getElementById('end_date').value = item.end_date || '';
+                document.getElementById('end_time').value = item.end_time || '';
+                document.getElementById('description').value = item.description || '';
+                document.getElementById('is_registration_open').checked = !!item.is_registration_open;
+
+                document.getElementById('formTitle').innerText = '✏️ 編輯比賽資料';
+                document.getElementById('submitBtn').innerText = '儲存變更';
+                document.getElementById('cancelEditBtn').classList.remove('hidden');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+
+            function copyCompetition(id) {
+                const item = allCompetitions.find(c => c.id === id);
+                if (!item) return;
+
+                document.getElementById('editingId').value = '';
+                document.getElementById('name').value = `${item.name} (複製)`;
+                document.getElementById('location').value = item.location || '';
+                document.getElementById('date').value = item.date || '';
+                document.getElementById('time').value = item.time || '';
+                document.getElementById('end_date').value = item.end_date || '';
+                document.getElementById('end_time').value = item.end_time || '';
+                document.getElementById('description').value = item.description || '';
+                document.getElementById('is_registration_open').checked = !!item.is_registration_open;
+
+                document.getElementById('formTitle').innerText = '➕ 發佈新比賽 (複製內容)';
+                document.getElementById('submitBtn').innerText = '發佈比賽';
+                document.getElementById('cancelEditBtn').classList.remove('hidden');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+
+            function copyToClipboard(name, date, endDate, location) {
+                let dateStr = date || '未定';
+                if (date && endDate) {
+                    dateStr = `${date} ~ ${endDate}`;
+                }
+                const textToCopy = `🏆 【${name}】\n📅 日期：${dateStr}\n📍 地點：${location || '未定'}\n\n👉 歡迎關注與報名！`;
+
+                navigator.clipboard.writeText(textToCopy)
+                    .then(() => alert('✅ 比賽資訊已成功複製到剪貼簿！'))
+                    .catch(err => {
+                        console.error('複製失敗:', err);
+                        alert('❌ 複製失敗，請手動複製。');
+                    });
+            }
+
+            function resetForm() {
+                document.getElementById('competitionForm').reset();
+                document.getElementById('editingId').value = '';
+                document.getElementById('formTitle').innerText = '➕ 發佈新比賽';
+                document.getElementById('submitBtn').innerText = '發佈比賽';
+                document.getElementById('cancelEditBtn').classList.add('hidden');
+            }
+
+            async function deleteCompetition(id) {
+                if (!confirm('確定要刪除這筆比賽嗎？(資料將移至資源回收桶)')) return;
+
+                try {
+                    const res = await fetch(`/api/competitions/${id}`, {
+                        method: 'DELETE',
+                        headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    });
+
+                    if (!res.ok) throw new Error('刪除失敗');
+                    fetchCompetitions();
+                } catch (err) {
+                    alert(err.message);
+                }
+            }
+
+            // 登入相關邏輯
+            function toggleAuth() {
+                if (currentUser) {
+                    currentUser = null;
+                    localStorage.removeItem('competition_user');
+                    updateUIByRole();
+                } else {
+                    document.getElementById('loginModal').classList.remove('hidden');
+                }
+            }
+
+            function closeLoginModal() {
+                document.getElementById('loginModal').classList.add('hidden');
+            }
+
+            async function performLogin() {
+                const username = document.getElementById('loginUsername').value;
+                const password = document.getElementById('loginPassword').value;
+
+                try {
+                    const res = await fetch('/api/admin/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, password })
+                    });
+
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '登入失敗');
+
+                    currentUser = data.user;
+                    localStorage.setItem('competition_user', JSON.stringify(currentUser));
+                    closeLoginModal();
+                    updateUIByRole();
+                } catch (err) {
+                    alert(err.message);
+                }
+            }
+
+            // 操作日誌 Modal
+            async function openAuditLogModal() {
+                const modalEl = document.getElementById('auditLogModal');
+                modalEl.classList.remove('hidden');
+                const listEl = document.getElementById('auditLogList');
+                listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入日誌中...</p>';
+
+                function getActionBadgeStyle(action) {
+                    switch (action) {
+                        case 'LOGIN_SUCCESS':
+                            return 'bg-blue-100 text-blue-700 border-blue-300';
+                        case 'LOGIN_FAILED':
+                            return 'bg-red-100 text-red-700 border-red-300 font-bold';
+                        case 'PERMANENT_DELETE_COMPETITION':
+                            return 'bg-rose-100 text-rose-700 border-rose-300';
+                        case 'DELETE_COMPETITION':
+                            return 'bg-amber-100 text-amber-700 border-amber-300';
+                        case 'RESTORE_COMPETITION':
+                            return 'bg-emerald-100 text-emerald-700 border-emerald-300';
+                        default:
+                            return 'bg-slate-100 text-slate-700 border-slate-300';
+                    }
                 }
 
-                const logs = data;
+                try {
+                    const res = await fetch('/api/audit-logs', {
+                        headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    });
+                    const data = await res.json();
 
-                if (!logs || logs.length === 0) {
-                    listEl.innerHTML = '<p class="text-center text-slate-400 py-4">目前尚無操作紀錄</p>';
-                    return;
-                }
-
-                listEl.innerHTML = logs.map(log => {
-                    let detailsText = '';
-                    if (log.details !== null && log.details !== undefined) {
-                        detailsText = typeof log.details === 'object'
-                            ? JSON.stringify(log.details)
-                            : String(log.details);
+                    // 判斷 HTTP 回傳狀態
+                    if (!res.ok) {
+                        throw new Error(data.error || '讀取日誌失敗');
                     }
 
-                    return `
+                    const logs = data;
+
+                    if (!logs || logs.length === 0) {
+                        listEl.innerHTML = '<p class="text-center text-slate-400 py-4">目前尚無操作紀錄</p>';
+                        return;
+                    }
+
+                    listEl.innerHTML = logs.map(log => {
+                        let detailsText = '';
+                        if (log.details !== null && log.details !== undefined) {
+                            detailsText = typeof log.details === 'object'
+                                ? JSON.stringify(log.details)
+                                : String(log.details);
+                        }
+
+                        return `
                         <div class="p-2.5 bg-slate-50 border border-slate-200 rounded flex justify-between items-start">
                             <div>
                                 <span class="text-[10px] px-2 py-0.5 rounded border font-mono ${getActionBadgeStyle(log.action)}">
@@ -602,49 +702,49 @@
                             <span class="text-slate-400 text-[11px] whitespace-nowrap ml-2">${new Date(log.created_at).toLocaleString()}</span>
                         </div>
                     `;
-                }).join('');
-            } catch (err) {
-                console.error('Audit Log Error:', err);
-                listEl.innerHTML = '<p class="text-red-500 text-center py-4">無法載入日誌</p>';
-            }
-        }
-
-        function closeAuditLogModal() {
-            document.getElementById('auditLogModal').classList.add('hidden');
-        }
-
-        // 帳號管理 Modal 邏輯
-        function openAdminModal() {
-            document.getElementById('adminModal').classList.remove('hidden');
-            fetchAdminList();
-        }
-
-        function closeAdminModal() {
-            document.getElementById('adminModal').classList.add('hidden');
-        }
-
-        async function fetchAdminList() {
-            const listEl = document.getElementById('adminList');
-            listEl.innerHTML = '<p class="text-center text-slate-400 text-xs py-2">載入帳號清單...</p>';
-
-            try {
-                const res = await fetch('/api/admins', {
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
-                });
-
-                if (!res.ok) throw new Error('無法取得管理員清單');
-                const admins = await res.json();
-
-                if (!admins || admins.length === 0) {
-                    listEl.innerHTML = '<p class="text-center text-slate-400 text-xs py-2">目前沒有其他管理員帳號</p>';
-                    return;
+                    }).join('');
+                } catch (err) {
+                    console.error('Audit Log Error:', err);
+                    listEl.innerHTML = '<p class="text-red-500 text-center py-4">無法載入日誌</p>';
                 }
+            }
 
-                listEl.innerHTML = admins.map(a => {
-                    const targetId = a.id || a._id;
-                    const isSelf = (currentUser && (a.username === currentUser.username || targetId === currentUser.id));
+            function closeAuditLogModal() {
+                document.getElementById('auditLogModal').classList.add('hidden');
+            }
 
-                    return `
+            // 帳號管理 Modal 邏輯
+            function openAdminModal() {
+                document.getElementById('adminModal').classList.remove('hidden');
+                fetchAdminList();
+            }
+
+            function closeAdminModal() {
+                document.getElementById('adminModal').classList.add('hidden');
+            }
+
+            async function fetchAdminList() {
+                const listEl = document.getElementById('adminList');
+                listEl.innerHTML = '<p class="text-center text-slate-400 text-xs py-2">載入帳號清單...</p>';
+
+                try {
+                    const res = await fetch('/api/admins', {
+                        headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    });
+
+                    if (!res.ok) throw new Error('無法取得管理員清單');
+                    const admins = await res.json();
+
+                    if (!admins || admins.length === 0) {
+                        listEl.innerHTML = '<p class="text-center text-slate-400 text-xs py-2">目前沒有其他管理員帳號</p>';
+                        return;
+                    }
+
+                    listEl.innerHTML = admins.map(a => {
+                        const targetId = a.id || a._id;
+                        const isSelf = (currentUser && (a.username === currentUser.username || targetId === currentUser.id));
+
+                        return `
                         <div class="flex justify-between items-center bg-slate-100 p-2.5 rounded text-xs border border-slate-200">
                             <div>
                                 <span class="font-bold text-slate-800">${escapeHtml(a.username)}</span>
@@ -658,96 +758,96 @@
                             ` : '<span class="text-slate-400 font-medium px-2 py-0.5">目前帳號</span>'}
                         </div>
                     `;
-                }).join('');
-            } catch (err) {
-                console.error(err);
-                listEl.innerHTML = `<p class="text-red-500 text-center text-xs py-2">${err.message}</p>`;
-            }
-        }
-
-        async function handleAddAdmin(e) {
-            e.preventDefault();
-            const usernameInput = document.getElementById('newAdminUser');
-            const passwordInput = document.getElementById('newAdminPass');
-            const roleSelect = document.getElementById('newAdminRole');
-
-            const username = usernameInput.value.trim();
-            const password = passwordInput.value.trim();
-            const role = roleSelect.value;
-
-            if (!username || !password) {
-                alert('請完整填寫帳號與密碼');
-                return;
+                    }).join('');
+                } catch (err) {
+                    console.error(err);
+                    listEl.innerHTML = `<p class="text-red-500 text-center text-xs py-2">${err.message}</p>`;
+                }
             }
 
-            try {
-                const res = await fetch('/api/admins', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-user-id': currentUser.username || currentUser.id
-                    },
-                    body: JSON.stringify({ username, password, role })
-                });
+            async function handleAddAdmin(e) {
+                e.preventDefault();
+                const usernameInput = document.getElementById('newAdminUser');
+                const passwordInput = document.getElementById('newAdminPass');
+                const roleSelect = document.getElementById('newAdminRole');
 
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '新增管理員失敗');
+                const username = usernameInput.value.trim();
+                const password = passwordInput.value.trim();
+                const role = roleSelect.value;
 
-                alert(`✅ 成功新增管理員：${username}`);
-                usernameInput.value = '';
-                passwordInput.value = '';
-                roleSelect.value = 'admin';
-                fetchAdminList();
-            } catch (err) {
-                alert('新增失敗：' + err.message);
-            }
-        }
-
-        async function deleteAdmin(idOrUsername) {
-            if (!confirm(`確定要刪除帳號 [${idOrUsername}] 嗎？`)) return;
-
-            try {
-                const res = await fetch(`/api/admins/${idOrUsername}`, {
-                    method: 'DELETE',
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
-                });
-
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '刪除失敗');
-
-                alert('✅ 帳號已成功刪除');
-                fetchAdminList();
-            } catch (err) {
-                alert('刪除失敗：' + err.message);
-            }
-        }
-
-        // 回收桶 Modal 邏輯
-        function openTrashModal() {
-            document.getElementById('trashModal').classList.remove('hidden');
-            fetchTrashList();
-        }
-
-        function closeTrashModal() {
-            document.getElementById('trashModal').classList.add('hidden');
-        }
-
-        async function fetchTrashList() {
-            const listEl = document.getElementById('trashList');
-            listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入中...</p>';
-
-            try {
-                const res = await fetch('/api/competitions/deleted', {
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
-                });
-                const deletedItems = await res.json();
-
-                if (!deletedItems || deletedItems.length === 0) {
-                    listEl.innerHTML = `<p class="text-center text-slate-400 py-6">回收桶是空的</p>`;
+                if (!username || !password) {
+                    alert('請完整填寫帳號與密碼');
                     return;
                 }
 
-                listEl.innerHTML = deletedItems.map(item => `
+                try {
+                    const res = await fetch('/api/admins', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-user-id': currentUser.username || currentUser.id
+                        },
+                        body: JSON.stringify({ username, password, role })
+                    });
+
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '新增管理員失敗');
+
+                    alert(`✅ 成功新增管理員：${username}`);
+                    usernameInput.value = '';
+                    passwordInput.value = '';
+                    roleSelect.value = 'admin';
+                    fetchAdminList();
+                } catch (err) {
+                    alert('新增失敗：' + err.message);
+                }
+            }
+
+            async function deleteAdmin(idOrUsername) {
+                if (!confirm(`確定要刪除帳號 [${idOrUsername}] 嗎？`)) return;
+
+                try {
+                    const res = await fetch(`/api/admins/${idOrUsername}`, {
+                        method: 'DELETE',
+                        headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    });
+
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '刪除失敗');
+
+                    alert('✅ 帳號已成功刪除');
+                    fetchAdminList();
+                } catch (err) {
+                    alert('刪除失敗：' + err.message);
+                }
+            }
+
+            // 回收桶 Modal 邏輯
+            function openTrashModal() {
+                document.getElementById('trashModal').classList.remove('hidden');
+                fetchTrashList();
+            }
+
+            function closeTrashModal() {
+                document.getElementById('trashModal').classList.add('hidden');
+            }
+
+            async function fetchTrashList() {
+                const listEl = document.getElementById('trashList');
+                listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入中...</p>';
+
+                try {
+                    const res = await fetch('/api/competitions/deleted', {
+                        headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    });
+                    const deletedItems = await res.json();
+
+                    if (!deletedItems || deletedItems.length === 0) {
+                        listEl.innerHTML = `<p class="text-center text-slate-400 py-6">回收桶是空的</p>`;
+                        return;
+                    }
+
+                    listEl.innerHTML = deletedItems.map(item => `
                     <div class="border border-slate-200 rounded-lg p-3 bg-slate-50 flex justify-between items-center text-xs">
                         <div>
                             <p class="font-bold text-slate-800">${escapeHtml(item.name)}</p>
@@ -763,111 +863,152 @@
                         </div>
                     </div>
                 `).join('');
-            } catch (err) {
-                listEl.innerHTML = `<p class="text-red-500 text-center py-4">無法載入回收桶資料</p>`;
+                } catch (err) {
+                    listEl.innerHTML = `<p class="text-red-500 text-center py-4">無法載入回收桶資料</p>`;
+                }
             }
-        }
 
-        async function restoreCompetition(id) {
-            try {
-                const res = await fetch(`/api/competitions/${id}/restore`, {
-                    method: 'PUT',
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
-                });
+            async function restoreCompetition(id) {
+                try {
+                    const res = await fetch(`/api/competitions/${id}/restore`, {
+                        method: 'PUT',
+                        headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    });
 
-                if (!res.ok) throw new Error('復原失敗');
+                    if (!res.ok) throw new Error('復原失敗');
 
-                fetchTrashList();
-                fetchCompetitions();
-            } catch (err) {
-                alert(err.message);
+                    fetchTrashList();
+                    fetchCompetitions();
+                } catch (err) {
+                    alert(err.message);
+                }
             }
-        }
 
-        async function hardDeleteCompetition(id, name) {
-            if (!confirm(`⚠️ 警告：此操作不可逆！\n您確定要永久刪除「${name}」嗎？資料庫將無法復原此項目。`)) return;
+            async function hardDeleteCompetition(id, name) {
+                if (!confirm(`⚠️ 警告：此操作不可逆！\n您確定要永久刪除「${name}」嗎？資料庫將無法復原此項目。`)) return;
 
-            try {
-                const res = await fetch(`/api/competitions/${id}/hard-delete`, {
-                    method: 'DELETE',
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
-                });
+                try {
+                    const res = await fetch(`/api/competitions/${id}/hard-delete`, {
+                        method: 'DELETE',
+                        headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    });
 
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '永久刪除失敗');
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '永久刪除失敗');
 
-                alert('✅ 項目已永久刪除！');
-                fetchTrashList();
-                fetchCompetitions();
-            } catch (err) {
-                alert('永久刪除失敗：' + err.message);
+                    alert('✅ 項目已永久刪除！');
+                    fetchTrashList();
+                    fetchCompetitions();
+                } catch (err) {
+                    alert('永久刪除失敗：' + err.message);
+                }
             }
-        }
 
-        // 搜尋與篩選
-        function filterCompetitions() {
-            const searchVal = document.getElementById('searchInput').value.toLowerCase();
-            const dateVal = document.getElementById('filterDateInput').value;
+            // 1. 判斷權限並顯示按鈕
+            currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+            if (currentUser.role === 'super_admin') {
+                document.getElementById('btn-view-errors')?.classList.remove('hidden');
+            }
 
-            const filtered = allCompetitions.filter(item => {
-                const matchesSearch = (item.name && item.name.toLowerCase().includes(searchVal)) ||
-                    (item.location && item.location.toLowerCase().includes(searchVal)) ||
-                    (item.description && item.description.toLowerCase().includes(searchVal));
+            // 2. 點擊按鈕時從 API 抓取並顯示 Error Logs
+            document.getElementById('btn-view-errors')?.addEventListener('click', async () => {
+                try {
+                    const res = await fetch('/api/admin/error-logs', {
+                        headers: {
+                            'x-user-role': currentUser.role || '',
+                            'x-user-id': currentUser.id || ''
+                        }
+                    });
 
-                const matchesDate = !dateVal || item.date === dateVal || item.end_date === dateVal;
+                    const result = await res.json();
+                    if (!res.ok) throw new Error(result.error || '無法讀取錯誤日誌');
 
-                return matchesSearch && matchesDate;
+                    // 渲染日誌內容至 Modal
+                    showErrorLogsModal(result.logs);
+                } catch (err) {
+                    alert('讀取失敗: ' + err.message);
+                }
             });
 
-            renderCompetitions(filtered);
-        }
+            // 3. 渲染 Modal 的 Helper 函式
+            function showErrorLogsModal(logs) {
+                // 可透過 console.table 快速在 DevTools 預覽，或寫入 Modal UI
+                console.table(logs);
 
-        function clearFilter() {
-            document.getElementById('searchInput').value = '';
-            document.getElementById('filterDateInput').value = '';
-            renderCompetitions(allCompetitions);
-        }
+                if (logs.length === 0) {
+                    alert('🎉 目前沒有任何錯誤紀錄！');
+                    return;
+                }
 
-        // 計算動態狀態標籤 (倒數天數 / 進行中 / 已結束)
-        function getBadgeStatus(dateStr, endDateStr) {
-            if (!dateStr) return '';
-
-            const now = new Date();
-            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-            const [sYear, sMonth, sDay] = dateStr.split('-').map(Number);
-            const start = new Date(sYear, sMonth - 1, sDay);
-
-            let end = start;
-            if (endDateStr) {
-                const [eYear, eMonth, eDay] = endDateStr.split('-').map(Number);
-                end = new Date(eYear, eMonth - 1, eDay);
+                // 彈出簡短預覽 (或渲染至你專案的 Modal 元件中)
+                const logMessages = logs.map(l => `[${new Date(l.created_at).toLocaleString()}] ${l.error_type}: ${l.message}`).join('\n\n');
+                alert(`📋 最新 ${logs.length} 筆錯誤紀錄：\n\n` + logMessages);
             }
 
-            const diffTime = start - today;
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            // 搜尋與篩選
+            function filterCompetitions() {
+                const searchVal = document.getElementById('searchInput').value.toLowerCase();
+                const dateVal = document.getElementById('filterDateInput').value;
 
-            if (diffDays > 0) {
-                return `<span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">⏳ 倒數 ${diffDays} 天</span>`;
-            } else if (today >= start && today <= end) {
-                return `<span class="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-medium">🔥 進行中</span>`;
-            } else {
-                return `<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full">已結束</span>`;
-            }
-        }
+                const filtered = allCompetitions.filter(item => {
+                    const matchesSearch = (item.name && item.name.toLowerCase().includes(searchVal)) ||
+                        (item.location && item.location.toLowerCase().includes(searchVal)) ||
+                        (item.description && item.description.toLowerCase().includes(searchVal));
 
-        function escapeHtml(str) {
-            if (str === null || str === undefined) return '';
-            if (typeof str !== 'string') {
-                str = String(str);
+                    const matchesDate = !dateVal || item.date === dateVal || item.end_date === dateVal;
+
+                    return matchesSearch && matchesDate;
+                });
+
+                renderCompetitions(filtered);
             }
-            return str
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
-        }
+
+            function clearFilter() {
+                document.getElementById('searchInput').value = '';
+                document.getElementById('filterDateInput').value = '';
+                renderCompetitions(allCompetitions);
+            }
+
+            // 計算動態狀態標籤 (倒數天數 / 進行中 / 已結束)
+            function getBadgeStatus(dateStr, endDateStr) {
+                if (!dateStr) return '';
+
+                const now = new Date();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+                const [sYear, sMonth, sDay] = dateStr.split('-').map(Number);
+                const start = new Date(sYear, sMonth - 1, sDay);
+
+                let end = start;
+                if (endDateStr) {
+                    const [eYear, eMonth, eDay] = endDateStr.split('-').map(Number);
+                    end = new Date(eYear, eMonth - 1, eDay);
+                }
+
+                const diffTime = start - today;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                if (diffDays > 0) {
+                    return `<span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">⏳ 倒數 ${diffDays} 天</span>`;
+                } else if (today >= start && today <= end) {
+                    return `<span class="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-medium">🔥 進行中</span>`;
+                } else {
+                    return `<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full">已結束</span>`;
+                }
+            }
+
+            function escapeHtml(str) {
+                if (str === null || str === undefined) return '';
+                if (typeof str !== 'string') {
+                    str = String(str);
+                }
+                return str
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            }
     </script>
 </body>
 

@@ -83,6 +83,95 @@ async function requireSuperAdmin(req, res, next) {
     }
 }
 
+// ==========================================
+// 1. 前端主動上報 Error API
+// ==========================================
+app.post('/api/logs/error', async (req, res) => {
+    try {
+        const { error_type, message, stack_trace, path } = req.body;
+        const rawUserId = req.headers['x-user-id'];
+        const userId = rawUserId ? parseInt(rawUserId, 10) : null;
+        const userAgent = req.headers['user-agent'] || '';
+
+        const { error } = await supabase.from('error_logs').insert([
+            {
+                user_id: userId,
+                error_type: error_type || 'frontend_error',
+                message: message || 'Unknown client error',
+                stack_trace: stack_trace || '',
+                path: path || '',
+                user_agent: userAgent
+            }
+        ]);
+
+        if (error) throw error;
+        res.json({ success: true, message: 'Error log saved' });
+    } catch (err) {
+        console.error('[Error Log API Failed]:', err.message);
+        res.status(500).json({ error: 'Failed to record error log' });
+    }
+});
+
+// ==========================================
+// 2. 超級管理員專用：讀取 Error Logs API
+// ==========================================
+app.get('/api/admin/error-logs', async (req, res) => {
+    try {
+        // RBAC 權限檢查：驗證 Request Headers 的使用者角色
+        const userRole = req.headers['x-user-role'];
+        if (userRole !== 'super_admin') {
+            return res.status(403).json({ error: 'Access denied: Super Admin only' });
+        }
+
+        const { data, error } = await supabase
+            .from('error_logs')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        if (error) throw error;
+        res.json({ success: true, logs: data });
+    } catch (err) {
+        console.error('[Fetch Error Logs Failed]:', err.message);
+        res.status(500).json({ error: 'Failed to fetch error logs' });
+    }
+});
+
+// ==========================================
+// 3. 後端全域 Express Error Handler 中間件
+// 注意：必須放在所有 app.use() 與 API 路由的最下方！
+// ==========================================
+app.use(async (err, req, res, next) => {
+    console.error('[Global Server Error]:', err);
+
+    const rawUserId = req.headers ? req.headers['x-user-id'] : null;
+    const userId = rawUserId ? parseInt(rawUserId, 10) : null;
+    const userAgent = req.headers ? req.headers['user-agent'] : '';
+
+    // 自動紀錄後端未預期崩潰/異常至 Supabase
+    try {
+        await supabase.from('error_logs').insert([
+            {
+                user_id: userId,
+                error_type: 'backend_error',
+                message: err.message || 'Internal Server Error',
+                stack_trace: err.stack || '',
+                path: req.originalUrl || req.url,
+                user_agent: userAgent
+            }
+        ]);
+    } catch (loggingErr) {
+        console.error('[Failed to write backend error to DB]:', loggingErr.message);
+    }
+
+    // 回傳標準化 500 JSON 響應
+    res.status(500).json({
+        success: false,
+        error: 'Internal Server Error',
+        message: err.message
+    });
+});
+
 // ----------------------------------------------------
 // 管理員 API
 // ----------------------------------------------------
