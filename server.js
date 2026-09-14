@@ -8,7 +8,8 @@ const app = express();
 
 // 中間件配置
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 1. 初始化 Supabase 雲端資料庫連線
@@ -83,29 +84,45 @@ async function requireSuperAdmin(req, res, next) {
     }
 }
 
+// 必須加在所有 Route 之前
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
 // ==========================================
-// 1. 前端主動上報 Error API
+// 1. 前端主動上報 Error / Bug API (支援截圖上傳)
 // ==========================================
 app.post('/api/logs/error', async (req, res) => {
     try {
-        const { error_type, message, stack_trace, path } = req.body;
+        const { error_type, message, stack_trace, path, screenshot } = req.body;
         const rawUserId = req.headers['x-user-id'];
-        const userId = rawUserId ? parseInt(rawUserId, 10) : null;
         const userAgent = req.headers['user-agent'] || '';
 
-        const { error } = await supabase.from('error_logs').insert([
-            {
-                user_id: userId,
-                error_type: error_type || 'frontend_error',
-                message: message || 'Unknown client error',
-                stack_trace: stack_trace || '',
-                path: path || '',
-                user_agent: userAgent
-            }
-        ]);
+        // 若無 numeric ID 或是手動回報，保留 rawUserId 或轉為 null 保持安全寫入
+        const isNumeric = /^\d+$/.test(rawUserId);
+        const userId = isNumeric ? parseInt(rawUserId, 10) : null;
+
+        let finalStackTrace = stack_trace || '';
+        if (screenshot) {
+            finalStackTrace += `\n\n[Screenshot Attached (Base64 Truncated)]: ${screenshot.substring(0, 100)}...`;
+        }
+
+        const logPayload = {
+            user_id: userId,
+            error_type: error_type || 'frontend_error',
+            message: message || 'Unknown client error',
+            stack_trace: finalStackTrace,
+            path: path || '',
+            user_agent: userAgent
+        };
+
+        if (screenshot) {
+            logPayload.screenshot = screenshot;
+        }
+
+        const { error } = await supabase.from('error_logs').insert([logPayload]);
 
         if (error) throw error;
-        res.json({ success: true, message: 'Error log saved' });
+        res.json({ success: true, message: 'Bug report saved successfully' });
     } catch (err) {
         console.error('[Error Log API Failed]:', err.message);
         res.status(500).json({ error: 'Failed to record error log' });
@@ -211,7 +228,7 @@ app.delete('/api/admins/:id', requireSuperAdmin, async (req, res) => {
             return res.status(404).json({ error: '找不到該管理員帳號' });
         }
 
-        // 防呆：不能刪除自己
+        // 防呆：無法刪除自己
         if (targetUser.username === operator) {
             return res.status(400).json({ error: '無法刪除目前正在使用的帳號' });
         }
@@ -524,7 +541,8 @@ app.use(async (err, req, res, next) => {
     console.error('[Global Server Error]:', err);
 
     const rawUserId = req.headers ? req.headers['x-user-id'] : null;
-    const userId = rawUserId ? parseInt(rawUserId, 10) : null;
+    const isNumeric = /^\d+$/.test(rawUserId);
+    const userId = isNumeric ? parseInt(rawUserId, 10) : null;
     const userAgent = req.headers ? req.headers['user-agent'] : '';
 
     // 自動紀錄後端未預期崩潰/異常至 Supabase

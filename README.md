@@ -48,6 +48,12 @@ competition-manager/
 
 ## 🔖 版本紀錄 (Changelog)
 
+### ⏰ v2.3.3 (2026-09-14) - 時間選擇器優化與手動 Bug 回報系統
+- **Feature**: 時間輸入欄位升級為 `<input type="time">` 鬧鐘式選擇器，強制規範 24 小時制格式 (HH:mm)。
+- **Feature**: 新增「🐞 手動回報 Bug」 Modal 彈窗，支援問題類型選單、詳細文字描述與螢幕截圖上傳 (Base64/圖片檔)。
+- **API**: 擴充 `POST /api/logs/error` 端點，支援接收 `screenshot` 截圖數據與 `reporter_contact` 聯絡方式。
+- **UI/UX**: 在頂部導覽列新增「🐞 回報問題」快捷按鈕，所有訪客與管理員皆可使用。
+
 ### ♻️ v2.3.2 (2026-09-13) - 資源回收桶權限開放
 - **Feature**: 放寬「資源回收桶」權限，開放普通管理員 (`admin`) 查看已軟刪除的賽事與進行一鍵復原。
 - **Security**: 強化 RBAC 邏輯，繼續限制永久刪除 (`HARD_DELETE`) 權限僅限超級管理員 (`super_admin`) 執行[span_3](start_span)[span_3](end_span)。

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統 v2.3.2</title>
+    <title>比賽管理系統 v2.3.3</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -18,7 +18,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.2)</p>
+                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.3)</p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -27,6 +27,12 @@
                     class="text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
                     👤 普通訪客 (唯讀)
                 </span>
+
+                <!-- 手動 Bug 回報按鈕 (所有人皆可用) -->
+                <button onclick="openBugReportModal()"
+                    class="text-sm bg-amber-50 hover:bg-amber-100 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-200 transition flex items-center gap-1 font-medium">
+                    🐞 回報問題
+                </button>
 
                 <!-- 超級管理員專屬功能按鈕：操作日誌 -->
                 <button id="auditLogBtn" onclick="openAuditLogModal()"
@@ -74,28 +80,46 @@
 
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">比賽地點 (選填)</label>
-                    <input type="text" id="location" placeholder="例如：台北體育館"
+                    <input type="text" id="location" placeholder="例如：XX體育館"
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
 
-                <!-- 日期與時間整合欄位 -->
+                <!-- 日期與 24 小時制時間選擇器 (改為強制下拉選單) -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽開始日期 / 時間 (選填)</label>
-                        <div class="grid grid-cols-2 gap-2">
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽開始日期 / 時間 (24小時制)</label>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                             <input type="date" id="date"
-                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <input type="text" id="time" placeholder="例如 09:00"
-                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                class="w-full md:col-span-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <div class="md:col-span-2 flex items-center gap-1">
+                                <select id="start_hour"
+                                    class="w-1/2 px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                    <option value="">時</option>
+                                </select>
+                                <span class="font-bold text-slate-400">:</span>
+                                <select id="start_minute"
+                                    class="w-1/2 px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                    <option value="">分</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽結束日期 / 時間 (選填)</label>
-                        <div class="grid grid-cols-2 gap-2">
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽結束日期 / 時間 (24小時制)</label>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                             <input type="date" id="end_date"
-                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <input type="text" id="end_time" placeholder="例如 18:00"
-                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                class="w-full md:col-span-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <div class="md:col-span-2 flex items-center gap-1">
+                                <select id="end_hour"
+                                    class="w-1/2 px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                    <option value="">時</option>
+                                </select>
+                                <span class="font-bold text-slate-400">:</span>
+                                <select id="end_minute"
+                                    class="w-1/2 px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                    <option value="">分</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -157,6 +181,62 @@
         </section>
 
     </main>
+
+    <!-- 彈出視窗：手動回報 Bug Modal -->
+    <div id="bugReportModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    🐞 回報系統問題 (Bug Report)
+                </h3>
+                <button onclick="closeBugReportModal()" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <form id="bugReportForm" onsubmit="submitBugReport(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">問題類型 *</label>
+                    <select id="bugType" required
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="user_reported_bug">🐛 介面/功能異常 (Bug)</option>
+                        <option value="time_format_error">⏰ 時間格式問題</option>
+                        <option value="ui_display_issue">🎨 版面顯示錯亂</option>
+                        <option value="other">💬 其他建議或問題</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">問題詳細描述 *</label>
+                    <textarea id="bugDescription" rows="4" required
+                        placeholder="請詳細說明你在什麼步驟遇到了問題、預期結果與實際發生的狀況...如：iPhone 18 Pro Max，iOS 27.0，Safari 瀏覽器，點擊「」後，頁面無法跳轉且出現空白，Error code: XXX，或：我希望能增加一個功能，讓我可以...，請讓我成為管理員...等"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">問題截圖 (選填，支援 PNG/JPG，上限 3MB)</label>
+                    <input type="file" id="bugScreenshot" accept="image/*" onchange="previewScreenshot(event)"
+                        class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                    <div id="screenshotPreviewContainer" class="mt-2 hidden">
+                        <img id="screenshotPreview" src="" alt="預覽圖"
+                            class="max-h-40 rounded border border-slate-200 object-contain">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">聯絡方式 (選填，請標記類型如：電話號碼)</label>
+                    <input type="text" id="reporterContact" placeholder="方便我們向你回報修復進度"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" onclick="closeBugReportModal()"
+                        class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
+                    <button type="submit"
+                        class="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-medium transition">送出回報</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- 彈出視窗 1：登入 Modal -->
     <div id="loginModal"
@@ -262,7 +342,7 @@
         </div>
     </div>
 
-    <!-- 彈出視窗 5：資源回收桶 Modal (管理員與超級管理員皆可讀取與復原) -->
+    <!-- 彈出視窗 5：資源回收桶 Modal -->
     <div id="trashModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-[85vh] flex flex-col">
@@ -285,6 +365,145 @@
     <script>
         let allCompetitions = [];
         let currentUser = null;
+        let currentBase64Screenshot = '';
+
+        // 初始化 24 小時制時間下拉選單 (00-23 時與 00-59 分)
+        function initTimeSelects() {
+            const hourOptions = '<option value="">時</option>' + Array.from({ length: 24 }, (_, i) => {
+                const val = String(i).padStart(2, '0');
+                return `<option value="${val}">${val} 時</option>`;
+            }).join('');
+
+            const minuteOptions = '<option value="">分</option>' + Array.from({ length: 60 }, (_, i) => {
+                const val = String(i).padStart(2, '0');
+                return `<option value="${val}">${val} 分</option>`;
+            }).join('');
+
+            document.getElementById('start_hour').innerHTML = hourOptions;
+            document.getElementById('end_hour').innerHTML = hourOptions;
+            document.getElementById('start_minute').innerHTML = minuteOptions;
+            document.getElementById('end_minute').innerHTML = minuteOptions;
+        }
+
+        // 從下拉選單組合時間字串 (HH:mm)
+        function getSelectedTime(hourId, minuteId) {
+            const h = document.getElementById(hourId).value;
+            const m = document.getElementById(minuteId).value;
+            if (!h && !m) return '';
+            return `${h || '00'}:${m || '00'}`;
+        }
+
+        // 設定下拉選單的值
+        function setSelectedTime(timeStr, hourId, minuteId) {
+            if (!timeStr) {
+                document.getElementById(hourId).value = '';
+                document.getElementById(minuteId).value = '';
+                return;
+            }
+            const parts = timeStr.split(':');
+            if (parts.length >= 2) {
+                document.getElementById(hourId).value = parts[0].padStart(2, '0');
+                document.getElementById(minuteId).value = parts[1].padStart(2, '0');
+            }
+        }
+
+        // 格式化時間為 24 小時制 (HH:mm) 供清單渲染使用
+        function format24HourTime(timeStr) {
+            if (!timeStr) return '';
+            const parts = timeStr.split(':');
+            if (parts.length < 2) return timeStr;
+            const hours = parts[0].padStart(2, '0');
+            const minutes = parts[1].padStart(2, '0');
+            return `${hours}:${minutes}`;
+        }
+
+        // ==========================================
+        // 手動 Bug 回報機制邏輯
+        // ==========================================
+        function openBugReportModal() {
+            document.getElementById('bugReportModal').classList.remove('hidden');
+        }
+
+        function closeBugReportModal() {
+            document.getElementById('bugReportModal').classList.add('hidden');
+            document.getElementById('bugReportForm').reset();
+            document.getElementById('screenshotPreviewContainer').classList.add('hidden');
+            document.getElementById('screenshotPreview').src = '';
+            currentBase64Screenshot = '';
+        }
+
+        function previewScreenshot(event) {
+            const file = event.target.files[0];
+            if (!file) {
+                currentBase64Screenshot = '';
+                document.getElementById('screenshotPreviewContainer').classList.add('hidden');
+                document.getElementById('screenshotPreview').src = '';
+                return;
+            }
+
+            if (!file.type.startsWith('image/')) {
+                alert('請選擇有效的圖片檔案 (PNG, JPG 等)');
+                event.target.value = '';
+                return;
+            }
+
+            if (file.size > 3 * 1024 * 1024) {
+                alert('截圖檔案過大，請選擇 3MB 以下的圖片');
+                event.target.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                currentBase64Screenshot = e.target.result;
+                const img = document.getElementById('screenshotPreview');
+                img.src = currentBase64Screenshot;
+                document.getElementById('screenshotPreviewContainer').classList.remove('hidden');
+            };
+            reader.onerror = function () {
+                alert('讀取圖片檔案失敗，請重新嘗試');
+                event.target.value = '';
+                currentBase64Screenshot = '';
+                document.getElementById('screenshotPreviewContainer').classList.add('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function submitBugReport(e) {
+            e.preventDefault();
+            const type = document.getElementById('bugType').value;
+            const description = document.getElementById('bugDescription').value;
+            const contact = document.getElementById('reporterContact').value;
+
+            const payload = {
+                error_type: type,
+                message: description,
+                stack_trace: `Contact: ${contact || 'None'}`,
+                path: window.location.pathname + window.location.search,
+                screenshot: currentBase64Screenshot
+            };
+
+            try {
+                const res = await fetch('/api/logs/error', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-user-id': currentUser?.username || currentUser?.id || 'Guest'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.message || errData.error || `HTTP ${res.status}`);
+                }
+
+                alert('✅ 感謝你的回報！問題已成功提交。');
+                closeBugReportModal();
+            } catch (err) {
+                alert('回報提交失敗：' + err.message);
+            }
+        }
 
         // ==========================================
         // 1. 自動錯誤上報 Helper 函式
@@ -310,7 +529,6 @@
             }
         }
 
-        // 2. 全域未捕捉 JavaScript 異常
         window.addEventListener('error', (event) => {
             if (event.target && (event.target.tagName === 'IMG' || event.target.tagName === 'SCRIPT')) return;
             reportErrorToBackend({
@@ -320,7 +538,6 @@
             });
         });
 
-        // 3. 全域未處理 Promise 拒絕
         window.addEventListener('unhandledrejection', (event) => {
             const reason = event.reason;
             reportErrorToBackend({
@@ -330,7 +547,6 @@
             });
         });
 
-        // 4. 通用 Custom Fetch API 封裝
         async function customFetch(url, options = {}) {
             try {
                 const response = await fetch(url, options);
@@ -362,13 +578,13 @@
 
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
+            initTimeSelects();
             const savedUser = localStorage.getItem('competition_user');
             if (savedUser) currentUser = JSON.parse(savedUser);
             updateUIByRole();
             fetchCompetitions();
         });
 
-        // 依權限更新 UI 介面 (v2.3.2 支援開放回收桶給 admin)
         function updateUIByRole() {
             const authStatus = document.getElementById('authStatus');
             const authBtn = document.getElementById('authBtn');
@@ -401,19 +617,17 @@
                     if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
                     if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
                 } else {
-                    // 一般管理員 admin：可存取發佈與回收桶，隱藏超級管理員專屬日誌與帳號維護
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
                     authStatus.innerText = `🛡️ 管理員: ${currentUser.username}`;
                     if (auditLogBtn) auditLogBtn.classList.add('hidden');
                     if (btnErrorLogs) btnErrorLogs.classList.add('hidden');
                     if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
-                    if (mainTrashBtn) mainTrashBtn.classList.remove('hidden'); // v2.3.2: 開放資源回收桶
+                    if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
                 }
             }
             renderCompetitions(allCompetitions);
         }
 
-        // API：抓取公開比賽
         async function fetchCompetitions() {
             try {
                 const res = await customFetch('/api/competitions');
@@ -425,7 +639,6 @@
             }
         }
 
-        // 渲染比賽列表
         function renderCompetitions(data) {
             const listEl = document.getElementById('competitionList');
             if (!data || data.length === 0) {
@@ -444,8 +657,8 @@
                         
                         <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                             ${item.location ? `<span>📍 ${escapeHtml(item.location)}</span>` : '<span>📍 地點：未填</span>'}
-                            <span>📅 開始：${item.date ? escapeHtml(item.date) : '未填'} ${item.time ? escapeHtml(item.time) : ''}</span>
-                            <span>📅 結束：${item.end_date ? escapeHtml(item.end_date) : '未填'} ${item.end_time ? escapeHtml(item.end_time) : ''}</span>
+                            <span>📅 開始：${item.date ? escapeHtml(item.date) : '未填'} ${item.time ? format24HourTime(escapeHtml(item.time)) : ''}</span>
+                            <span>📅 結束：${item.end_date ? escapeHtml(item.end_date) : '未填'} ${item.end_time ? format24HourTime(escapeHtml(item.end_time)) : ''}</span>
                         </div>
 
                         ${item.description ? `<p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg whitespace-pre-line border border-slate-100">${escapeHtml(item.description)}</p>` : ''}
@@ -467,7 +680,6 @@
             `).join('');
         }
 
-        // 表單提交（新增或編輯）
         async function handleFormSubmit(e) {
             e.preventDefault();
             if (!currentUser) return alert('請先登入');
@@ -477,9 +689,9 @@
                 name: document.getElementById('name').value,
                 location: document.getElementById('location').value,
                 date: document.getElementById('date').value,
-                time: document.getElementById('time').value,
+                time: getSelectedTime('start_hour', 'start_minute'),
                 end_date: document.getElementById('end_date').value,
-                end_time: document.getElementById('end_time').value,
+                end_time: getSelectedTime('end_hour', 'end_minute'),
                 description: document.getElementById('description').value,
                 is_registration_open: document.getElementById('is_registration_open').checked
             };
@@ -516,9 +728,9 @@
             document.getElementById('name').value = item.name || '';
             document.getElementById('location').value = item.location || '';
             document.getElementById('date').value = item.date || '';
-            document.getElementById('time').value = item.time || '';
+            setSelectedTime(item.time || '', 'start_hour', 'start_minute');
             document.getElementById('end_date').value = item.end_date || '';
-            document.getElementById('end_time').value = item.end_time || '';
+            setSelectedTime(item.end_time || '', 'end_hour', 'end_minute');
             document.getElementById('description').value = item.description || '';
             document.getElementById('is_registration_open').checked = !!item.is_registration_open;
 
@@ -536,9 +748,9 @@
             document.getElementById('name').value = `${item.name} (複製)`;
             document.getElementById('location').value = item.location || '';
             document.getElementById('date').value = item.date || '';
-            document.getElementById('time').value = item.time || '';
+            setSelectedTime(item.time || '', 'start_hour', 'start_minute');
             document.getElementById('end_date').value = item.end_date || '';
-            document.getElementById('end_time').value = item.end_time || '';
+            setSelectedTime(item.end_time || '', 'end_hour', 'end_minute');
             document.getElementById('description').value = item.description || '';
             document.getElementById('is_registration_open').checked = !!item.is_registration_open;
 
@@ -566,6 +778,8 @@
         function resetForm() {
             document.getElementById('competitionForm').reset();
             document.getElementById('editingId').value = '';
+            setSelectedTime('', 'start_hour', 'start_minute');
+            setSelectedTime('', 'end_hour', 'end_minute');
             document.getElementById('formTitle').innerText = '➕ 發佈新比賽';
             document.getElementById('submitBtn').innerText = '發佈比賽';
             document.getElementById('cancelEditBtn').classList.add('hidden');
@@ -587,7 +801,6 @@
             }
         }
 
-        // 登入相關邏輯
         function toggleAuth() {
             if (currentUser) {
                 currentUser = null;
@@ -625,7 +838,6 @@
             }
         }
 
-        // 操作日誌 Modal
         async function openAuditLogModal() {
             const modalEl = document.getElementById('auditLogModal');
             modalEl.classList.remove('hidden');
@@ -684,7 +896,7 @@
             document.getElementById('auditLogModal').classList.add('hidden');
         }
 
-        // 錯誤日誌 Modal (超級管理員專屬)
+        // 錯誤日誌 Modal (已修復截圖圖片顯示與渲染安全性)
         async function openErrorLogsModal() {
             const modalEl = document.getElementById('errorLogsModal');
             modalEl.classList.remove('hidden');
@@ -708,7 +920,9 @@
                     return;
                 }
 
-                listEl.innerHTML = logs.map(l => `
+                listEl.innerHTML = logs.map(l => {
+                    const hasScreenshot = l.screenshot && typeof l.screenshot === 'string' && l.screenshot.startsWith('data:image/');
+                    return `
                     <div class="p-3 bg-red-50 border border-red-200 rounded-lg space-y-1">
                         <div class="flex justify-between items-center">
                             <span class="bg-red-200 text-red-800 text-[10px] px-2 py-0.5 rounded font-bold">${escapeHtml(l.error_type)}</span>
@@ -717,8 +931,18 @@
                         <p class="text-red-700 font-semibold text-xs">${escapeHtml(l.message)}</p>
                         ${l.path ? `<p class="text-slate-500 text-[11px]">路徑: ${escapeHtml(l.path)}</p>` : ''}
                         ${l.stack_trace ? `<pre class="text-[10px] text-slate-600 bg-white p-2 rounded border border-slate-200 overflow-x-auto mt-1">${escapeHtml(l.stack_trace)}</pre>` : ''}
+                        
+                        <!-- 顯示用戶回報上傳的截圖 -->
+                        ${hasScreenshot ? `
+                            <div class="mt-2 pt-2 border-t border-red-200">
+                                <span class="text-[11px] font-semibold text-slate-600 block mb-1">📷 夾帶截圖：</span>
+                                <a href="${l.screenshot}" target="_blank" rel="noopener noreferrer" title="點擊檢視原圖">
+                                    <img src="${l.screenshot}" alt="錯誤截圖" class="max-h-48 rounded border border-slate-300 hover:opacity-90 transition object-contain bg-slate-900/5 p-1">
+                                </a>
+                            </div>
+                        ` : ''}
                     </div>
-                `).join('');
+                `}).join('');
             } catch (err) {
                 console.error(err);
                 listEl.innerHTML = `<p class="text-red-500 text-center py-4">載入失敗: ${escapeHtml(err.message)}</p>`;
@@ -729,7 +953,6 @@
             document.getElementById('errorLogsModal').classList.add('hidden');
         }
 
-        // 帳號管理 Modal 邏輯
         function openAdminModal() {
             document.getElementById('adminModal').classList.remove('hidden');
             fetchAdminList();
@@ -838,7 +1061,6 @@
             }
         }
 
-        // 回收桶 Modal 邏輯 (v2.3.2 權限過濾與按鈕渲染)
         function openTrashModal() {
             document.getElementById('trashModal').classList.remove('hidden');
             fetchTrashList();
@@ -875,12 +1097,10 @@
                             <p class="text-slate-400 mt-0.5">地點: ${escapeHtml(item.location || '未填')} | 日期: ${item.date || '未填'}</p>
                         </div>
                         <div class="flex items-center gap-2">
-                            <!-- 一鍵復原按鈕 (admin 與 super_admin 皆可見) -->
                             <button onclick="restoreCompetition(${item.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded transition">
                                 🔄 復原
                             </button>
 
-                            <!-- 永久刪除按鈕 (僅 super_admin 渲染顯示) -->
                             ${isSuperAdmin ? `
                                 <button onclick="hardDeleteCompetition(${item.id}, '${escapeHtml(item.name)}')" class="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1.5 rounded transition">
                                     ⚠️ 永久刪除
@@ -936,7 +1156,6 @@
             }
         }
 
-        // 搜尋與篩選
         function filterCompetitions() {
             const searchVal = document.getElementById('searchInput').value.toLowerCase();
             const dateVal = document.getElementById('filterDateInput').value;
@@ -960,7 +1179,6 @@
             renderCompetitions(allCompetitions);
         }
 
-        // 計算動態狀態標籤 (倒數天數 / 進行中 / 已結束)
         function getBadgeStatus(dateStr, endDateStr) {
             if (!dateStr) return '';
 
