@@ -213,7 +213,7 @@
                 </div>
 
                 <div>
-                    <label class="block text-xs font-semibold text-slate-600 mb-1">問題截圖 (選填，支援 PNG/JPG，上限 3MB)</label>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">問題截圖 (選填，支援 PNG/JPG，上限 10MB)</label>
                     <input type="file" id="bugScreenshot" accept="image/*" onchange="previewScreenshot(event)"
                         class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
                     <div id="screenshotPreviewContainer" class="mt-2 hidden">
@@ -447,8 +447,8 @@
                 return;
             }
 
-            if (file.size > 3 * 1024 * 1024) {
-                alert('截圖檔案過大，請選擇 3MB 以下的圖片');
+            if (file.size > 10 * 1024 * 1024) {
+                alert('截圖檔案過大，請選擇 10MB 以下的圖片');
                 event.target.value = '';
                 return;
             }
