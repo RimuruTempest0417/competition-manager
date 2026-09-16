@@ -222,7 +222,7 @@ app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
 });
 
 // 3. 刪除管理員帳號
-app.delete('/api/admin/users/username', requireSuperAdmin, async (req, res) => {
+app.delete('/api/admin/users/:id', requireSuperAdmin, async (req, res) => {
     const { id } = req.params;
     const operator = req.currentUser;
 
