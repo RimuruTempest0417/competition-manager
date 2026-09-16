@@ -48,17 +48,16 @@ competition-manager/
 
 ## 🔖 版本紀錄 (Changelog)
 
-# 🚀 Competition Manager v2.4.0
+### 🎨 v2.4.0 (2026-09-16) - 雙按鈕導覽列、密碼自主管理與分享海報功能
+- **UI/UX Refactor**: 
+  - 頂部導覽列獨立拆分為「⚙️ 設定」與「☰ 選單」兩個獨立按鈕。
+  - 「⚙️ 設定」按鈕專用作觸發個人密碼修改 Modal。
+  - 「☰ 選單」按鈕整合系統所有核心功能（賽事維護、日誌檢視、Bug 回報、登出等）。
+- **Feature**: 
+  - 開放所有已登入用戶修改密碼，前後端強制校驗僅允許英文字母與數字 (Alpha-Numeric)。
+  - **新增分享海報功能**：支援一鍵生成精美賽事宣傳海報，方便用戶快速分享與傳播。
+- **API**: 新增 `PUT /api/auth/change-password` 端點，處理密碼變更並寫入 `audit_logs`。
 
-本版本重構了 UI 導覽列，採用獨立「⚙️ 設定」按鈕與「☰ 選單」雙按鈕架構，並開啟所有用戶的密碼自主修改功能。
-
-### ⚙️ Navigation UI Refactor
-* **Settings Button**: 獨立的「⚙️ 設定」按鈕，專用作點擊開啟修改密碼 Modal。
-* **Main Menu Button**: 全功能「☰ 選單」按鈕，收納賽事管理、系統日誌、錯誤記錄、Bug 回報與登出等功能。
-
-### 🔑 Password Self-Management
-* **Alpha-Numeric Rule**: 強制新密碼僅可包含英文字母與數字 (`[a-zA-Z0-9]+`)。
-* **Role Coverage**: 所有角色 (Admin / Super Admin / Web Owner) 皆可自行設定密碼。
 
 ### 👑 v2.3.5 (2026-09-16) - 引入 Web Owner 最高權限與 RBAC 升級
 - **Security**: 新增 `web_owner` 角色，成為系統唯一擁有全功能特權的最高管理者。
