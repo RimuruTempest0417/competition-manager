@@ -38,14 +38,14 @@ function sanitizeInput(val) {
 }
 
 // 📜 統一 Supabase 審計日誌 (audit_logs 表格) 寫入輔助函式
-async function logAudit(userId, action, targetId = null, details = null) {
+async function logAudit(userId, action, targetId = null, details = null, userAgent = '') {
     try {
         const payload = {
             user_id: userId || 'unknown_user',
             action: action,
             target_id: targetId,
             details: typeof details === 'object' ? JSON.stringify(details) : details,
-            user_agent: userAgent, // 新增 user_agent 寫入
+            user_agent: userAgent, // 修正：使用區域傳入的 userAgent 變數
             created_at: new Date().toISOString()
         };
 
@@ -85,10 +85,6 @@ async function requireSuperAdmin(req, res, next) {
         res.status(500).json({ error: '權限驗證失敗: ' + err.message });
     }
 }
-
-// 必須加在所有 Route 之前
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // ==========================================
 // 1. 前端主動上報 Error / Bug API (支援截圖上傳)
@@ -204,7 +200,7 @@ app.post('/api/admins', requireSuperAdmin, async (req, res) => {
         if (error) throw error;
 
         // 寫入操作日誌
-        await logAudit(operator, 'CREATE_ADMIN', data[0].id, `新增管理員帳號: ${username} (角色: ${role || 'admin'})`);
+        await logAudit(operator, 'CREATE_ADMIN', data[0].id, `新增管理員帳號: ${username} (角色: ${role || 'admin'})`, req.userAgent);
 
         res.json({ message: '管理員新增成功', id: data[0].id });
     } catch (err) {
@@ -243,7 +239,7 @@ app.delete('/api/admins/:id', requireSuperAdmin, async (req, res) => {
         if (delErr) throw delErr;
 
         // 寫入操作日誌
-        await logAudit(operator, 'DELETE_ADMIN', targetUser.id, `刪除管理員帳號: ${targetUser.username} (ID: ${targetUser.id})`);
+        await logAudit(operator, 'DELETE_ADMIN', targetUser.id, `刪除管理員帳號: ${targetUser.username} (ID: ${targetUser.id})`, req.userAgent);
 
         res.json({ message: '帳號刪除成功' });
     } catch (err) {
@@ -266,7 +262,7 @@ app.post('/api/admin/login', async (req, res) => {
         await logAudit(username || 'UNKNOWN', 'LOGIN_FAILED', null, {
             reason: '帳號或密碼錯誤',
             ip: clientIp
-        });
+        }, req.userAgent);
 
         return res.status(401).json({ error: '帳號或密碼錯誤' });
     }
@@ -274,7 +270,7 @@ app.post('/api/admin/login', async (req, res) => {
     await logAudit(user.username, 'LOGIN_SUCCESS', null, {
         role: user.role,
         ip: clientIp
-    });
+    }, req.userAgent);
 
     res.json({
         message: '登入成功',
@@ -360,7 +356,7 @@ app.post('/api/competitions', async (req, res) => {
         if (error) throw error;
 
         const newCompetition = data[0];
-        await logAudit(userId, 'CREATE_COMPETITION', newCompetition.id, { name, date, end_date });
+        await logAudit(userId, 'CREATE_COMPETITION', newCompetition.id, { name, date, end_date }, req.userAgent);
 
         res.status(201).json({ id: newCompetition.id, message: '賽事發佈成功' });
     } catch (err) {
@@ -392,7 +388,7 @@ app.put('/api/competitions/:id', async (req, res) => {
 
         if (error) throw error;
 
-        await logAudit(userId, 'UPDATE_COMPETITION', id, { name, date, end_date });
+        await logAudit(userId, 'UPDATE_COMPETITION', id, { name, date, end_date }, req.userAgent);
         res.json({ message: '更新成功' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -422,7 +418,7 @@ app.delete('/api/competitions/:id', async (req, res) => {
 
         if (updateErr) throw updateErr;
 
-        await logAudit(operator, 'DELETE_COMPETITION', id, `刪除比賽: ${competition.name} (ID: ${id})`);
+        await logAudit(operator, 'DELETE_COMPETITION', id, `刪除比賽: ${competition.name} (ID: ${id})`, req.userAgent);
 
         res.json({ message: '比賽已移至回收桶' });
     } catch (err) {
@@ -458,7 +454,7 @@ const restoreCompetitionHandler = async (req, res) => {
 
         if (updateErr) throw updateErr;
 
-        await logAudit(operator, 'RESTORE_COMPETITION', id, `復原比賽: ${competition.name} (ID: ${id})`);
+        await logAudit(operator, 'RESTORE_COMPETITION', id, `復原比賽: ${competition.name} (ID: ${id})`, req.userAgent);
 
         res.json({ message: '比賽已成功復原' });
     } catch (err) {
@@ -505,7 +501,7 @@ app.delete('/api/competitions/:id/hard-delete', async (req, res) => {
 
         if (deleteErr) throw deleteErr;
 
-        await logAudit(admin.username || userId, 'HARD_DELETE_COMPETITION', id, `永久刪除賽事 ID: ${id}`);
+        await logAudit(admin.username || userId, 'HARD_DELETE_COMPETITION', id, `永久刪除賽事 ID: ${id}`, req.userAgent);
 
         return res.json({ success: true, message: '已成功永久刪除賽事' });
 
