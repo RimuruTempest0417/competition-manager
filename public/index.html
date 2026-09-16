@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統 v2.4.1</title>
+    <title>比賽管理系統 v2.4.2</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -18,7 +18,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.4.1)</p>
+                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.4.2)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
@@ -587,11 +587,38 @@
             }
         }
 
+        // 根據角色回傳人物標籤 Emoji
+        function getRoleEmoji(role, username = '') {
+            if (String(username).toLowerCase() === 'test') return '🧪';
+
+            switch (role) {
+                case 'web_owner': return '🧑‍💼';
+                case 'super_admin': return '🧑🏻‍💼';
+                case 'admin': return '💼';
+                case 'test': return '🧪';
+                default: return '👤';
+            }
+        }
+
+        function getRoleLabel(role, username = '') {
+            if (String(username).toLowerCase() === 'test') return '測試帳號';
+
+            switch (role) {
+                case 'web_owner': return 'Web Owner';
+                case 'super_admin': return '超級管理員';
+                case 'admin': return '一般管理員';
+                case 'test': return '測試帳號';
+                default: return '一般使用者';
+            }
+        }
+
         // 2. 帳號清單渲染防呆邏輯
-        function getRoleBadge(role) {
-            if (role === 'web_owner') return '<span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold">🧑‍💼 Web Owner</span>';
-            if (role === 'super_admin') return '<span class="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-medium">🧑🏻‍💼 超級管理員</span>';
-            return '<span class="bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded">👤 一般管理員</span>';
+        function getRoleBadge(role, username = '') {
+            const badgeClass = role === 'web_owner' ? 'bg-amber-100 text-amber-800 font-bold' :
+                role === 'super_admin' ? 'bg-indigo-100 text-indigo-700 font-medium' :
+                    'bg-slate-100 text-slate-600';
+            const roleLabel = getRoleLabel(role, username);
+            return `<span class="${badgeClass} text-[10px] px-2 py-0.5 rounded">${getRoleEmoji(role, username)} ${roleLabel}</span>`;
         }
 
         // 判定是否可顯示「刪除」按鈕
@@ -1075,7 +1102,7 @@
 
             if (!currentUser) {
                 authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200";
-                authStatus.innerText = "👤 普通訪客";
+                authStatus.innerText = `${getRoleEmoji('guest')} 普通訪客`;
 
                 dropdownUserInfo?.classList.add('hidden');
                 createSection?.classList.add('hidden');
@@ -1099,21 +1126,28 @@
 
                 if (currentUser.role === 'web_owner') {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-bold";
-                    authStatus.innerText = `🧑‍💼 Web Owner: ${currentUser.username}`;
+                    authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
                     auditLogBtn?.classList.remove('hidden');
                     btnErrorLogs?.classList.remove('hidden');
                     adminMgmtBtn?.classList.remove('hidden');
                     mainTrashBtn?.classList.remove('hidden');
                 } else if (currentUser.role === 'super_admin') {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
-                    authStatus.innerText = `🧑🏻‍💼 超級管理員: ${currentUser.username}`;
+                    authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
                     auditLogBtn?.classList.remove('hidden');
                     btnErrorLogs?.classList.remove('hidden');
                     adminMgmtBtn?.classList.remove('hidden');
                     mainTrashBtn?.classList.remove('hidden');
+                } else if (currentUser.role === 'test') {
+                    authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-purple-100 text-purple-700 border border-purple-300";
+                    authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
+                    auditLogBtn?.classList.add('hidden');
+                    btnErrorLogs?.classList.add('hidden');
+                    adminMgmtBtn?.classList.add('hidden');
+                    mainTrashBtn?.classList.add('hidden');
                 } else {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
-                    authStatus.innerText = `👤 管理員: ${currentUser.username}`;
+                    authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
                     auditLogBtn?.classList.add('hidden');
                     btnErrorLogs?.classList.add('hidden');
                     adminMgmtBtn?.classList.add('hidden');
@@ -1178,6 +1212,7 @@
                     <div class="space-y-2 flex-1">
                         <div class="flex items-center gap-2 flex-wrap">
                             <h3 class="text-base font-bold text-slate-800">${escapeHtml(item.name)}</h3>
+                            ${item.publisher_name ? `<span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium" title="權限層級：${escapeHtml(getRoleLabel(item.publisher_role, item.publisher_name))}"><span>${getRoleEmoji(item.publisher_role, item.publisher_name)}</span> <span>${escapeHtml(item.publisher_name)}</span></span>` : ''}
                             ${item.is_registration_open ? '<span class="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">🔥 報名中</span>' : '<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium">已截止</span>'}
                             ${getBadgeStatus(item.date, item.end_date)}
                         </div>
@@ -1561,7 +1596,7 @@
                     <div class="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded text-xs">
                         <div class="flex items-center gap-2">
                             <span class="font-bold text-slate-700">${escapeHtml(u.username)}</span>
-                            ${getRoleBadge(u.role)}
+                            ${getRoleBadge(u.role, u.username)}
                         </div>
                         ${canDeleteAdmin(u) ? `
                             <button onclick="deleteAdmin('${escapeHtml(u.username)}')" class="text-red-600 hover:text-red-800 text-[11px] font-medium transition px-1.5 py-0.5 rounded hover:bg-red-50">

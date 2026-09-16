@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.4.1
+# 🏆 比賽管理系統 (Competition Manager) v2.4.2
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌與自動化 Error 日誌收集系統。
 
@@ -50,6 +50,21 @@ competition-manager/
 ---
 
 ## 🔖 版本紀錄 (Changelog)
+
+### 👑 v2.4.2 (2026-09-17) - 發佈者動態徽章與 Supabase 定時數據清理
+- **Feature (UI/UX)**:
+  - 賽事卡片與列表新增顯示「發佈者名稱 (`publisher_name`)」。
+  - 發佈者名稱左側新增**權限層級動態 Emoji 徽章**，依據發佈者角色動態渲染：
+    - 👑 **`web_owner`**：網站擁有者 / 最高權限
+    - ⚡ **`super_admin`**：超級管理員
+    - 🛠️ **`admin`**：賽事管理員
+    - 🧪 **`test`**：測試帳號
+    - 👤 **`user`**：一般使用者
+- **Feature (Database Automation)**:
+  - 引入 Supabase `pg_cron` 套件與 PL/pgSQL 儲存過程（Stored Procedure）`cleanup_test_user_data()`。
+  - 設定背景任務排程（Cron: `0 */6 * * *`），**每 6 小時**自動抹除 `test` 測試帳號建立的賽事與日誌數據，並完整保留 `users` 表中的 `test` 帳號本體。
+- **Database**:
+  - `GET /api/competitions` 端點查詢優化，結合 `LEFT JOIN` 同時輸出 `publisher_name` 與 `publisher_role` 欄位。
 
 ### 🛠️ v2.4.1 (2026-09-16) - 日期與資源回收桶顯示問題修復
 - **Bug Fix**: 修復賽事日期與時間欄位在特定條件下顯示錯亂或時區偏移的問題。

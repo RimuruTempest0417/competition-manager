@@ -314,6 +314,44 @@ app.post('/api/admin/login', async (req, res) => {
 // 比賽賽事 API
 // ----------------------------------------------------
 
+async function addPublisherNames(competitions) {
+    if (!competitions || competitions.length === 0) return [];
+
+    const competitionIds = competitions.map(competition => competition.id);
+    const { data: creationLogs, error } = await supabase
+        .from('audit_logs')
+        .select('target_id, user_id, created_at')
+        .eq('action', 'CREATE_COMPETITION')
+        .in('target_id', competitionIds)
+        .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    const publisherByCompetitionId = new Map();
+    for (const log of creationLogs || []) {
+        if (!publisherByCompetitionId.has(String(log.target_id)) && log.user_id) {
+            publisherByCompetitionId.set(String(log.target_id), String(log.user_id));
+        }
+    }
+
+    const publisherNames = [...new Set([...publisherByCompetitionId.values()])];
+    const { data: publishers, error: publisherQueryError } = publisherNames.length > 0
+        ? await supabase.from('admin_users').select('username, role').in('username', publisherNames)
+        : { data: [], error: null };
+
+    if (publisherQueryError) throw publisherQueryError;
+
+    const publisherRoleByName = new Map(
+        (publishers || []).map(publisher => [String(publisher.username), publisher.role])
+    );
+
+    return competitions.map(competition => ({
+        ...competition,
+        publisher_name: publisherByCompetitionId.get(String(competition.id)) || '系統',
+        publisher_role: publisherRoleByName.get(publisherByCompetitionId.get(String(competition.id))) || 'guest'
+    }));
+}
+
 // 📋 取得所有未刪除比賽
 app.get('/api/competitions', async (req, res) => {
     try {
@@ -324,7 +362,7 @@ app.get('/api/competitions', async (req, res) => {
             .order('id', { ascending: false });
 
         if (error) throw error;
-        res.json(data || []);
+        res.json(await addPublisherNames(data || []));
     } catch (err) {
         console.error('❌ 讀取比賽失敗:', err.message);
         res.status(500).json({ error: err.message });
@@ -346,7 +384,7 @@ async function getDeletedCompetitions(req, res) {
             .order('id', { ascending: false });
 
         if (error) throw error;
-        res.json(data || []);
+        res.json(await addPublisherNames(data || []));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -610,6 +648,69 @@ app.get('/api/audit-logs', requireSuperAdmin, async (req, res) => {
     }
 });
 
+// 清理 test 帳號建立的測試資料。賽事建立者目前由 audit_logs 的 target_id 追蹤。
+async function cleanupTestData() {
+    console.log('[System Cron] 開始執行 test 用戶數據自動清理作業...');
+
+    try {
+        const { data: testUser, error: userError } = await supabase
+            .from('admin_users')
+            .select('id, username')
+            .eq('username', 'test')
+            .maybeSingle();
+
+        if (userError) throw userError;
+        if (!testUser) {
+            console.log('[System Cron] 未找到 test 用戶，跳過清理。');
+            return;
+        }
+
+        const { data: creationLogs, error: auditQueryError } = await supabase
+            .from('audit_logs')
+            .select('target_id')
+            .eq('user_id', testUser.username)
+            .eq('action', 'CREATE_COMPETITION');
+
+        if (auditQueryError) throw auditQueryError;
+
+        const competitionIds = [...new Set(
+            (creationLogs || [])
+                .map(log => Number(log.target_id))
+                .filter(Number.isInteger)
+        )];
+
+        let deletedCompetitionCount = 0;
+        if (competitionIds.length > 0) {
+            const { data: deletedCompetitions, error: competitionDeleteError } = await supabase
+                .from('competitions')
+                .delete()
+                .in('id', competitionIds)
+                .select('id');
+
+            if (competitionDeleteError) throw competitionDeleteError;
+            deletedCompetitionCount = deletedCompetitions?.length || 0;
+        }
+
+        const { error: auditDeleteError } = await supabase
+            .from('audit_logs')
+            .delete()
+            .eq('user_id', testUser.username);
+
+        if (auditDeleteError) throw auditDeleteError;
+
+        const { error: errorLogDeleteError } = await supabase
+            .from('error_logs')
+            .delete()
+            .eq('user_id', testUser.id);
+
+        if (errorLogDeleteError) throw errorLogDeleteError;
+
+        console.log(`[System Cron] 清理完成！已清除 ${deletedCompetitionCount} 筆 test 產生的賽事資料。`);
+    } catch (err) {
+        console.error('[System Cron] 清理 test 數據時發生錯誤:', err.message);
+    }
+}
+
 // ==========================================
 // 3. 後端全域 Express Error Handler 中間件
 // 注意：必須放在所有 app.use() 與 API 路由的最下方！
@@ -649,6 +750,9 @@ app.use(async (err, req, res, next) => {
 // 本地開發監聽
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
+    const SIX_HOURS = 6 * 60 * 60 * 1000;
+    setInterval(cleanupTestData, SIX_HOURS).unref();
+
     app.listen(PORT, () => {
         console.log(`🚀 Server connected to Supabase & listening on http://localhost:${PORT}`);
     });
