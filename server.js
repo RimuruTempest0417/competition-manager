@@ -325,7 +325,7 @@ app.get('/api/competitions', async (req, res) => {
 });
 
 // 🗑️ 讀取回收桶列表 API (開放 super_admin, web_owner 與 admin 讀取)
-app.get('/api/competitions/deleted', async (req, res) => {
+async function getDeletedCompetitions(req, res) {
     try {
         const userRole = req.headers['x-user-role'];
         if (userRole !== 'web_owner' && userRole !== 'super_admin' && userRole !== 'admin') {
@@ -343,13 +343,12 @@ app.get('/api/competitions/deleted', async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
-});
+}
+
+app.get('/api/competitions/deleted', getDeletedCompetitions);
 
 // 別名相容：/api/competitions/trash (提供 RESTful 風格端點)
-app.get('/api/competitions/trash', async (req, res) => {
-    req.url = '/api/competitions/deleted';
-    app._router.handle(req, res);
-});
+app.get('/api/competitions/trash', getDeletedCompetitions);
 
 // ➕ 發佈新比賽
 app.post('/api/competitions', async (req, res) => {
