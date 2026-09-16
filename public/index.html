@@ -1628,7 +1628,6 @@
                     throw new Error(errMsg);
                 }
 
-                const data = await res.json();
                 alert('✅ 已成功刪除該帳號！');
                 fetchAdminList();
             } catch (err) {
@@ -1699,12 +1698,22 @@
 
         async function restoreCompetition(id) {
             try {
-                const res = await customFetch(`/api/competitions/trash/${id}/restore`, {
-                    method: 'POST',
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
+                const res = await customFetch(`/api/competitions/${id}/restore`, {
+                    method: 'PUT',
+                    headers: {
+                        'x-user-id': currentUser.username || currentUser.id,
+                        'x-user-role': currentUser.role || ''
+                    }
                 });
 
-                if (!res.ok) throw new Error('還原失敗');
+                if (!res.ok) {
+                    let errMsg = '還原失敗';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
 
                 alert('✅ 賽事已成功還原！');
                 fetchTrashList();
@@ -1718,12 +1727,22 @@
             if (!confirm('⚠️ 警告：確定要「永久刪除」此賽事嗎？此操作將無法復原！')) return;
 
             try {
-                const res = await customFetch(`/api/competitions/trash/${id}`, {
+                const res = await customFetch(`/api/competitions/${id}/hard-delete`, {
                     method: 'DELETE',
-                    headers: { 'x-user-id': currentUser.username || currentUser.id }
+                    headers: {
+                        'x-user-id': currentUser.username || currentUser.id,
+                        'x-user-role': currentUser.role || ''
+                    }
                 });
 
-                if (!res.ok) throw new Error('永久刪除失敗');
+                if (!res.ok) {
+                    let errMsg = '永久刪除失敗';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
 
                 alert('✅ 賽事已永久刪除');
                 fetchTrashList();
