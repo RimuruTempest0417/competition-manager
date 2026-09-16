@@ -64,6 +64,13 @@ const ROLE_LEVELS = {
     guest: 0
 };
 
+const ADMIN_ROLES = new Set(['admin', 'super_admin', 'web_owner']);
+const SUPER_ADMIN_ROLES = new Set(['super_admin', 'web_owner']);
+
+function hasRole(role, allowedRoles) {
+    return allowedRoles.has(role);
+}
+
 // 中間件：要求至少為 Super Admin (super_admin 或 web_owner)
 async function requireSuperAdmin(req, res, next) {
     const userId = req.headers['x-user-id'];
@@ -137,7 +144,7 @@ app.get('/api/admin/error-logs', async (req, res) => {
     try {
         // RBAC 權限檢查：驗證 Request Headers 的使用者角色
         const userRole = req.headers['x-user-role'];
-        if (userRole !== 'super_admin' && userRole !== 'web_owner') {
+        if (!hasRole(userRole, SUPER_ADMIN_ROLES)) {
             return res.status(403).json({ error: 'Access denied: Super Admin or Web Owner only' });
         }
 
@@ -328,7 +335,7 @@ app.get('/api/competitions', async (req, res) => {
 async function getDeletedCompetitions(req, res) {
     try {
         const userRole = req.headers['x-user-role'];
-        if (userRole !== 'web_owner' && userRole !== 'super_admin' && userRole !== 'admin') {
+        if (!hasRole(userRole, ADMIN_ROLES)) {
             return res.status(403).json({ error: 'Access denied: Admin access required' });
         }
 
@@ -456,7 +463,7 @@ const restoreCompetitionHandler = async (req, res) => {
     const userRole = req.headers['x-user-role'];
     const operator = req.headers['x-user-id'] || req.userId || 'Unknown';
 
-    if (userRole !== 'web_owner' && userRole !== 'super_admin' && userRole !== 'admin') {
+    if (!hasRole(userRole, ADMIN_ROLES)) {
         return res.status(403).json({ error: 'Access denied: Admin access required' });
     }
 

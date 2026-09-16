@@ -42,6 +42,8 @@ competition-manager/
 ├── package.json        # 專案依賴套件設定檔
 ├── vercel.json         # Vercel Serverless Functions 路由設定
 ├── server.js           # Express 後端伺服器、API 路由與 Error 中間件
+├── api/
+│   └── index.js        # Vercel API 入口，轉出 server.js
 └── README.md           # 專案說明文件
 
 ---
