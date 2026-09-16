@@ -56,17 +56,21 @@ async function logAudit(userId, action, targetId = null, details = null, userAge
     }
 }
 
-// 中間件：檢查是否為超級管理員 (Super Admin)
+// 權限階層定義
+const ROLE_LEVELS = {
+    web_owner: 3,
+    super_admin: 2,
+    admin: 1,
+    guest: 0
+};
+
+// 中間件：要求至少為 Super Admin (super_admin 或 web_owner)
 async function requireSuperAdmin(req, res, next) {
     const userId = req.headers['x-user-id'];
-    if (!userId) {
-        return res.status(401).json({ error: '未提供使用者識別碼' });
-    }
+    if (!userId) return res.status(401).json({ error: '未提供使用者識別碼' });
 
     try {
         let query = supabase.from('admin_users').select('*');
-
-        // 判斷 userId 是否為整數，若為整數則允許以 id 查詢，否則以 username 查詢
         if (!isNaN(userId)) {
             query = query.or(`id.eq.${userId},username.eq.${userId}`);
         } else {
@@ -74,12 +78,11 @@ async function requireSuperAdmin(req, res, next) {
         }
 
         const { data: user, error } = await query.single();
-
-        if (error || !user || user.role !== 'super_admin') {
-            return res.status(403).json({ error: '權限不足，僅限超級管理員操作' });
+        if (error || !user || ROLE_LEVELS[user.role] < ROLE_LEVELS.super_admin) {
+            return res.status(403).json({ error: '權限不足，需要超級管理員以上權限' });
         }
 
-        req.currentUser = user; // 綁定目前的請求者資訊
+        req.currentUser = user;
         next();
     } catch (err) {
         res.status(500).json({ error: '權限驗證失敗: ' + err.message });
@@ -134,8 +137,8 @@ app.get('/api/admin/error-logs', async (req, res) => {
     try {
         // RBAC 權限檢查：驗證 Request Headers 的使用者角色
         const userRole = req.headers['x-user-role'];
-        if (userRole !== 'super_admin') {
-            return res.status(403).json({ error: 'Access denied: Super Admin only' });
+        if (userRole !== 'super_admin' && userRole !== 'web_owner') {
+            return res.status(403).json({ error: 'Access denied: Super Admin or Web Owner only' });
         }
 
         const { data, error } = await supabase
@@ -174,10 +177,20 @@ app.get('/api/admins', requireSuperAdmin, async (req, res) => {
 // 2. 新增管理員帳號
 app.post('/api/admins', requireSuperAdmin, async (req, res) => {
     const { username, password, role } = req.body;
-    const operator = req.currentUser.username;
+    const operator = req.currentUser;
 
     if (!username || !password) {
         return res.status(400).json({ error: '帳號與密碼為必填欄位' });
+    }
+
+    // 🔒 權限防護：super_admin 只能新增普通 admin
+    let targetRole = role || 'admin';
+    if (operator.role === 'super_admin') {
+        if (targetRole !== 'admin') {
+            return res.status(403).json({ error: '權限不足：超級管理員只能新增普通管理員 (admin)' });
+        }
+    } else if (operator.role !== 'web_owner') {
+        return res.status(403).json({ error: '權限不足' });
     }
 
     try {
@@ -194,13 +207,13 @@ app.post('/api/admins', requireSuperAdmin, async (req, res) => {
 
         const { data, error } = await supabase
             .from('admin_users')
-            .insert([{ username, password, role: role || 'admin' }])
+            .insert([{ username, password, role: targetRole }])
             .select();
 
         if (error) throw error;
 
         // 寫入操作日誌
-        await logAudit(operator, 'CREATE_ADMIN', data[0].id, `新增管理員帳號: ${username} (角色: ${role || 'admin'})`, req.userAgent);
+        await logAudit(operator.username, 'CREATE_ADMIN', data[0].id, `新增管理員帳號: ${username} (角色: ${targetRole})`, req.userAgent);
 
         res.json({ message: '管理員新增成功', id: data[0].id });
     } catch (err) {
@@ -211,10 +224,10 @@ app.post('/api/admins', requireSuperAdmin, async (req, res) => {
 // 3. 刪除管理員帳號
 app.delete('/api/admins/:id', requireSuperAdmin, async (req, res) => {
     const { id } = req.params;
-    const operator = req.currentUser.username;
+    const operator = req.currentUser;
 
     try {
-        let query = supabase.from('admin_users').select('id, username');
+        let query = supabase.from('admin_users').select('id, username, role');
         if (!isNaN(id)) {
             query = query.or(`id.eq.${id},username.eq.${id}`);
         } else {
@@ -226,9 +239,21 @@ app.delete('/api/admins/:id', requireSuperAdmin, async (req, res) => {
             return res.status(404).json({ error: '找不到該管理員帳號' });
         }
 
-        // 防呆：無法刪除自己
-        if (targetUser.username === operator) {
+        // 防呆 1：無法刪除自己
+        if (targetUser.username === operator.username || targetUser.id === operator.id) {
             return res.status(400).json({ error: '無法刪除目前正在使用的帳號' });
+        }
+
+        // 防呆 2：Web Owner 絕對不可被刪除
+        if (targetUser.role === 'web_owner') {
+            return res.status(403).json({ error: '保護機制：無法刪除 Web Owner 帳號' });
+        }
+
+        // 防呆 3：super_admin 不能刪除其他 super_admin，只能刪除普通 admin
+        if (operator.role === 'super_admin') {
+            if (targetUser.role === 'super_admin' || targetUser.role === 'web_owner') {
+                return res.status(403).json({ error: '權限不足：超級管理員不可刪除同級或高級別帳號' });
+            }
         }
 
         const { error: delErr } = await supabase
@@ -239,7 +264,7 @@ app.delete('/api/admins/:id', requireSuperAdmin, async (req, res) => {
         if (delErr) throw delErr;
 
         // 寫入操作日誌
-        await logAudit(operator, 'DELETE_ADMIN', targetUser.id, `刪除管理員帳號: ${targetUser.username} (ID: ${targetUser.id})`, req.userAgent);
+        await logAudit(operator.username, 'DELETE_ADMIN', targetUser.id, `刪除帳號: ${targetUser.username} (${targetUser.role})`, req.userAgent);
 
         res.json({ message: '帳號刪除成功' });
     } catch (err) {
@@ -299,11 +324,11 @@ app.get('/api/competitions', async (req, res) => {
     }
 });
 
-// 🗑️ 讀取回收桶列表 API (開放 super_admin 與 admin 讀取)
+// 🗑️ 讀取回收桶列表 API (開放 super_admin, web_owner 與 admin 讀取)
 app.get('/api/competitions/deleted', async (req, res) => {
     try {
         const userRole = req.headers['x-user-role'];
-        if (userRole !== 'super_admin' && userRole !== 'admin') {
+        if (userRole !== 'web_owner' && userRole !== 'super_admin' && userRole !== 'admin') {
             return res.status(403).json({ error: 'Access denied: Admin access required' });
         }
 
@@ -426,13 +451,13 @@ app.delete('/api/competitions/:id', async (req, res) => {
     }
 });
 
-// 從回收桶復原比賽 (允許 super_admin 與 admin 執行)
+// 從回收桶復原比賽 (允許 super_admin, web_owner 與 admin 執行)
 const restoreCompetitionHandler = async (req, res) => {
     const { id } = req.params;
     const userRole = req.headers['x-user-role'];
     const operator = req.headers['x-user-id'] || req.userId || 'Unknown';
 
-    if (userRole !== 'super_admin' && userRole !== 'admin') {
+    if (userRole !== 'web_owner' && userRole !== 'super_admin' && userRole !== 'admin') {
         return res.status(403).json({ error: 'Access denied: Admin access required' });
     }
 
@@ -465,35 +490,12 @@ const restoreCompetitionHandler = async (req, res) => {
 app.put('/api/competitions/:id/restore', restoreCompetitionHandler);
 app.post('/api/competitions/:id/restore', restoreCompetitionHandler);
 
-// ⚠️ 專屬超級管理員：硬刪除 (Hard Delete) - 從資料庫徹底抹除
-app.delete('/api/competitions/:id/hard-delete', async (req, res) => {
+// 硬刪除 (Hard Delete) - 從資料庫徹底抹除
+app.delete('/api/competitions/:id/hard-delete', requireSuperAdmin, async (req, res) => {
     const { id } = req.params;
-    const userId = req.headers['x-user-id'];
-
-    if (!userId) {
-        return res.status(401).json({ error: '未提供身份驗證 Header (x-user-id)' });
-    }
+    const operator = req.currentUser;
 
     try {
-        let query = supabase.from('admin_users').select('*');
-
-        const isNumeric = /^\d+$/.test(userId);
-        if (isNumeric) {
-            query = query.eq('id', parseInt(userId, 10));
-        } else {
-            query = query.eq('username', userId);
-        }
-
-        const { data: admin, error: adminErr } = await query.maybeSingle();
-
-        if (adminErr || !admin) {
-            return res.status(403).json({ error: '找不到對應的管理員帳號' });
-        }
-
-        if (admin.role !== 'super_admin') {
-            return res.status(403).json({ error: '權限不足：僅限超級管理員執行永久刪除' });
-        }
-
         const { error: deleteErr } = await supabase
             .from('competitions')
             .delete()
@@ -501,17 +503,17 @@ app.delete('/api/competitions/:id/hard-delete', async (req, res) => {
 
         if (deleteErr) throw deleteErr;
 
-        await logAudit(admin.username || userId, 'HARD_DELETE_COMPETITION', id, `永久刪除賽事 ID: ${id}`, req.userAgent);
+        await logAudit(operator.username, 'HARD_DELETE_COMPETITION', id, `永久刪除賽事 ID: ${id}`, req.userAgent);
 
         return res.json({ success: true, message: '已成功永久刪除賽事' });
-
     } catch (err) {
         console.error('Hard Delete Error:', err);
         return res.status(500).json({ error: '伺服器錯誤: ' + err.message });
     }
 });
 
-// 📜 讀取審計日誌 API (僅限超級管理員)
+
+// 📜 讀取審計日誌 API (僅限 Super Admin 及 Web Owner)
 app.get('/api/audit-logs', requireSuperAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase

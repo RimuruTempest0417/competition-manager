@@ -48,6 +48,13 @@ competition-manager/
 
 ## 🔖 版本紀錄 (Changelog)
 
+### 👑 v2.3.5 (2026-09-16) - 引入 Web Owner 最高權限與 RBAC 升級
+- **Security**: 新增 `web_owner` 角色，成為系統唯一擁有全功能特權的最高管理者。
+- **RBAC Refactor**:
+  - `super_admin` 權限限制：禁止互相刪除、禁止新增/刪除其他 `super_admin`（只能新增普通 `admin`）。
+  - `web_owner` 專屬特權：唯一可進行 `super_admin` 帳號維護。
+- **UI/UX**: 帳號管理清單新增角色徽章與對應的動態操作按鈕防呆遮蔽。
+
 ### 📱 v2.3.4 (2026-09-16) - 審計與錯誤日誌 User-Agent 裝置追蹤
 - **Database**: `audit_logs` 表格新增 `user_agent` 欄位。
 - **Backend**: `logAudit` 寫入函式支援自動抓取或傳入 `req.headers['user-agent']`。

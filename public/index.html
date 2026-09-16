@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統 v2.3.4</title>
+    <title>比賽管理系統 v2.3.5</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -18,7 +18,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.4)</p>
+                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.5)</p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -367,6 +367,45 @@
         let currentUser = null;
         let currentBase64Screenshot = '';
 
+        // 1. 動態控制新增帳號時的角色下拉選單
+        function renderRoleSelectOptions() {
+            const selectEl = document.getElementById('newAdminRole');
+            if (!selectEl) return;
+
+            if (currentUser?.role === 'web_owner') {
+                selectEl.innerHTML = `
+                    <option value="admin">一般管理員 (admin)</option>
+                    <option value="super_admin">超級管理員 (super_admin)</option>
+                `;
+            } else {
+                // super_admin 只能新增普通 admin
+                selectEl.innerHTML = `
+                    <option value="admin">一般管理員 (admin)</option>
+                `;
+            }
+        }
+
+        // 2. 帳號清單渲染防呆邏輯
+        function getRoleBadge(role) {
+            if (role === 'web_owner') return '<span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded font-bold">👑 Web Owner</span>';
+            if (role === 'super_admin') return '<span class="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-medium">🛡️ 超級管理員</span>';
+            return '<span class="bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded">👤 一般管理員</span>';
+        }
+
+        // 判定是否可顯示「刪除」按鈕
+        function canDeleteAdmin(targetAdmin) {
+            if (!currentUser) return false;
+            if (targetAdmin.username === currentUser.username) return false; // 排除自己
+            if (targetAdmin.role === 'web_owner') return false; // Web Owner 不可被刪
+
+            if (currentUser.role === 'web_owner') return true;
+            if (currentUser.role === 'super_admin') {
+                // super_admin 只能刪除普通 admin
+                return targetAdmin.role === 'admin';
+            }
+            return false;
+        }
+
         // v2.3.4 Helper: 解析 User-Agent 顯示裝置標籤
         function parseUserAgentBadge(ua) {
             if (!ua) return '<span class="bg-slate-100 text-slate-500 text-[10px] px-1.5 py-0.5 rounded">💻 未知裝置</span>';
@@ -620,16 +659,23 @@
                 authBtn.className = "bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-medium px-4 py-1.5 rounded-lg transition";
                 createSection.classList.remove('hidden');
 
-                if (currentUser.role === 'super_admin') {
+                if (currentUser.role === 'web_owner') {
+                    authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-bold";
+                    authStatus.innerText = `👑 Web Owner: ${currentUser.username}`;
+                    if (auditLogBtn) auditLogBtn.classList.remove('hidden');
+                    if (btnErrorLogs) btnErrorLogs.classList.remove('hidden');
+                    if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
+                    if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
+                } else if (currentUser.role === 'super_admin') {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
-                    authStatus.innerText = `👑 超級管理員: ${currentUser.username}`;
+                    authStatus.innerText = `🛡️ 超級管理員: ${currentUser.username}`;
                     if (auditLogBtn) auditLogBtn.classList.remove('hidden');
                     if (btnErrorLogs) btnErrorLogs.classList.remove('hidden');
                     if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
                     if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
                 } else {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
-                    authStatus.innerText = `🛡️ 管理員: ${currentUser.username}`;
+                    authStatus.innerText = `👤 管理員: ${currentUser.username}`;
                     if (auditLogBtn) auditLogBtn.classList.add('hidden');
                     if (btnErrorLogs) btnErrorLogs.classList.add('hidden');
                     if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
@@ -975,6 +1021,7 @@
 
         function openAdminModal() {
             document.getElementById('adminModal').classList.remove('hidden');
+            renderRoleSelectOptions();
             fetchAdminList();
         }
 
@@ -1001,20 +1048,20 @@
 
                 listEl.innerHTML = admins.map(a => {
                     const targetId = a.id || a._id;
-                    const isSelf = (currentUser && (a.username === currentUser.username || targetId === currentUser.id));
+                    const canDelete = canDeleteAdmin(a);
 
                     return `
                         <div class="flex justify-between items-center bg-slate-100 p-2.5 rounded text-xs border border-slate-200">
-                            <div>
+                            <div class="flex items-center gap-2">
                                 <span class="font-bold text-slate-800">${escapeHtml(a.username)}</span>
-                                <span class="text-slate-500 ml-1">(${a.role === 'super_admin' ? '超級管理員' : '一般管理員'})</span>
+                                ${getRoleBadge(a.role)}
                             </div>
-                            ${!isSelf ? `
+                            ${canDelete ? `
                                 <button onclick="deleteAdmin('${targetId || a.username}')" 
                                     class="text-red-600 hover:text-red-800 font-medium px-2 py-0.5 rounded bg-red-50 hover:bg-red-100 transition">
                                     刪除
                                 </button>
-                            ` : '<span class="text-slate-400 font-medium px-2 py-0.5">目前帳號</span>'}
+                            ` : '<span class="text-slate-400 font-medium px-2 py-0.5">無法操作</span>'}
                         </div>
                     `;
                 }).join('');
@@ -1055,7 +1102,7 @@
                 alert(`✅ 成功新增管理員：${username}`);
                 usernameInput.value = '';
                 passwordInput.value = '';
-                roleSelect.value = 'admin';
+                renderRoleSelectOptions();
                 fetchAdminList();
             } catch (err) {
                 alert('新增失敗：' + err.message);
@@ -1108,7 +1155,7 @@
                     return;
                 }
 
-                const isSuperAdmin = currentUser?.role === 'super_admin';
+                const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.role === 'web_owner';
 
                 listEl.innerHTML = deletedItems.map(item => `
                     <div class="border border-slate-200 rounded-lg p-3 bg-slate-50 flex justify-between items-center text-xs">
