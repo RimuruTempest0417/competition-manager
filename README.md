@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.3.3
+# 🏆 比賽管理系統 (Competition Manager) v2.4.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌與自動化 Error 日誌收集系統。
 
@@ -47,6 +47,18 @@ competition-manager/
 ---
 
 ## 🔖 版本紀錄 (Changelog)
+
+# 🚀 Competition Manager v2.4.0
+
+本版本重構了 UI 導覽列，採用獨立「⚙️ 設定」按鈕與「☰ 選單」雙按鈕架構，並開啟所有用戶的密碼自主修改功能。
+
+### ⚙️ Navigation UI Refactor
+* **Settings Button**: 獨立的「⚙️ 設定」按鈕，專用作點擊開啟修改密碼 Modal。
+* **Main Menu Button**: 全功能「☰ 選單」按鈕，收納賽事管理、系統日誌、錯誤記錄、Bug 回報與登出等功能。
+
+### 🔑 Password Self-Management
+* **Alpha-Numeric Rule**: 強制新密碼僅可包含英文字母與數字 (`[a-zA-Z0-9]+`)。
+* **Role Coverage**: 所有角色 (Admin / Super Admin / Web Owner) 皆可自行設定密碼。
 
 ### 👑 v2.3.5 (2026-09-16) - 引入 Web Owner 最高權限與 RBAC 升級
 - **Security**: 新增 `web_owner` 角色，成為系統唯一擁有全功能特權的最高管理者。

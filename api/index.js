@@ -160,7 +160,7 @@ app.get('/api/admin/error-logs', async (req, res) => {
 // ----------------------------------------------------
 
 // 1. 取得所有管理員清單
-app.get('/api/admins', requireSuperAdmin, async (req, res) => {
+app.get('/api/admin/users', requireSuperAdmin, async (req, res) => {
     try {
         const { data: admins, error } = await supabase
             .from('admin_users')
@@ -175,7 +175,7 @@ app.get('/api/admins', requireSuperAdmin, async (req, res) => {
 });
 
 // 2. 新增管理員帳號
-app.post('/api/admins', requireSuperAdmin, async (req, res) => {
+app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
     const { username, password, role } = req.body;
     const operator = req.currentUser;
 
@@ -512,6 +512,77 @@ app.delete('/api/competitions/:id/hard-delete', requireSuperAdmin, async (req, r
     }
 });
 
+// ==========================================
+// 🔑 使用者修改個人密碼 API
+// ==========================================
+app.put('/api/auth/change-password', async (req, res) => {
+    const userId = req.headers['x-user-id'];
+    const { oldPassword, newPassword } = req.body;
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+    if (!userId) {
+        return res.status(401).json({ error: '請先登入系統' });
+    }
+
+    if (!oldPassword || !newPassword) {
+        return res.status(400).json({ error: '請提供舊密碼與新密碼' });
+    }
+
+    // 🔒 格式校驗：只能包含英文與數字 (Alpha-numeric only)
+    const alphaNumericRegex = /^[a-zA-Z0-9]+$/;
+    if (!alphaNumericRegex.test(newPassword)) {
+        return res.status(400).json({ error: '新密碼格式不符，僅允許使用英文字母 (A-Z, a-z) 與數字 (0-9)' });
+    }
+
+    if (newPassword.length < 6) {
+        return res.status(400).json({ error: '新密碼長度至少需要 6 個字元' });
+    }
+
+    try {
+        // 1. 查詢該使用者資訊
+        let query = supabase.from('admin_users').select('*');
+        if (!isNaN(userId)) {
+            query = query.or(`id.eq.${userId},username.eq.${userId}`);
+        } else {
+            query = query.eq('username', userId);
+        }
+
+        const { data: user, error: userErr } = await query.single();
+        if (userErr || !user) {
+            return res.status(404).json({ error: '找不到該使用者帳號' });
+        }
+
+        // 2. 校驗舊密碼是否正確
+        if (user.password !== oldPassword) {
+            return res.status(400).json({ error: '舊密碼輸入錯誤' });
+        }
+
+        // 3. 更新密碼
+        const { error: updateErr } = await supabase
+            .from('admin_users')
+            .update({ password: newPassword })
+            .eq('id', user.id);
+
+        if (updateErr) throw updateErr;
+
+        // 4. 寫入審計日誌 (與 LOGIN_SUCCESS 格式一致)
+        await logAudit(
+            user.username,
+            'CHANGE_PASSWORD',
+            null,
+            {
+                role: user.role,
+                ip: clientIp
+            },
+            req.userAgent
+        );
+
+        res.json({ success: true, message: '密碼已成功修改，請重新登入或妥善保管新密碼' });
+    } catch (err) {
+        console.error('❌ 修改密碼失敗:', err.message);
+        res.status(500).json({ error: '伺服器內部錯誤: ' + err.message });
+    }
+});
 
 // 📜 讀取審計日誌 API (僅限 Super Admin 及 Web Owner)
 app.get('/api/audit-logs', requireSuperAdmin, async (req, res) => {

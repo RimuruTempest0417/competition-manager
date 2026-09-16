@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統 v2.3.5</title>
+    <title>比賽管理系統 v2.4.0</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -18,9 +18,10 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.5)</p>
+                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.4.0)</p>
             </div>
 
+            <!-- 頂部導覽列右側選單區塊 -->
             <div class="flex items-center gap-3">
                 <!-- 權限身份標籤 -->
                 <span id="authStatus"
@@ -28,35 +29,72 @@
                     👤 普通訪客
                 </span>
 
-                <!-- 手動 Bug 回報按鈕 (所有人皆可用) -->
-                <button onclick="openBugReportModal()"
-                    class="text-sm bg-amber-50 hover:bg-amber-100 text-amber-700 px-3 py-1.5 rounded-lg border border-amber-200 transition flex items-center gap-1 font-medium">
-                    🐞 回報問題
-                </button>
+                <!-- 🍔 統一功能選單按鈕 -->
+                <div id="mainNavMenu" class="relative">
+                    <button onclick="toggleNavDropdown()"
+                        class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-1.5 rounded-lg border border-slate-300 text-sm font-medium flex items-center gap-1.5 transition">
+                        ☰ 選單
+                        <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7">
+                            </path>
+                        </svg>
+                    </button>
 
-                <!-- 超級管理員專屬功能按鈕：操作日誌 -->
-                <button id="auditLogBtn" onclick="openAuditLogModal()"
-                    class="hidden text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-300 transition flex items-center gap-1">
-                    📜 操作日誌
-                </button>
+                    <!-- 下拉選單浮窗 -->
+                    <div id="navDropdown"
+                        class="hidden absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50">
 
-                <!-- 超級管理員專屬功能按鈕：錯誤日誌 -->
-                <button id="btn-error-logs" onclick="openErrorLogsModal()"
-                    class="hidden px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-sm font-medium hover:bg-red-100 flex items-center gap-1 transition">
-                    🚨 錯誤日誌
-                </button>
+                        <!-- 帳號資訊 (僅登入時顯示) -->
+                        <div id="dropdownUserInfo" class="hidden px-4 py-2 border-b border-slate-100 bg-slate-50">
+                            <p class="text-xs text-slate-400">目前登入帳號</p>
+                            <p id="dropdownUsername" class="text-sm font-bold text-slate-700 truncate">-</p>
+                        </div>
 
-                <!-- 超級管理員專屬功能按鈕：帳號管理 -->
-                <button id="adminMgmtBtn" onclick="openAdminModal()"
-                    class="hidden text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-300 transition flex items-center gap-1">
-                    ⚙️ 帳號管理
-                </button>
+                        <!-- 所有人皆可用：Bug 回報 -->
+                        <button onclick="openBugReportModal(); closeNavDropdown();"
+                            class="w-full text-left px-4 py-2.5 text-sm text-amber-700 hover:bg-amber-50 flex items-center gap-2 transition font-medium">
+                            🐞 回報問題
+                        </button>
 
-                <!-- 登入/登出按鈕 -->
-                <button id="authBtn" onclick="toggleAuth()"
-                    class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg shadow-sm transition">
-                    登入Login
-                </button>
+                        <!-- 超級管理員/Web Owner 專屬：操作日誌 -->
+                        <button id="auditLogBtn" onclick="openAuditLogModal(); closeNavDropdown();"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                            📜 操作日誌
+                        </button>
+
+                        <!-- 超級管理員/Web Owner 專屬：錯誤日誌 -->
+                        <button id="btn-error-logs" onclick="openErrorLogsModal(); closeNavDropdown();"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 transition font-medium">
+                            🚨 錯誤日誌
+                        </button>
+
+                        <!-- 超級管理員/Web Owner 專屬：帳號管理 -->
+                        <button id="adminMgmtBtn" onclick="openAdminModal(); closeNavDropdown();"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                            ⚙️ 帳號管理
+                        </button>
+
+                        <div id="menuDivider" class="hidden border-t border-slate-100 my-1"></div>
+
+                        <!-- 登入後專屬：修改密碼 -->
+                        <button id="changePwdBtn" onclick="openChangePasswordModal(); closeNavDropdown();"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                            🔑 修改個人密碼
+                        </button>
+
+                        <!-- 未登入時顯示：登入按鈕 -->
+                        <button id="authBtn" onclick="toggleAuth(); closeNavDropdown();"
+                            class="w-full text-left px-4 py-2.5 text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-2 transition font-medium">
+                            🔑 登入系統 Login
+                        </button>
+
+                        <!-- 登入後顯示：登出按鈕 -->
+                        <button id="logoutBtn" onclick="handleLogout(); closeNavDropdown();"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 transition font-medium">
+                            🚪 登出系統
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </header>
@@ -182,6 +220,84 @@
 
     </main>
 
+    <!-- 彈出視窗：修改密碼 Modal -->
+    <div id="changePasswordModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    🔑 修改個人密碼
+                </h3>
+                <button onclick="closeChangePasswordModal()" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <form id="changePasswordForm" onsubmit="submitChangePassword(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">舊密碼 *</label>
+                    <input type="password" id="oldPassword" required placeholder="請輸入目前的密碼"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">新密碼 * (僅限英文字母與數字)</label>
+                    <input type="password" id="newPassword" required placeholder="至少 6 位英文或數字" pattern="[a-zA-Z0-9]+"
+                        title="僅允許使用英文字母與數字"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">確認新密碼 *</label>
+                    <input type="password" id="confirmNewPassword" required placeholder="再次輸入新密碼" pattern="[a-zA-Z0-9]+"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div class="bg-blue-50 border border-blue-200 text-blue-700 text-xs p-2.5 rounded-lg">
+                    💡 提示：密碼不可含有空白字元或符號，僅支援 A-Z、a-z 及 0-9。
+                </div>
+
+                <div class="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" onclick="closeChangePasswordModal()"
+                        class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
+                    <button type="submit"
+                        class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition">確定修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 彈出視窗：分享海報 Modal -->
+    <div id="posterModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div
+            class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] flex flex-col items-center overflow-y-auto">
+            <div class="flex justify-between items-center w-full border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    🖼️ 比賽宣傳海報
+                </h3>
+                <button onclick="closePosterModal()" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <div class="w-full flex justify-center bg-slate-100 p-3 rounded-xl border border-slate-200">
+                <canvas id="posterCanvas" class="max-w-full rounded-lg shadow-md"></canvas>
+            </div>
+
+            <div class="flex flex-wrap justify-end gap-2 w-full pt-2 border-t">
+                <button onclick="copyPosterImage()"
+                    class="px-4 py-2 text-sm bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 rounded-lg font-medium transition flex items-center gap-1">
+                    📋 複製海報圖片
+                </button>
+                <button onclick="downloadPosterImage()"
+                    class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition flex items-center gap-1">
+                    ⬇️ 下載海報 (PNG)
+                </button>
+                <button onclick="closePosterModal()"
+                    class="px-4 py-2 text-sm bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition">
+                    關閉
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- 彈出視窗：手動回報 Bug Modal -->
     <div id="bugReportModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -207,8 +323,7 @@
 
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">問題詳細描述 *</label>
-                    <textarea id="bugDescription" rows="4" required
-                        placeholder="請詳細說明你在什麼步驟遇到了問題、預期結果與實際發生的狀況...如：iPhone 18 Pro Max，iOS 27.0，Safari 瀏覽器，點擊「」後，頁面無法跳轉且出現空白，Error code: XXX，或：我希望能增加一個功能，讓我可以...，請讓我成為管理員...等"
+                    <textarea id="bugDescription" rows="4" required placeholder="請詳細說明你在什麼步驟遇到了問題、預期結果與實際發生的狀況..."
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
 
@@ -366,6 +481,93 @@
         let allCompetitions = [];
         let currentUser = null;
         let currentBase64Screenshot = '';
+        let currentPosterItem = null;
+
+        // 下拉選單開關邏輯
+        function toggleNavDropdown() {
+            const dropdown = document.getElementById('navDropdown');
+            if (dropdown) dropdown.classList.toggle('hidden');
+        }
+
+        function closeNavDropdown() {
+            const dropdown = document.getElementById('navDropdown');
+            if (dropdown) dropdown.classList.add('hidden');
+        }
+
+        // 點擊選單外部自動關閉下拉視窗
+        window.addEventListener('click', function (e) {
+            const menu = document.getElementById('mainNavMenu');
+            const dropdown = document.getElementById('navDropdown');
+            if (menu && !menu.contains(e.target) && dropdown && !dropdown.classList.contains('hidden')) {
+                dropdown.classList.add('hidden');
+            }
+        });
+
+        function openChangePasswordModal() {
+            closeNavDropdown();
+            const modal = document.getElementById('changePasswordModal');
+            if (modal) modal.classList.remove('hidden');
+        }
+
+        function closeChangePasswordModal() {
+            const modal = document.getElementById('changePasswordModal');
+            if (modal) modal.classList.add('hidden');
+            const form = document.getElementById('changePasswordForm');
+            if (form) form.reset();
+        }
+
+        async function submitChangePassword(e) {
+            e.preventDefault();
+            const oldPassword = document.getElementById('oldPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmNewPassword = document.getElementById('confirmNewPassword').value;
+
+            // 前端即時檢查
+            if (newPassword !== confirmNewPassword) {
+                alert('兩次輸入的新密碼不一致！');
+                return;
+            }
+
+            const alphaNumericRegex = /^[a-zA-Z0-9]+$/;
+            if (!alphaNumericRegex.test(newPassword)) {
+                alert('新密碼格式錯誤：只能包含英文字母與數字！');
+                return;
+            }
+
+            try {
+                const res = await customFetch('/api/auth/change-password', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-user-id': currentUser?.username || currentUser?.id
+                    },
+                    body: JSON.stringify({ oldPassword, newPassword })
+                });
+
+                if (!res.ok) {
+                    let errMsg = '修改失敗';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
+
+                const data = await res.json();
+                alert('✅ ' + (data.message || '密碼修改成功'));
+                closeChangePasswordModal();
+            } catch (err) {
+                alert('修改失敗：' + err.message);
+            }
+        }
+
+        // 登出處理程序
+        function handleLogout() {
+            currentUser = null;
+            localStorage.removeItem('competition_user');
+            closeNavDropdown();
+            updateUIByRole();
+        }
 
         // 1. 動態控制新增帳號時的角色下拉選單
         function renderRoleSelectOptions() {
@@ -406,7 +608,7 @@
             return false;
         }
 
-        // v2.3.4 Helper: 解析 User-Agent 顯示裝置標籤
+        // Helper: 解析 User-Agent 顯示裝置標籤
         function parseUserAgentBadge(ua) {
             if (!ua) return '<span class="bg-slate-100 text-slate-500 text-[10px] px-1.5 py-0.5 rounded">💻 未知裝置</span>';
             if (ua.includes('iPhone')) return '<span class="bg-purple-100 text-purple-700 text-[10px] px-1.5 py-0.5 rounded font-medium">📱 iPhone</span>';
@@ -465,6 +667,197 @@
             const hours = parts[0].padStart(2, '0');
             const minutes = parts[1].padStart(2, '0');
             return `${hours}:${minutes}`;
+        }
+
+        // HTML 轉義 Helper
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // 保留雙引號的 HTML 轉義 (專用於操作日誌詳情 JSON 顯示)
+        function escapeHtmlPreserveQuotes(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        // ==========================================
+        // 分享海報 Canvas 繪製機制邏輯
+        // ==========================================
+        function openPosterModal(id) {
+            const item = allCompetitions.find(c => c.id === id);
+            if (!item) return;
+            currentPosterItem = item;
+
+            document.getElementById('posterModal').classList.remove('hidden');
+            renderPosterCanvas(item);
+        }
+
+        function closePosterModal() {
+            document.getElementById('posterModal').classList.add('hidden');
+            currentPosterItem = null;
+        }
+
+        function renderPosterCanvas(item) {
+            const canvas = document.getElementById('posterCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const width = 600;
+            const height = 800;
+            canvas.width = width;
+            canvas.height = height;
+
+            // 背景漸層
+            const grad = ctx.createLinearGradient(0, 0, width, height);
+            grad.addColorStop(0, '#1e293b');
+            grad.addColorStop(1, '#0f172a');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, width, height);
+
+            // 頂部邊框金條裝飾
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillRect(0, 0, width, 12);
+
+            // Icon & 系統標題
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.fillText('🏆 比賽管理系統 官方宣傳海報', 40, 50);
+
+            // 報名狀態標籤
+            const statusText = item.is_registration_open ? '🔥 開放報名中' : '已截止';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.fillStyle = item.is_registration_open ? '#ef4444' : '#64748b';
+            ctx.fillRect(40, 70, 100, 26);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(statusText, 50, 88);
+
+            // 比賽主標題 (支援自動折行)
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 28px sans-serif';
+            const nameLines = wrapCanvasText(ctx, item.name || '未命名比賽', width - 80);
+            let startY = 140;
+            nameLines.forEach(line => {
+                ctx.fillText(line, 40, startY);
+                startY += 38;
+            });
+
+            // 分割線
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(40, startY + 10);
+            ctx.lineTo(width - 40, startY + 10);
+            ctx.stroke();
+
+            // 詳細資訊區塊
+            let infoY = startY + 45;
+            ctx.font = '16px sans-serif';
+            ctx.fillStyle = '#cbd5e1';
+
+            // 日期資訊
+            let dateStr = item.date ? `${item.date} ${item.time ? format24HourTime(item.time) : ''}` : '未定';
+            if (item.end_date) {
+                dateStr += ` ~ ${item.end_date} ${item.end_time ? format24HourTime(item.end_time) : ''}`;
+            }
+            ctx.fillText(`📅 時間：${dateStr}`, 40, infoY);
+            infoY += 32;
+
+            // 地點資訊
+            ctx.fillText(`📍 地點：${item.location || '未定'}`, 40, infoY);
+            infoY += 40;
+
+            // 簡介區塊底框
+            ctx.fillStyle = '#1e293b';
+            ctx.strokeStyle = '#334155';
+            const descHeight = height - infoY - 80;
+            ctx.fillRect(40, infoY, width - 80, descHeight);
+            ctx.strokeRect(40, infoY, width - 80, descHeight);
+
+            // 簡介標題與內容
+            ctx.fillStyle = '#38bdf8';
+            ctx.font = 'bold 15px sans-serif';
+            ctx.fillText('📝 比賽簡介 / 備註：', 55, infoY + 30);
+
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '14px sans-serif';
+            const descText = item.description || '尚無詳細簡介內容。';
+            const descLines = wrapCanvasText(ctx, descText, width - 110);
+            let descY = infoY + 60;
+            for (let i = 0; i < descLines.length && descY < infoY + descHeight - 20; i++) {
+                ctx.fillText(descLines[i], 55, descY);
+                descY += 24;
+            }
+
+            // 頁腳聲明
+            ctx.fillStyle = '#64748b';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('掃描或關注系統以獲取最新賽事資訊', width / 2, height - 30);
+            ctx.textAlign = 'left';
+        }
+
+        // Canvas 文字自動折行 Helper
+        function wrapCanvasText(ctx, text, maxWidth) {
+            const words = text.split('');
+            const lines = [];
+            let currentLine = '';
+
+            for (let i = 0; i < words.length; i++) {
+                const char = words[i];
+                if (char === '\n') {
+                    lines.push(currentLine);
+                    currentLine = '';
+                    continue;
+                }
+                const testLine = currentLine + char;
+                const metrics = ctx.measureText(testLine);
+                if (metrics.width > maxWidth && i > 0) {
+                    lines.push(currentLine);
+                    currentLine = char;
+                } else {
+                    currentLine = testLine;
+                }
+            }
+            lines.push(currentLine);
+            return lines;
+        }
+
+        function downloadPosterImage() {
+            const canvas = document.getElementById('posterCanvas');
+            const link = document.createElement('a');
+            const filename = currentPosterItem ? `${currentPosterItem.name}_海報.png` : 'competition_poster.png';
+            link.download = filename;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+
+        async function copyPosterImage() {
+            const canvas = document.getElementById('posterCanvas');
+            try {
+                canvas.toBlob(async (blob) => {
+                    if (!blob) {
+                        alert('❌ 生成圖片失敗');
+                        return;
+                    }
+                    if (navigator.clipboard && window.ClipboardItem) {
+                        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                        alert('✅ 海報圖片已成功複製到剪貼簿！');
+                    } else {
+                        alert('⚠️ 您的瀏覽器不支援直接複製圖片，請使用「下載海報」功能。');
+                    }
+                }, 'image/png');
+            } catch (err) {
+                console.error('複製海報失敗:', err);
+                alert('❌ 複製失敗：' + err.message);
+            }
         }
 
         // ==========================================
@@ -607,7 +1000,11 @@
                         const errJson = await clonedRes.json();
                         errorText = errJson.message || errJson.error || response.statusText;
                     } catch (e) {
-                        errorText = await clonedRes.text();
+                        try {
+                            errorText = await clonedRes.text();
+                        } catch (tErr) {
+                            errorText = response.statusText;
+                        }
                     }
                     reportErrorToBackend({
                         type: 'api_failure',
@@ -637,49 +1034,63 @@
 
         function updateUIByRole() {
             const authStatus = document.getElementById('authStatus');
-            const authBtn = document.getElementById('authBtn');
+            const dropdownUserInfo = document.getElementById('dropdownUserInfo');
+            const dropdownUsername = document.getElementById('dropdownUsername');
             const createSection = document.getElementById('createSection');
             const auditLogBtn = document.getElementById('auditLogBtn');
             const btnErrorLogs = document.getElementById('btn-error-logs');
             const adminMgmtBtn = document.getElementById('adminMgmtBtn');
             const mainTrashBtn = document.getElementById('mainTrashBtn');
+            const changePwdBtn = document.getElementById('changePwdBtn');
+            const authBtn = document.getElementById('authBtn');
+            const logoutBtn = document.getElementById('logoutBtn');
+            const menuDivider = document.getElementById('menuDivider');
 
             if (!currentUser) {
                 authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200";
                 authStatus.innerText = "👤 普通訪客";
-                authBtn.innerText = "登入Login";
-                authBtn.className = "bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg shadow-sm transition";
-                createSection.classList.add('hidden');
-                if (auditLogBtn) auditLogBtn.classList.add('hidden');
-                if (btnErrorLogs) btnErrorLogs.classList.add('hidden');
-                if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
-                if (mainTrashBtn) mainTrashBtn.classList.add('hidden');
+
+                dropdownUserInfo?.classList.add('hidden');
+                createSection?.classList.add('hidden');
+                auditLogBtn?.classList.add('hidden');
+                btnErrorLogs?.classList.add('hidden');
+                adminMgmtBtn?.classList.add('hidden');
+                mainTrashBtn?.classList.add('hidden');
+                changePwdBtn?.classList.add('hidden');
+                menuDivider?.classList.add('hidden');
+
+                authBtn?.classList.remove('hidden');
+                logoutBtn?.classList.add('hidden');
             } else {
-                authBtn.innerText = "登出";
-                authBtn.className = "bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-medium px-4 py-1.5 rounded-lg transition";
-                createSection.classList.remove('hidden');
+                dropdownUserInfo?.classList.remove('hidden');
+                if (dropdownUsername) dropdownUsername.innerText = currentUser.username || '使用者';
+                createSection?.classList.remove('hidden');
+                changePwdBtn?.classList.remove('hidden');
+                menuDivider?.classList.remove('hidden');
+                authBtn?.classList.add('hidden');
+                logoutBtn?.classList.remove('hidden');
 
                 if (currentUser.role === 'web_owner') {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-bold";
                     authStatus.innerText = `🧑🏻‍💼 Web Owner: ${currentUser.username}`;
-                    if (auditLogBtn) auditLogBtn.classList.remove('hidden');
-                    if (btnErrorLogs) btnErrorLogs.classList.remove('hidden');
-                    if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
-                    if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
+                    auditLogBtn?.classList.remove('hidden');
+                    btnErrorLogs?.classList.remove('hidden');
+                    adminMgmtBtn?.classList.remove('hidden');
+                    mainTrashBtn?.classList.remove('hidden');
                 } else if (currentUser.role === 'super_admin') {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
                     authStatus.innerText = `🧑‍💼 超級管理員: ${currentUser.username}`;
-                    if (auditLogBtn) auditLogBtn.classList.remove('hidden');
-                    if (btnErrorLogs) btnErrorLogs.classList.remove('hidden');
-                    if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
-                    if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
+                    auditLogBtn?.classList.remove('hidden');
+                    btnErrorLogs?.classList.remove('hidden');
+                    adminMgmtBtn?.classList.remove('hidden');
+                    mainTrashBtn?.classList.remove('hidden');
                 } else {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
                     authStatus.innerText = `👤 管理員: ${currentUser.username}`;
-                    if (auditLogBtn) auditLogBtn.classList.add('hidden');
-                    if (btnErrorLogs) btnErrorLogs.classList.add('hidden');
-                    if (adminMgmtBtn) adminMgmtBtn.classList.add('hidden');
-                    if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
+                    auditLogBtn?.classList.add('hidden');
+                    btnErrorLogs?.classList.add('hidden');
+                    adminMgmtBtn?.classList.add('hidden');
+                    mainTrashBtn?.classList.remove('hidden');
                 }
             }
             renderCompetitions(allCompetitions);
@@ -688,12 +1099,44 @@
         async function fetchCompetitions() {
             try {
                 const res = await customFetch('/api/competitions');
+                if (!res.ok) {
+                    let errMsg = '無法載入比賽資料';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
                 allCompetitions = await res.json();
                 renderCompetitions(allCompetitions);
             } catch (err) {
                 console.error(err);
                 document.getElementById('competitionList').innerHTML = `<p class="text-red-500 text-center py-4">無法載入比賽資料</p>`;
             }
+        }
+
+        function filterCompetitions() {
+            const query = document.getElementById('searchInput').value.toLowerCase().trim();
+            const filterDate = document.getElementById('filterDateInput').value;
+
+            const filtered = allCompetitions.filter(item => {
+                const matchQuery = !query ||
+                    (item.name && item.name.toLowerCase().includes(query)) ||
+                    (item.location && item.location.toLowerCase().includes(query)) ||
+                    (item.description && item.description.toLowerCase().includes(query));
+
+                const matchDate = !filterDate || item.date === filterDate || item.end_date === filterDate;
+
+                return matchQuery && matchDate;
+            });
+
+            renderCompetitions(filtered);
+        }
+
+        function clearFilter() {
+            document.getElementById('searchInput').value = '';
+            document.getElementById('filterDateInput').value = '';
+            renderCompetitions(allCompetitions);
         }
 
         function renderCompetitions(data) {
@@ -709,7 +1152,6 @@
                         <div class="flex items-center gap-2 flex-wrap">
                             <h3 class="text-base font-bold text-slate-800">${escapeHtml(item.name)}</h3>
                             ${item.is_registration_open ? '<span class="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">🔥 報名中</span>' : '<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium">已截止</span>'}
-                            ${getBadgeStatus(item.date, item.end_date)}
                         </div>
                         
                         <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
@@ -721,10 +1163,15 @@
                         ${item.description ? `<p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg whitespace-pre-line border border-slate-100">${escapeHtml(item.description)}</p>` : ''}
                     </div>
 
-                    <div class="flex items-start gap-1.5 self-end md:self-start">
+                    <div class="flex items-start gap-1.5 self-end md:self-start flex-wrap">
                         <button onclick="copyToClipboard('${escapeHtml(item.name)}', '${item.date || ''}', '${item.end_date || ''}', '${escapeHtml(item.location || '')}')" 
                                 class="text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">
-                            📋 複製分享
+                            📋 複製文字
+                        </button>
+
+                        <button onclick="openPosterModal(${item.id})" 
+                                class="text-xs text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded transition font-medium">
+                            🖼️ 分享海報
                         </button>
 
                         ${currentUser ? `
@@ -766,8 +1213,14 @@
                     body: JSON.stringify(payload)
                 });
 
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '儲存失敗');
+                if (!res.ok) {
+                    let errMsg = '儲存失敗';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
 
                 resetForm();
                 fetchCompetitions();
@@ -860,9 +1313,7 @@
 
         function toggleAuth() {
             if (currentUser) {
-                currentUser = null;
-                localStorage.removeItem('competition_user');
-                updateUIByRole();
+                handleLogout();
             } else {
                 document.getElementById('loginModal').classList.remove('hidden');
             }
@@ -883,9 +1334,16 @@
                     body: JSON.stringify({ username, password })
                 });
 
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '登入失敗');
+                if (!res.ok) {
+                    let errMsg = '登入失敗';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
 
+                const data = await res.json();
                 currentUser = data.user;
                 localStorage.setItem('competition_user', JSON.stringify(currentUser));
                 closeLoginModal();
@@ -895,7 +1353,7 @@
             }
         }
 
-        // v2.3.4 升級：操作日誌 Modal 支援顯示 User-Agent 與裝置標籤
+        // 操作日誌 Modal 支援顯示 User-Agent 與清理 JSON 引號轉義
         async function openAuditLogModal() {
             const modalEl = document.getElementById('auditLogModal');
             modalEl.classList.remove('hidden');
@@ -906,6 +1364,7 @@
                 switch (action) {
                     case 'LOGIN_SUCCESS': return 'bg-blue-100 text-blue-700 border-blue-300';
                     case 'LOGIN_FAILED': return 'bg-red-100 text-red-700 border-red-300 font-bold';
+                    case 'CHANGE_PASSWORD': return 'bg-emerald-100 text-emerald-700 border-emerald-300 font-bold';
                     case 'PERMANENT_DELETE_COMPETITION': return 'bg-rose-100 text-rose-700 border-rose-300';
                     case 'DELETE_COMPETITION': return 'bg-amber-100 text-amber-700 border-amber-300';
                     case 'RESTORE_COMPETITION': return 'bg-emerald-100 text-emerald-700 border-emerald-300';
@@ -917,9 +1376,18 @@
                 const res = await customFetch('/api/audit-logs', {
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
+
+                if (!res.ok) {
+                    let errMsg = '讀取日誌失敗';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
+
                 const logs = await res.json();
 
-                if (!res.ok) throw new Error(logs.error || '讀取日誌失敗');
                 if (!logs || logs.length === 0) {
                     listEl.innerHTML = '<p class="text-center text-slate-400 py-4">目前尚無操作紀錄</p>';
                     return;
@@ -935,15 +1403,15 @@
                         <div class="p-2.5 bg-slate-50 border border-slate-200 rounded flex flex-col gap-1">
                             <div class="flex justify-between items-start">
                                 <div class="flex items-center gap-1.5 flex-wrap">
-                                    <span class="text-[10px] px-2 py-0.5 rounded border font-mono ${getActionBadgeStyle(log.action)}">
+                                    <span class="text-[11px] px-2 py-0.5 rounded border font-mono ${getActionBadgeStyle(log.action)}">
                                         ${escapeHtml(log.action || '')}
                                     </span>
-                                    <span class="text-slate-600 font-medium">使用者: ${escapeHtml(log.user_id || '未知')}</span>
+                                    <span class="text-slate-600 font-medium text-xs">使用者: ${escapeHtml(log.user_id || '未知')}</span>
                                     ${parseUserAgentBadge(log.user_agent)}
                                 </div>
                                 <span class="text-slate-400 text-[11px] whitespace-nowrap ml-2">${new Date(log.created_at).toLocaleString()}</span>
                             </div>
-                            ${detailsText ? `<p class="text-slate-500 text-[11px]">詳情: ${escapeHtml(detailsText)}</p>` : ''}
+                            ${detailsText ? `<p class="text-slate-600 text-[11px] font-mono mt-0.5">詳情: ${escapeHtmlPreserveQuotes(detailsText)}</p>` : ''}
                             ${log.user_agent ? `<p class="text-[10px] font-mono text-slate-400 bg-slate-100 p-1 rounded break-all mt-0.5">UA: ${escapeHtml(log.user_agent)}</p>` : ''}
                         </div>
                     `;
@@ -958,7 +1426,7 @@
             document.getElementById('auditLogModal').classList.add('hidden');
         }
 
-        // v2.3.4 升級：錯誤日誌 Modal 支援 User-Agent 與裝置標籤
+        // 錯誤日誌 Modal 支援 User-Agent 與裝置標籤
         async function openErrorLogsModal() {
             const modalEl = document.getElementById('errorLogsModal');
             modalEl.classList.remove('hidden');
@@ -973,9 +1441,16 @@
                     }
                 });
 
-                const result = await res.json();
-                if (!res.ok) throw new Error(result.error || '無法讀取錯誤日誌');
+                if (!res.ok) {
+                    let errMsg = '無法讀取錯誤日誌';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
 
+                const result = await res.json();
                 const logs = result.logs || [];
                 if (logs.length === 0) {
                     listEl.innerHTML = '<p class="text-center text-emerald-600 py-4 font-sans font-medium">🎉 目前沒有任何異常錯誤紀錄！</p>';
@@ -998,7 +1473,6 @@
                         ${l.user_agent ? `<p class="text-[10px] font-mono text-slate-500 bg-white/60 p-1 rounded border border-red-100 break-all">UA: ${escapeHtml(l.user_agent)}</p>` : ''}
                         ${l.stack_trace ? `<pre class="text-[10px] text-slate-600 bg-white p-2 rounded border border-slate-200 overflow-x-auto mt-1">${escapeHtml(l.stack_trace)}</pre>` : ''}
                         
-                        <!-- 顯示用戶回報上傳的截圖 -->
                         ${hasScreenshot ? `
                             <div class="mt-2 pt-2 border-t border-red-200">
                                 <span class="text-[11px] font-semibold text-slate-600 block mb-1">📷 夾帶截圖：</span>
@@ -1010,8 +1484,8 @@
                     </div>
                 `}).join('');
             } catch (err) {
-                console.error(err);
-                listEl.innerHTML = `<p class="text-red-500 text-center py-4">載入失敗: ${escapeHtml(err.message)}</p>`;
+                console.error('Error Logs Fetch Error:', err);
+                listEl.innerHTML = '<p class="text-red-500 text-center py-4 font-sans">無法載入錯誤日誌，請再試一次</p>';
             }
         }
 
@@ -1019,7 +1493,8 @@
             document.getElementById('errorLogsModal').classList.add('hidden');
         }
 
-        function openAdminModal() {
+        // 管理員帳號維護 Modal
+        async function openAdminModal() {
             document.getElementById('adminModal').classList.remove('hidden');
             renderRoleSelectOptions();
             fetchAdminList();
@@ -1031,63 +1506,55 @@
 
         async function fetchAdminList() {
             const listEl = document.getElementById('adminList');
-            listEl.innerHTML = '<p class="text-center text-slate-400 text-xs py-2">載入帳號清單...</p>';
+            listEl.innerHTML = '<p class="text-slate-400 text-xs py-2">載入帳號清單中...</p>';
 
             try {
-                const res = await customFetch('/api/admins', {
+                const res = await customFetch('/api/admin/users', {
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
 
-                if (!res.ok) throw new Error('無法取得管理員清單');
-                const admins = await res.json();
+                if (!res.ok) {
+                    let errMsg = '無法取得帳號資料';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
 
-                if (!admins || admins.length === 0) {
-                    listEl.innerHTML = '<p class="text-center text-slate-400 text-xs py-2">目前沒有其他管理員帳號</p>';
+                const users = await res.json();
+
+                if (!users || users.length === 0) {
+                    listEl.innerHTML = '<p class="text-slate-400 text-xs py-2">目前沒有其他帳號</p>';
                     return;
                 }
 
-                listEl.innerHTML = admins.map(a => {
-                    const targetId = a.id || a._id;
-                    const canDelete = canDeleteAdmin(a);
-
-                    return `
-                        <div class="flex justify-between items-center bg-slate-100 p-2.5 rounded text-xs border border-slate-200">
-                            <div class="flex items-center gap-2">
-                                <span class="font-bold text-slate-800">${escapeHtml(a.username)}</span>
-                                ${getRoleBadge(a.role)}
-                            </div>
-                            ${canDelete ? `
-                                <button onclick="deleteAdmin('${targetId || a.username}')" 
-                                    class="text-red-600 hover:text-red-800 font-medium px-2 py-0.5 rounded bg-red-50 hover:bg-red-100 transition">
-                                    刪除
-                                </button>
-                            ` : '<span class="text-slate-400 font-medium px-2 py-0.5">無法操作</span>'}
+                listEl.innerHTML = users.map(u => `
+                    <div class="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded text-xs">
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold text-slate-700">${escapeHtml(u.username)}</span>
+                            ${getRoleBadge(u.role)}
                         </div>
-                    `;
-                }).join('');
+                        ${canDeleteAdmin(u) ? `
+                            <button onclick="deleteAdmin('${escapeHtml(u.username)}')" class="text-red-600 hover:text-red-800 text-[11px] font-medium transition px-1.5 py-0.5 rounded hover:bg-red-50">
+                                刪除
+                            </button>
+                        ` : ''}
+                    </div>
+                `).join('');
             } catch (err) {
-                console.error(err);
-                listEl.innerHTML = `<p class="text-red-500 text-center text-xs py-2">${err.message}</p>`;
+                listEl.innerHTML = `<p class="text-red-500 text-xs py-2">載入失敗：${escapeHtml(err.message)}</p>`;
             }
         }
 
         async function handleAddAdmin(e) {
             e.preventDefault();
-            const usernameInput = document.getElementById('newAdminUser');
-            const passwordInput = document.getElementById('newAdminPass');
-            const roleSelect = document.getElementById('newAdminRole');
-
-            const username = usernameInput.value.trim();
-            const password = passwordInput.value.trim();
-            const role = roleSelect.value;
-
-            if (!username || !password) {
-                alert('請完整填寫帳號與密碼');
-                return;
-            }
+            const username = document.getElementById('newAdminUser').value.trim();
+            const password = document.getElementById('newAdminPass').value;
+            const role = document.getElementById('newAdminRole').value;
 
             try {
-                const res = await customFetch('/api/admins', {
+                const res = await customFetch('/api/admin/users', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1096,39 +1563,53 @@
                     body: JSON.stringify({ username, password, role })
                 });
 
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '新增管理員失敗');
+                if (!res.ok) {
+                    let errMsg = '新增失敗';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
 
-                alert(`✅ 成功新增管理員：${username}`);
-                usernameInput.value = '';
-                passwordInput.value = '';
-                renderRoleSelectOptions();
+                const data = await res.json();
+                alert('✅ 新增管理員成功！');
+                document.getElementById('newAdminUser').value = '';
+                document.getElementById('newAdminPass').value = '';
                 fetchAdminList();
             } catch (err) {
                 alert('新增失敗：' + err.message);
             }
         }
 
-        async function deleteAdmin(idOrUsername) {
-            if (!confirm(`確定要刪除帳號 [${idOrUsername}] 嗎？`)) return;
+        async function deleteAdmin(username) {
+            if (!confirm(`確定要刪除管理員帳號「${username}」嗎？`)) return;
 
             try {
-                const res = await customFetch(`/api/admins/${idOrUsername}`, {
+                const res = await customFetch(`/api/admin/users/${encodeURIComponent(username)}`, {
                     method: 'DELETE',
                     headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
 
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '刪除失敗');
+                if (!res.ok) {
+                    let errMsg = '刪除失敗';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
 
-                alert('✅ 帳號已成功刪除');
+                const data = await res.json();
+                alert('✅ 已成功刪除該帳號！');
                 fetchAdminList();
             } catch (err) {
                 alert('刪除失敗：' + err.message);
             }
         }
 
-        function openTrashModal() {
+        // 資源回收桶 Modal
+        async function openTrashModal() {
             document.getElementById('trashModal').classList.remove('hidden');
             fetchTrashList();
         }
@@ -1139,60 +1620,62 @@
 
         async function fetchTrashList() {
             const listEl = document.getElementById('trashList');
-            listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入中...</p>';
+            listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入回收桶中...</p>';
 
             try {
-                const res = await customFetch('/api/competitions/deleted', {
-                    headers: {
-                        'x-user-id': currentUser.username || currentUser.id,
-                        'x-user-role': currentUser?.role || ''
-                    }
+                const res = await customFetch('/api/competitions/trash', {
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
-                const deletedItems = await res.json();
 
-                if (!deletedItems || deletedItems.length === 0) {
-                    listEl.innerHTML = `<p class="text-center text-slate-400 py-6">回收桶是空的</p>`;
+                if (!res.ok) {
+                    let errMsg = '無法讀取回收桶資料';
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.error || errJson.message || errMsg;
+                    } catch (e) { }
+                    throw new Error(errMsg);
+                }
+
+                const items = await res.json();
+
+                if (!items || items.length === 0) {
+                    listEl.innerHTML = '<p class="text-center text-slate-400 py-8">回收桶目前是空的 🧹</p>';
                     return;
                 }
 
-                const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.role === 'web_owner';
-
-                listEl.innerHTML = deletedItems.map(item => `
-                    <div class="border border-slate-200 rounded-lg p-3 bg-slate-50 flex justify-between items-center text-xs">
+                listEl.innerHTML = items.map(item => `
+                    <div class="border border-slate-200 rounded-lg p-3.5 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                         <div>
-                            <p class="font-bold text-slate-800">${escapeHtml(item.name)}</p>
-                            <p class="text-slate-400 mt-0.5">地點: ${escapeHtml(item.location || '未填')} | 日期: ${item.date || '未填'}</p>
+                            <h4 class="text-sm font-bold text-slate-700">${escapeHtml(item.name)}</h4>
+                            <p class="text-xs text-slate-400 mt-0.5">刪除時間：${new Date(item.deleted_at).toLocaleString()}</p>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <button onclick="restoreCompetition(${item.id})" class="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded transition">
-                                🔄 復原
+                        <div class="flex items-center gap-2 self-end sm:self-center">
+                            <button onclick="restoreCompetition(${item.id})" class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-3 py-1 rounded transition font-medium">
+                                ↺ 還原賽事
                             </button>
-
-                            ${isSuperAdmin ? `
-                                <button onclick="hardDeleteCompetition(${item.id}, '${escapeHtml(item.name)}')" class="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1.5 rounded transition">
-                                    ⚠️ 永久刪除
+                            ${(currentUser?.role === 'web_owner' || currentUser?.role === 'super_admin') ? `
+                                <button onclick="permanentlyDeleteCompetition(${item.id})" class="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-1 rounded transition font-medium">
+                                    ❌ 永久刪除
                                 </button>
                             ` : ''}
                         </div>
                     </div>
                 `).join('');
             } catch (err) {
-                listEl.innerHTML = `<p class="text-red-500 text-center py-4">無法載入回收桶資料</p>`;
+                listEl.innerHTML = `<p class="text-red-500 text-center py-4">載入失敗：${escapeHtml(err.message)}</p>`;
             }
         }
 
         async function restoreCompetition(id) {
             try {
-                const res = await customFetch(`/api/competitions/${id}/restore`, {
-                    method: 'PUT',
-                    headers: {
-                        'x-user-id': currentUser.username || currentUser.id,
-                        'x-user-role': currentUser?.role || ''
-                    }
+                const res = await customFetch(`/api/competitions/trash/${id}/restore`, {
+                    method: 'POST',
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
 
-                if (!res.ok) throw new Error('復原失敗');
+                if (!res.ok) throw new Error('還原失敗');
 
+                alert('✅ 賽事已成功還原！');
                 fetchTrashList();
                 fetchCompetitions();
             } catch (err) {
@@ -1200,88 +1683,22 @@
             }
         }
 
-        async function hardDeleteCompetition(id, name) {
-            if (!confirm(`⚠️ 警告：此操作不可逆！\n您確定要永久刪除「${name}」嗎？資料庫將無法復原此項目。`)) return;
+        async function permanentlyDeleteCompetition(id) {
+            if (!confirm('⚠️ 警告：確定要「永久刪除」此賽事嗎？此操作將無法復原！')) return;
 
             try {
-                const res = await customFetch(`/api/competitions/${id}/hard-delete`, {
+                const res = await customFetch(`/api/competitions/trash/${id}`, {
                     method: 'DELETE',
-                    headers: {
-                        'x-user-id': currentUser.username || currentUser.id,
-                        'x-user-role': currentUser?.role || ''
-                    }
+                    headers: { 'x-user-id': currentUser.username || currentUser.id }
                 });
 
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '永久刪除失敗');
+                if (!res.ok) throw new Error('永久刪除失敗');
 
-                alert('✅ 項目已永久刪除！');
+                alert('✅ 賽事已永久刪除');
                 fetchTrashList();
-                fetchCompetitions();
             } catch (err) {
-                alert('永久刪除失敗：' + err.message);
+                alert(err.message);
             }
-        }
-
-        function filterCompetitions() {
-            const searchVal = document.getElementById('searchInput').value.toLowerCase();
-            const dateVal = document.getElementById('filterDateInput').value;
-
-            const filtered = allCompetitions.filter(item => {
-                const matchesSearch = (item.name && item.name.toLowerCase().includes(searchVal)) ||
-                    (item.location && item.location.toLowerCase().includes(searchVal)) ||
-                    (item.description && item.description.toLowerCase().includes(searchVal));
-
-                const matchesDate = !dateVal || item.date === dateVal || item.end_date === dateVal;
-
-                return matchesSearch && matchesDate;
-            });
-
-            renderCompetitions(filtered);
-        }
-
-        function clearFilter() {
-            document.getElementById('searchInput').value = '';
-            document.getElementById('filterDateInput').value = '';
-            renderCompetitions(allCompetitions);
-        }
-
-        function getBadgeStatus(dateStr, endDateStr) {
-            if (!dateStr) return '';
-
-            const now = new Date();
-            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-            const [sYear, sMonth, sDay] = dateStr.split('-').map(Number);
-            const start = new Date(sYear, sMonth - 1, sDay);
-
-            let end = start;
-            if (endDateStr) {
-                const [eYear, eMonth, eDay] = endDateStr.split('-').map(Number);
-                end = new Date(eYear, eMonth - 1, eDay);
-            }
-
-            const diffTime = start - today;
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-            if (diffDays > 0) {
-                return `<span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">⏳ 倒數 ${diffDays} 天</span>`;
-            } else if (today >= start && today <= end) {
-                return `<span class="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-medium">🔥 進行中</span>`;
-            } else {
-                return `<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full">已結束</span>`;
-            }
-        }
-
-        function escapeHtml(str) {
-            if (str === null || str === undefined) return '';
-            if (typeof str !== 'string') str = String(str);
-            return str
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
         }
     </script>
 </body>
