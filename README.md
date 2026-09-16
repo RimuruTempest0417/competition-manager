@@ -45,6 +45,7 @@ competition-manager/
 ├── api/
 │   └── index.js        # Vercel API 入口，轉出 server.js
 └── README.md           # 專案說明文件
+```
 
 ---
 
