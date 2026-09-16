@@ -25,7 +25,7 @@
                 <!-- 權限身份標籤 -->
                 <span id="authStatus"
                     class="text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                    👤 普通訪客 (唯讀)
+                    👤 普通訪客
                 </span>
 
                 <!-- 手動 Bug 回報按鈕 (所有人皆可用) -->
@@ -55,7 +55,7 @@
                 <!-- 登入/登出按鈕 -->
                 <button id="authBtn" onclick="toggleAuth()"
                     class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-1.5 rounded-lg shadow-sm transition">
-                    管理員登入
+                    登入
                 </button>
             </div>
         </div>
@@ -661,14 +661,14 @@
 
                 if (currentUser.role === 'web_owner') {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-bold";
-                    authStatus.innerText = `👑 Web Owner: ${currentUser.username}`;
+                    authStatus.innerText = `🧑🏻‍💼 Web Owner: ${currentUser.username}`;
                     if (auditLogBtn) auditLogBtn.classList.remove('hidden');
                     if (btnErrorLogs) btnErrorLogs.classList.remove('hidden');
                     if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
                     if (mainTrashBtn) mainTrashBtn.classList.remove('hidden');
                 } else if (currentUser.role === 'super_admin') {
                     authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
-                    authStatus.innerText = `🛡️ 超級管理員: ${currentUser.username}`;
+                    authStatus.innerText = `🧑‍💼 超級管理員: ${currentUser.username}`;
                     if (auditLogBtn) auditLogBtn.classList.remove('hidden');
                     if (btnErrorLogs) btnErrorLogs.classList.remove('hidden');
                     if (adminMgmtBtn) adminMgmtBtn.classList.remove('hidden');
