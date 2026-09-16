@@ -26,6 +26,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 app.use((req, res, next) => {
     const rawUserId = req.headers['x-user-id'];
     req.userId = rawUserId ? decodeURIComponent(rawUserId) : 'Guest';
+    req.userAgent = req.headers['user-agent'] || ''; // 擷取 User-Agent
     next();
 });
 
@@ -44,6 +45,7 @@ async function logAudit(userId, action, targetId = null, details = null) {
             action: action,
             target_id: targetId,
             details: typeof details === 'object' ? JSON.stringify(details) : details,
+            user_agent: userAgent, // 新增 user_agent 寫入
             created_at: new Date().toISOString()
         };
 

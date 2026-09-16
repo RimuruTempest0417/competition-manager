@@ -48,6 +48,11 @@ competition-manager/
 
 ## 🔖 版本紀錄 (Changelog)
 
+### 📱 v2.3.4 (2026-09-16) - 審計與錯誤日誌 User-Agent 裝置追蹤
+- **Database**: `audit_logs` 表格新增 `user_agent` 欄位。
+- **Backend**: `logAudit` 寫入函式支援自動抓取或傳入 `req.headers['user-agent']`。
+- **UI/UX**: 升級操作日誌與錯誤日誌 Modal，新增 User-Agent 顯示區塊與裝置類型徽章（iPhone / Mac / Windows / Android）。
+
 ### ⏰ v2.3.3 (2026-09-14) - 時間選擇器優化與手動 Bug 回報系統
 - **Feature**: 時間輸入欄位升級為 `<input type="time">` 鬧鐘式選擇器，強制規範 24 小時制格式 (HH:mm)。
 - **Feature**: 新增「🐞 手動回報 Bug」 Modal 彈窗，支援問題類型選單、詳細文字描述與螢幕截圖上傳 (Base64/圖片檔)。

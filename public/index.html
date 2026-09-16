@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統 v2.3.3</title>
+    <title>比賽管理系統 v2.3.4</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -18,7 +18,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.3)</p>
+                <p class="text-xs text-slate-500 mt-0.5">手動發佈與管理各類賽事資訊 (v2.3.4)</p>
             </div>
 
             <div class="flex items-center gap-3">
@@ -84,7 +84,7 @@
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
 
-                <!-- 日期與 24 小時制時間選擇器 (改為強制下拉選單) -->
+                <!-- 日期與 24 小時制時間選擇器 (強制下拉選單) -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-xs font-semibold text-slate-600 mb-1">比賽開始日期 / 時間 (24小時制)</label>
@@ -366,6 +366,17 @@
         let allCompetitions = [];
         let currentUser = null;
         let currentBase64Screenshot = '';
+
+        // v2.3.4 Helper: 解析 User-Agent 顯示裝置標籤
+        function parseUserAgentBadge(ua) {
+            if (!ua) return '<span class="bg-slate-100 text-slate-500 text-[10px] px-1.5 py-0.5 rounded">💻 未知裝置</span>';
+            if (ua.includes('iPhone')) return '<span class="bg-purple-100 text-purple-700 text-[10px] px-1.5 py-0.5 rounded font-medium">📱 iPhone</span>';
+            if (ua.includes('iPad')) return '<span class="bg-indigo-100 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded font-medium">📱 iPad</span>';
+            if (ua.includes('Macintosh') || ua.includes('Mac OS')) return '<span class="bg-slate-200 text-slate-700 text-[10px] px-1.5 py-0.5 rounded font-medium">💻 macOS</span>';
+            if (ua.includes('Windows')) return '<span class="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0.5 rounded font-medium">💻 Windows</span>';
+            if (ua.includes('Android')) return '<span class="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0.5 rounded font-medium">🤖 Android</span>';
+            return '<span class="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded">🌐 Browser</span>';
+        }
 
         // 初始化 24 小時制時間下拉選單 (00-23 時與 00-59 分)
         function initTimeSelects() {
@@ -838,6 +849,7 @@
             }
         }
 
+        // v2.3.4 升級：操作日誌 Modal 支援顯示 User-Agent 與裝置標籤
         async function openAuditLogModal() {
             const modalEl = document.getElementById('auditLogModal');
             modalEl.classList.remove('hidden');
@@ -874,15 +886,19 @@
                     }
 
                     return `
-                        <div class="p-2.5 bg-slate-50 border border-slate-200 rounded flex justify-between items-start">
-                            <div>
-                                <span class="text-[10px] px-2 py-0.5 rounded border font-mono ${getActionBadgeStyle(log.action)}">
-                                    ${escapeHtml(log.action || '')}
-                                </span>
-                                <span class="text-slate-600 ml-2 font-medium">使用者: ${escapeHtml(log.user_id || '未知')}</span>
-                                ${detailsText ? `<p class="text-slate-500 text-[11px] mt-1">詳情: ${escapeHtml(detailsText)}</p>` : ''}
+                        <div class="p-2.5 bg-slate-50 border border-slate-200 rounded flex flex-col gap-1">
+                            <div class="flex justify-between items-start">
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span class="text-[10px] px-2 py-0.5 rounded border font-mono ${getActionBadgeStyle(log.action)}">
+                                        ${escapeHtml(log.action || '')}
+                                    </span>
+                                    <span class="text-slate-600 font-medium">使用者: ${escapeHtml(log.user_id || '未知')}</span>
+                                    ${parseUserAgentBadge(log.user_agent)}
+                                </div>
+                                <span class="text-slate-400 text-[11px] whitespace-nowrap ml-2">${new Date(log.created_at).toLocaleString()}</span>
                             </div>
-                            <span class="text-slate-400 text-[11px] whitespace-nowrap ml-2">${new Date(log.created_at).toLocaleString()}</span>
+                            ${detailsText ? `<p class="text-slate-500 text-[11px]">詳情: ${escapeHtml(detailsText)}</p>` : ''}
+                            ${log.user_agent ? `<p class="text-[10px] font-mono text-slate-400 bg-slate-100 p-1 rounded break-all mt-0.5">UA: ${escapeHtml(log.user_agent)}</p>` : ''}
                         </div>
                     `;
                 }).join('');
@@ -896,7 +912,7 @@
             document.getElementById('auditLogModal').classList.add('hidden');
         }
 
-        // 錯誤日誌 Modal (已修復截圖圖片顯示與渲染安全性)
+        // v2.3.4 升級：錯誤日誌 Modal 支援 User-Agent 與裝置標籤
         async function openErrorLogsModal() {
             const modalEl = document.getElementById('errorLogsModal');
             modalEl.classList.remove('hidden');
@@ -924,12 +940,16 @@
                     const hasScreenshot = l.screenshot && typeof l.screenshot === 'string' && l.screenshot.startsWith('data:image/');
                     return `
                     <div class="p-3 bg-red-50 border border-red-200 rounded-lg space-y-1">
-                        <div class="flex justify-between items-center">
-                            <span class="bg-red-200 text-red-800 text-[10px] px-2 py-0.5 rounded font-bold">${escapeHtml(l.error_type)}</span>
+                        <div class="flex justify-between items-center flex-wrap gap-1">
+                            <div class="flex items-center gap-1.5">
+                                <span class="bg-red-200 text-red-800 text-[10px] px-2 py-0.5 rounded font-bold">${escapeHtml(l.error_type)}</span>
+                                ${parseUserAgentBadge(l.user_agent)}
+                            </div>
                             <span class="text-slate-400 text-[10px]">${new Date(l.created_at).toLocaleString()}</span>
                         </div>
                         <p class="text-red-700 font-semibold text-xs">${escapeHtml(l.message)}</p>
                         ${l.path ? `<p class="text-slate-500 text-[11px]">路徑: ${escapeHtml(l.path)}</p>` : ''}
+                        ${l.user_agent ? `<p class="text-[10px] font-mono text-slate-500 bg-white/60 p-1 rounded border border-red-100 break-all">UA: ${escapeHtml(l.user_agent)}</p>` : ''}
                         ${l.stack_trace ? `<pre class="text-[10px] text-slate-600 bg-white p-2 rounded border border-slate-200 overflow-x-auto mt-1">${escapeHtml(l.stack_trace)}</pre>` : ''}
                         
                         <!-- 顯示用戶回報上傳的截圖 -->
