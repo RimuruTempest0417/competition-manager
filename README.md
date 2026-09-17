@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.4.5
+# 🏆 比賽管理系統 (Competition Manager) v2.4.6
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌與自動化 Error 日誌收集系統。
 
@@ -90,7 +90,9 @@ competition-manager/
 
 # 版本紀錄 (Changelog)
 
-### 🛠️ v2.4.4 (2026-09-17) - 頁寬優化與檔案按鈕樣式修正
+### v2.4.6: 新增 vercel.json 於邊緣層級全面強制套用 CSP 與安全性 Headers，修復 ZAP 掃描警報
+
+### 🛠️ v2.4.5 (2026-09-17) - 頁寬優化與檔案按鈕樣式修正
 - **UI/UX**:
   - 頁面主容器與頂部導覽列由 `max-w-5xl` 放寬至 `max-w-7xl`，提升大螢幕下的瀏覽視野與資訊密度。
   - 修正 Bug Report Modal 內「選擇檔案」按鈕顏色，改由 `public/css/custom.css` 原生的 `input[type=file]::file-selector-button` 控制，統一呈現藍底藍字，並完整補上 Safari `::-webkit-file-upload-button` 相容性。
