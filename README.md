@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.4.4
+# 🏆 比賽管理系統 (Competition Manager) v2.4.5
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌與自動化 Error 日誌收集系統。
 
