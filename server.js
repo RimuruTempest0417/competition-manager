@@ -1,10 +1,26 @@
 require('dotenv').config();
+const jwt = require('jsonwebtoken');
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 
 const app = express();
+
+app.disable('x-powered-by');
+
+// 🔒 完美強化安全 Header 設定：移除所有 unsafe-inline 與 CDN 外部腳本依賴，徹底防禦 XSS 與樣式注入攻擊
+app.use((req, res, next) => {
+    res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; form-action 'self';"
+    );
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+});
 
 // 中間件配置
 app.use(cors());
@@ -21,12 +37,15 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
+const JWT_SECRET = process.env.JWT_SECRET;
 
-// 全域中間件：解析 Header 中的 User ID 與 Role
+if (!JWT_SECRET) {
+    throw new Error('JWT_SECRET is required for secure authentication');
+}
+
+// 全域中間件：解析 User-Agent 供日誌記錄
 app.use((req, res, next) => {
-    const rawUserId = req.headers['x-user-id'];
-    req.userId = rawUserId ? decodeURIComponent(rawUserId) : 'Guest';
-    req.userAgent = req.headers['user-agent'] || ''; // 擷取 User-Agent
+    req.userAgent = req.headers['user-agent'] || '';
     next();
 });
 
@@ -43,9 +62,9 @@ async function logAudit(userId, action, targetId = null, details = null, userAge
         const payload = {
             user_id: userId || 'unknown_user',
             action: action,
-            target_id: targetId,
+            target_id: targetId ? String(targetId) : null,
             details: typeof details === 'object' ? JSON.stringify(details) : details,
-            user_agent: userAgent, // 修正：使用區域傳入的 userAgent 變數
+            user_agent: userAgent,
             created_at: new Date().toISOString()
         };
 
@@ -56,58 +75,93 @@ async function logAudit(userId, action, targetId = null, details = null, userAge
     }
 }
 
-// 權限階層定義
-const ROLE_LEVELS = {
-    web_owner: 3,
-    super_admin: 2,
-    admin: 1,
-    guest: 0
-};
-
-const ADMIN_ROLES = new Set(['admin', 'super_admin', 'web_owner']);
-const SUPER_ADMIN_ROLES = new Set(['super_admin', 'web_owner']);
-
-function hasRole(role, allowedRoles) {
-    return allowedRoles.has(role);
-}
-
-// 中間件：要求至少為 Super Admin (super_admin 或 web_owner)
-async function requireSuperAdmin(req, res, next) {
-    const userId = req.headers['x-user-id'];
-    if (!userId) return res.status(401).json({ error: '未提供使用者識別碼' });
-
+// 🚨 統一 Supabase 錯誤日誌 (error_logs 表格) 寫入輔助函式
+async function logErrorToDb(req, errorType, err) {
     try {
-        let query = supabase.from('admin_users').select('*');
-        if (!isNaN(userId)) {
-            query = query.or(`id.eq.${userId},username.eq.${userId}`);
-        } else {
-            query = query.eq('username', userId);
-        }
+        const userAgent = req.headers['user-agent'] || '';
+        const reqPath = req.originalUrl || req.url || '';
+        const userId = req.user ? req.user.sub : null;
 
-        const { data: user, error } = await query.single();
-        if (error || !user || ROLE_LEVELS[user.role] < ROLE_LEVELS.super_admin) {
-            return res.status(403).json({ error: '權限不足，需要超級管理員以上權限' });
-        }
-
-        req.currentUser = user;
-        next();
-    } catch (err) {
-        res.status(500).json({ error: '權限驗證失敗: ' + err.message });
+        await supabase.from('error_logs').insert([
+            {
+                user_id: userId,
+                error_type: errorType || 'backend_error',
+                message: err.message || String(err),
+                stack_trace: err.stack || '',
+                path: reqPath,
+                user_agent: userAgent,
+                created_at: new Date().toISOString()
+            }
+        ]);
+    } catch (loggingErr) {
+        console.error('❌ 寫入 error_logs 失敗:', loggingErr.message);
     }
 }
 
+// 權限角色集合定義
+const ADMIN_ROLES = new Set(['admin', 'super_admin', 'web_owner']);
+const SUPER_ADMIN_ROLES = new Set(['super_admin', 'web_owner']);
+
+async function findAdminById(id) {
+    const { data, error } = await supabase
+        .from('admin_users')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+    if (error) throw error;
+    return data;
+}
+
+// JWT 身份驗證中間件
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+
+    if (!token) {
+        return res.status(401).json({ error: '未提供身份驗證令牌，存取被拒' });
+    }
+
+    try {
+        req.user = jwt.verify(token, JWT_SECRET);
+        next();
+    } catch (err) {
+        return res.status(403).json({ error: 'Token 無效或已過期，請重新登入' });
+    }
+}
+
+// RBAC 權限驗證中間件
+function requireRole(allowedRoles) {
+    return async (req, res, next) => {
+        if (!req.user || !allowedRoles.includes(req.user.role)) {
+            return res.status(403).json({ error: '權限不足，拒絕存取' });
+        }
+
+        try {
+            const user = await findAdminById(req.user.sub);
+            if (!user || user.username !== req.user.username || user.role !== req.user.role) {
+                return res.status(403).json({ error: '帳號權限已變更，請重新登入' });
+            }
+
+            req.currentUser = user;
+            next();
+        } catch (err) {
+            await logErrorToDb(req, 'auth_error', err);
+            res.status(500).json({ error: '權限驗證失敗: ' + err.message });
+        }
+    };
+}
+
+const requireAdmin = [authenticateToken, requireRole([...ADMIN_ROLES])];
+const requireSuperAdmin = [authenticateToken, requireRole([...SUPER_ADMIN_ROLES])];
+
 // ==========================================
-// 1. 前端主動上報 Error / Bug API (支援截圖上傳)
+// 錯誤日誌 API
 // ==========================================
 app.post('/api/logs/error', async (req, res) => {
     try {
-        const { error_type, message, stack_trace, path, screenshot } = req.body;
-        const rawUserId = req.headers['x-user-id'];
+        const { error_type, message, stack_trace, path: errPath, screenshot } = req.body;
         const userAgent = req.headers['user-agent'] || '';
-
-        // 若無 numeric ID 或是手動回報，保留 rawUserId 或轉為 null 保持安全寫入
-        const isNumeric = /^\d+$/.test(rawUserId);
-        const userId = isNumeric ? parseInt(rawUserId, 10) : null;
 
         let finalStackTrace = stack_trace || '';
         if (screenshot) {
@@ -115,11 +169,11 @@ app.post('/api/logs/error', async (req, res) => {
         }
 
         const logPayload = {
-            user_id: userId,
+            user_id: null,
             error_type: error_type || 'frontend_error',
             message: message || 'Unknown client error',
             stack_trace: finalStackTrace,
-            path: path || '',
+            path: errPath || '',
             user_agent: userAgent
         };
 
@@ -137,17 +191,8 @@ app.post('/api/logs/error', async (req, res) => {
     }
 });
 
-// ==========================================
-// 2. 超級管理員專用：讀取 Error Logs API
-// ==========================================
-app.get('/api/admin/error-logs', async (req, res) => {
+app.get('/api/admin/error-logs', requireSuperAdmin, async (req, res) => {
     try {
-        // RBAC 權限檢查：驗證 Request Headers 的使用者角色
-        const userRole = req.headers['x-user-role'];
-        if (!hasRole(userRole, SUPER_ADMIN_ROLES)) {
-            return res.status(403).json({ error: 'Access denied: Super Admin or Web Owner only' });
-        }
-
         const { data, error } = await supabase
             .from('error_logs')
             .select('*')
@@ -157,16 +202,34 @@ app.get('/api/admin/error-logs', async (req, res) => {
         if (error) throw error;
         res.json({ success: true, logs: data });
     } catch (err) {
+        await logErrorToDb(req, 'fetch_error_logs_error', err);
         console.error('[Fetch Error Logs Failed]:', err.message);
         res.status(500).json({ error: 'Failed to fetch error logs' });
     }
 });
 
-// ----------------------------------------------------
-// 管理員 API
-// ----------------------------------------------------
+// ==========================================
+// 審計日誌 API
+// ==========================================
+app.get('/api/audit-logs', requireSuperAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('audit_logs')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(100);
 
-// 1. 取得所有管理員清單
+        if (error) throw error;
+        res.json(data || []);
+    } catch (err) {
+        await logErrorToDb(req, 'fetch_audit_logs_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==========================================
+// 管理員帳號維護 API
+// ==========================================
 app.get('/api/admin/users', requireSuperAdmin, async (req, res) => {
     try {
         const { data: admins, error } = await supabase
@@ -177,11 +240,11 @@ app.get('/api/admin/users', requireSuperAdmin, async (req, res) => {
         if (error) throw error;
         res.json(admins || []);
     } catch (err) {
+        await logErrorToDb(req, 'fetch_admin_users_error', err);
         res.status(500).json({ error: err.message });
     }
 });
 
-// 2. 新增管理員帳號
 app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
     const { username, password, role } = req.body;
     const operator = req.currentUser;
@@ -190,7 +253,6 @@ app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
         return res.status(400).json({ error: '帳號與密碼為必填欄位' });
     }
 
-    // 🔒 權限防護：super_admin 只能新增普通 admin
     let targetRole = role || 'admin';
     if (operator.role === 'super_admin') {
         if (targetRole !== 'admin') {
@@ -201,12 +263,11 @@ app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
     }
 
     try {
-        // 檢查帳號是否已存在
         const { data: existingUser } = await supabase
             .from('admin_users')
             .select('id')
             .eq('username', username)
-            .single();
+            .maybeSingle();
 
         if (existingUser) {
             return res.status(400).json({ error: '此帳號名稱已存在' });
@@ -219,16 +280,15 @@ app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
 
         if (error) throw error;
 
-        // 寫入操作日誌
         await logAudit(operator.username, 'CREATE_ADMIN', data[0].id, `新增管理員帳號: ${username} (角色: ${targetRole})`, req.userAgent);
 
         res.json({ message: '管理員新增成功', id: data[0].id });
     } catch (err) {
+        await logErrorToDb(req, 'create_admin_error', err);
         res.status(500).json({ error: err.message });
     }
 });
 
-// 3. 刪除管理員帳號
 app.delete('/api/admin/users/:id', requireSuperAdmin, async (req, res) => {
     const { id } = req.params;
     const operator = req.currentUser;
@@ -246,17 +306,14 @@ app.delete('/api/admin/users/:id', requireSuperAdmin, async (req, res) => {
             return res.status(404).json({ error: '找不到該管理員帳號' });
         }
 
-        // 防呆 1：無法刪除自己
         if (targetUser.username === operator.username || targetUser.id === operator.id) {
             return res.status(400).json({ error: '無法刪除目前正在使用的帳號' });
         }
 
-        // 防呆 2：Web Owner 絕對不可被刪除
         if (targetUser.role === 'web_owner') {
             return res.status(403).json({ error: '保護機制：無法刪除 Web Owner 帳號' });
         }
 
-        // 防呆 3：super_admin 不能刪除其他 super_admin，只能刪除普通 admin
         if (operator.role === 'super_admin') {
             if (targetUser.role === 'super_admin' || targetUser.role === 'web_owner') {
                 return res.status(403).json({ error: '權限不足：超級管理員不可刪除同級或高級別帳號' });
@@ -270,113 +327,161 @@ app.delete('/api/admin/users/:id', requireSuperAdmin, async (req, res) => {
 
         if (delErr) throw delErr;
 
-        // 寫入操作日誌
         await logAudit(operator.username, 'DELETE_ADMIN', targetUser.id, `刪除帳號: ${targetUser.username} (${targetUser.role})`, req.userAgent);
 
         res.json({ message: '帳號刪除成功' });
     } catch (err) {
+        await logErrorToDb(req, 'delete_admin_error', err);
         res.status(500).json({ error: err.message });
     }
 });
 
-// 🔐 管理員登入驗證 API
-app.post('/api/admin/login', async (req, res) => {
+// ==========================================
+// 身份驗證 API (登入與修改密碼)
+// ==========================================
+const loginHandler = async (req, res) => {
     const { username, password } = req.body;
     const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
-    const { data: user, error } = await supabase
-        .from('admin_users')
-        .select('*')
-        .eq('username', username)
-        .single();
-
-    if (error || !user || user.password !== password) {
-        await logAudit(username || 'UNKNOWN', 'LOGIN_FAILED', null, {
-            reason: '帳號或密碼錯誤',
-            ip: clientIp
-        }, req.userAgent);
-
-        return res.status(401).json({ error: '帳號或密碼錯誤' });
-    }
-
-    await logAudit(user.username, 'LOGIN_SUCCESS', null, {
-        role: user.role,
-        ip: clientIp
-    }, req.userAgent);
-
-    res.json({
-        message: '登入成功',
-        user: { id: user.id, username: user.username, role: user.role }
-    });
-});
-
-// ----------------------------------------------------
-// 比賽賽事 API
-// ----------------------------------------------------
-
-async function addPublisherNames(competitions) {
-    if (!competitions || competitions.length === 0) return [];
-
-    const competitionIds = competitions.map(competition => competition.id);
-    const { data: creationLogs, error } = await supabase
-        .from('audit_logs')
-        .select('target_id, user_id, created_at')
-        .eq('action', 'CREATE_COMPETITION')
-        .in('target_id', competitionIds)
-        .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    const publisherByCompetitionId = new Map();
-    for (const log of creationLogs || []) {
-        if (!publisherByCompetitionId.has(String(log.target_id)) && log.user_id) {
-            publisherByCompetitionId.set(String(log.target_id), String(log.user_id));
-        }
-    }
-
-    const publisherNames = [...new Set([...publisherByCompetitionId.values()])];
-    const { data: publishers, error: publisherQueryError } = publisherNames.length > 0
-        ? await supabase.from('admin_users').select('username, role').in('username', publisherNames)
-        : { data: [], error: null };
-
-    if (publisherQueryError) throw publisherQueryError;
-
-    const publisherRoleByName = new Map(
-        (publishers || []).map(publisher => [String(publisher.username), publisher.role])
-    );
-
-    return competitions.map(competition => ({
-        ...competition,
-        publisher_name: publisherByCompetitionId.get(String(competition.id)) || '系統',
-        publisher_role: publisherRoleByName.get(publisherByCompetitionId.get(String(competition.id))) || 'guest'
-    }));
-}
-
-// 📋 取得所有未刪除比賽
-app.get('/api/competitions', async (req, res) => {
     try {
-        const { data, error } = await supabase
-            .from('competitions')
+        const { data: user, error } = await supabase
+            .from('admin_users')
             .select('*')
-            .eq('is_deleted', false)
-            .order('id', { ascending: false });
+            .eq('username', username)
+            .maybeSingle();
 
-        if (error) throw error;
-        res.json(await addPublisherNames(data || []));
+        if (error || !user || user.password !== password) {
+            await logAudit(username || 'UNKNOWN', 'LOGIN_FAILED', null, {
+                reason: '帳號或密碼錯誤',
+                ip: clientIp
+            }, req.userAgent);
+
+            return res.status(401).json({ error: '帳號或密碼錯誤' });
+        }
+
+        const token = jwt.sign(
+            { sub: user.id, username: user.username, role: user.role },
+            JWT_SECRET,
+            { expiresIn: '12h' }
+        );
+
+        await logAudit(user.username, 'LOGIN_SUCCESS', user.id, { ip: clientIp }, req.userAgent);
+
+        res.json({
+            message: '登入成功',
+            token,
+            user: { id: user.id, username: user.username, role: user.role }
+        });
     } catch (err) {
-        console.error('❌ 讀取比賽失敗:', err.message);
+        await logErrorToDb(req, 'login_error', err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+app.post('/api/auth/login', loginHandler);
+app.post('/api/admin/login', loginHandler);
+
+app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+    const { sub: userId, username } = req.user;
+
+    if (!newPassword || !/^[a-zA-Z0-9]+$/.test(newPassword)) {
+        return res.status(400).json({ error: '新密碼格式錯誤：僅允許英文字母與數字' });
+    }
+
+    try {
+        const { data: user, error: findErr } = await supabase
+            .from('admin_users')
+            .select('*')
+            .eq('id', userId)
+            .single();
+
+        if (findErr || !user || user.password !== oldPassword) {
+            return res.status(400).json({ error: '舊密碼不正確' });
+        }
+
+        const { error: updateErr } = await supabase
+            .from('admin_users')
+            .update({ password: newPassword })
+            .eq('id', userId);
+
+        if (updateErr) throw updateErr;
+
+        await logAudit(username, 'CHANGE_PASSWORD', userId, '使用者修改個人密碼成功', req.userAgent);
+
+        res.json({ message: '密碼修改成功' });
+    } catch (err) {
+        await logErrorToDb(req, 'change_password_error', err);
         res.status(500).json({ error: err.message });
     }
 });
 
-// 🗑️ 讀取回收桶列表 API (開放 super_admin, web_owner 與 admin 讀取)
-async function getDeletedCompetitions(req, res) {
+// ==========================================
+// 比賽賽事 API (CRUD)
+// ==========================================
+
+// 取得比賽列表 (透由 audit_logs 計算發佈者資訊)
+app.get('/api/competitions', async (req, res) => {
     try {
-        const userRole = req.headers['x-user-role'];
-        if (!hasRole(userRole, ADMIN_ROLES)) {
-            return res.status(403).json({ error: 'Access denied: Admin access required' });
+        const { data: competitions, error: compErr } = await supabase
+            .from('competitions')
+            .select('*')
+            .or('is_deleted.is.null,is_deleted.eq.false')
+            .order('id', { ascending: false });
+
+        if (compErr) throw compErr;
+        if (!competitions || competitions.length === 0) return res.json([]);
+
+        const compIds = competitions.map(c => String(c.id));
+
+        const { data: createLogs } = await supabase
+            .from('audit_logs')
+            .select('target_id, user_id')
+            .eq('action', 'CREATE_COMPETITION')
+            .in('target_id', compIds);
+
+        const publisherMap = {};
+        const usernames = new Set();
+        if (createLogs) {
+            createLogs.forEach(log => {
+                publisherMap[log.target_id] = log.user_id;
+                if (log.user_id) usernames.add(log.user_id);
+            });
         }
 
+        const userRoleMap = {};
+        if (usernames.size > 0) {
+            const { data: adminUsers } = await supabase
+                .from('admin_users')
+                .select('username, role')
+                .in('username', Array.from(usernames));
+
+            if (adminUsers) {
+                adminUsers.forEach(u => {
+                    userRoleMap[u.username] = u.role;
+                });
+            }
+        }
+
+        const result = competitions.map(c => {
+            const pubName = publisherMap[String(c.id)] || null;
+            return {
+                ...c,
+                publisher_name: pubName,
+                publisher_role: pubName ? (userRoleMap[pubName] || 'admin') : null
+            };
+        });
+
+        res.json(result);
+    } catch (err) {
+        await logErrorToDb(req, 'get_competitions_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 讀取回收桶 Handler (改用 'id' 排序，避免 deleted_at 欄位不存在報錯)
+const getTrashCompetitionsHandler = async (req, res) => {
+    try {
         const { data, error } = await supabase
             .from('competitions')
             .select('*')
@@ -384,379 +489,186 @@ async function getDeletedCompetitions(req, res) {
             .order('id', { ascending: false });
 
         if (error) throw error;
-        res.json(await addPublisherNames(data || []));
+        res.json(data || []);
     } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-}
-
-app.get('/api/competitions/deleted', getDeletedCompetitions);
-
-// 別名相容：/api/competitions/trash (提供 RESTful 風格端點)
-app.get('/api/competitions/trash', getDeletedCompetitions);
-
-// ➕ 發佈新比賽
-app.post('/api/competitions', async (req, res) => {
-    const userId = req.headers['x-user-id'] || req.userId || 'Unknown';
-    const { name, location, date, time, end_date, end_time, description, is_registration_open } = req.body;
-
-    if (!name || !name.trim()) {
-        return res.status(400).json({ error: '比賽名稱為必填項目' });
-    }
-
-    try {
-        const { data, error } = await supabase
-            .from('competitions')
-            .insert([
-                {
-                    name: name.trim(),
-                    location: sanitizeInput(location),
-                    date: sanitizeInput(date),
-                    time: sanitizeInput(time),
-                    end_date: sanitizeInput(end_date),
-                    end_time: sanitizeInput(end_time),
-                    description: sanitizeInput(description),
-                    is_registration_open: !!is_registration_open,
-                    is_deleted: false
-                }
-            ])
-            .select();
-
-        if (error) throw error;
-
-        const newCompetition = data[0];
-        await logAudit(userId, 'CREATE_COMPETITION', newCompetition.id, { name, date, end_date }, req.userAgent);
-
-        res.status(201).json({ id: newCompetition.id, message: '賽事發佈成功' });
-    } catch (err) {
-        console.error('❌ 新增比賽失敗:', err.message);
-        res.status(500).json({ error: 'Supabase 資料庫寫入失敗: ' + err.message });
-    }
-});
-
-// ✏️ 修改比賽
-app.put('/api/competitions/:id', async (req, res) => {
-    const userId = req.headers['x-user-id'] || req.userId || 'Unknown';
-    const { id } = req.params;
-    const { name, location, date, time, end_date, end_time, description, is_registration_open } = req.body;
-
-    try {
-        const { error } = await supabase
-            .from('competitions')
-            .update({
-                name: name.trim(),
-                location: sanitizeInput(location),
-                date: sanitizeInput(date),
-                time: sanitizeInput(time),
-                end_date: sanitizeInput(end_date),
-                end_time: sanitizeInput(end_time),
-                description: sanitizeInput(description),
-                is_registration_open: !!is_registration_open
-            })
-            .eq('id', id);
-
-        if (error) throw error;
-
-        await logAudit(userId, 'UPDATE_COMPETITION', id, { name, date, end_date }, req.userAgent);
-        res.json({ message: '更新成功' });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// 刪除比賽 (軟刪除)
-app.delete('/api/competitions/:id', async (req, res) => {
-    const { id } = req.params;
-    const operator = req.headers['x-user-id'] || req.userId || 'Unknown';
-
-    try {
-        const { data: competition, error: findErr } = await supabase
-            .from('competitions')
-            .select('name')
-            .eq('id', id)
-            .single();
-
-        if (findErr || !competition) {
-            return res.status(404).json({ error: '找不到該筆比賽資料' });
-        }
-
-        const { error: updateErr } = await supabase
-            .from('competitions')
-            .update({ is_deleted: true })
-            .eq('id', id);
-
-        if (updateErr) throw updateErr;
-
-        await logAudit(operator, 'DELETE_COMPETITION', id, `刪除比賽: ${competition.name} (ID: ${id})`, req.userAgent);
-
-        res.json({ message: '比賽已移至回收桶' });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// 從回收桶復原比賽 (允許 super_admin, web_owner 與 admin 執行)
-const restoreCompetitionHandler = async (req, res) => {
-    const { id } = req.params;
-    const userRole = req.headers['x-user-role'];
-    const operator = req.headers['x-user-id'] || req.userId || 'Unknown';
-
-    if (!hasRole(userRole, ADMIN_ROLES)) {
-        return res.status(403).json({ error: 'Access denied: Admin access required' });
-    }
-
-    try {
-        const { data: competition, error: findErr } = await supabase
-            .from('competitions')
-            .select('name')
-            .eq('id', id)
-            .single();
-
-        if (findErr || !competition) {
-            return res.status(404).json({ error: '找不到該筆比賽資料' });
-        }
-
-        const { error: updateErr } = await supabase
-            .from('competitions')
-            .update({ is_deleted: false })
-            .eq('id', id);
-
-        if (updateErr) throw updateErr;
-
-        await logAudit(operator, 'RESTORE_COMPETITION', id, `復原比賽: ${competition.name} (ID: ${id})`, req.userAgent);
-
-        res.json({ message: '比賽已成功復原' });
-    } catch (err) {
+        await logErrorToDb(req, 'get_trash_error', err);
         res.status(500).json({ error: err.message });
     }
 };
 
-app.put('/api/competitions/:id/restore', restoreCompetitionHandler);
-app.post('/api/competitions/:id/restore', restoreCompetitionHandler);
+app.get('/api/competitions/trash', requireAdmin, getTrashCompetitionsHandler);
+app.get('/api/competitions/deleted', requireAdmin, getTrashCompetitionsHandler);
 
-// 硬刪除 (Hard Delete) - 從資料庫徹底抹除
+// 新增比賽
+app.post('/api/competitions', requireAdmin, async (req, res) => {
+    const { name, location, date, time, end_date, end_time, description, is_registration_open } = req.body;
+    const operator = req.currentUser;
+
+    if (!name || name.trim() === '') {
+        return res.status(400).json({ error: '比賽名稱為必填項目' });
+    }
+
+    try {
+        const payload = {
+            name: name.trim(),
+            location: sanitizeInput(location),
+            date: sanitizeInput(date),
+            time: sanitizeInput(time),
+            end_date: sanitizeInput(end_date),
+            end_time: sanitizeInput(end_time),
+            description: sanitizeInput(description),
+            is_registration_open: !!is_registration_open,
+            is_deleted: false,
+            created_at: new Date().toISOString()
+        };
+
+        const { data, error } = await supabase
+            .from('competitions')
+            .insert([payload])
+            .select();
+
+        if (error) throw error;
+
+        const newComp = data[0];
+        await logAudit(operator.username, 'CREATE_COMPETITION', newComp.id, `發佈賽事: ${newComp.name}`, req.userAgent);
+
+        res.json(newComp);
+    } catch (err) {
+        await logErrorToDb(req, 'create_competition_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 編輯比賽
+app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { name, location, date, time, end_date, end_time, description, is_registration_open } = req.body;
+    const operator = req.currentUser;
+
+    if (!name || name.trim() === '') {
+        return res.status(400).json({ error: '比賽名稱為必填項目' });
+    }
+
+    try {
+        const payload = {
+            name: name.trim(),
+            location: sanitizeInput(location),
+            date: sanitizeInput(date),
+            time: sanitizeInput(time),
+            end_date: sanitizeInput(end_date),
+            end_time: sanitizeInput(end_time),
+            description: sanitizeInput(description),
+            is_registration_open: !!is_registration_open
+        };
+
+        const { data, error } = await supabase
+            .from('competitions')
+            .update(payload)
+            .eq('id', id)
+            .select();
+
+        if (error) throw error;
+        if (!data || data.length === 0) return res.status(404).json({ error: '找不到該賽事' });
+
+        await logAudit(operator.username, 'UPDATE_COMPETITION', id, `更新賽事內容: ${name}`, req.userAgent);
+
+        res.json(data[0]);
+    } catch (err) {
+        await logErrorToDb(req, 'update_competition_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 軟刪除比賽
+app.delete('/api/competitions/:id', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const operator = req.currentUser;
+
+    try {
+        const { data, error } = await supabase
+            .from('competitions')
+            .update({ is_deleted: true })
+            .eq('id', id)
+            .select();
+
+        if (error) throw error;
+
+        await logAudit(operator.username, 'DELETE_COMPETITION', id, `移至回收桶: ${data[0]?.name || id}`, req.userAgent);
+
+        res.json({ message: '已移至回收桶' });
+    } catch (err) {
+        await logErrorToDb(req, 'soft_delete_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 還原比賽
+app.put('/api/competitions/:id/restore', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const operator = req.currentUser;
+
+    try {
+        const { data, error } = await supabase
+            .from('competitions')
+            .update({ is_deleted: false })
+            .eq('id', id)
+            .select();
+
+        if (error) throw error;
+
+        await logAudit(operator.username, 'RESTORE_COMPETITION', id, `還原賽事: ${data[0]?.name || id}`, req.userAgent);
+
+        res.json({ message: '賽事已成功還原' });
+    } catch (err) {
+        await logErrorToDb(req, 'restore_competition_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 硬刪除比賽
 app.delete('/api/competitions/:id/hard-delete', requireSuperAdmin, async (req, res) => {
     const { id } = req.params;
     const operator = req.currentUser;
 
     try {
-        const { error: deleteErr } = await supabase
+        const { error } = await supabase
             .from('competitions')
             .delete()
             .eq('id', id);
 
-        if (deleteErr) throw deleteErr;
+        if (error) throw error;
 
-        await logAudit(operator.username, 'HARD_DELETE_COMPETITION', id, `永久刪除賽事 ID: ${id}`, req.userAgent);
+        await logAudit(operator.username, 'PERMANENT_DELETE_COMPETITION', id, `永久刪除賽事 ID: ${id}`, req.userAgent);
 
-        return res.json({ success: true, message: '已成功永久刪除賽事' });
+        res.json({ message: '賽事已永久刪除' });
     } catch (err) {
-        console.error('Hard Delete Error:', err);
-        return res.status(500).json({ error: '伺服器錯誤: ' + err.message });
+        await logErrorToDb(req, 'hard_delete_error', err);
+        res.status(500).json({ error: err.message });
     }
 });
 
-// ==========================================
-// 🔑 使用者修改個人密碼 API
-// ==========================================
-app.put('/api/auth/change-password', async (req, res) => {
-    const userId = req.headers['x-user-id'];
-    const { oldPassword, newPassword } = req.body;
-    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-
-    if (!userId) {
-        return res.status(401).json({ error: '請先登入系統' });
-    }
-
-    if (!oldPassword || !newPassword) {
-        return res.status(400).json({ error: '請提供舊密碼與新密碼' });
-    }
-
-    // 🔒 格式校驗：只能包含英文與數字 (Alpha-numeric only)
-    const alphaNumericRegex = /^[a-zA-Z0-9]+$/;
-    if (!alphaNumericRegex.test(newPassword)) {
-        return res.status(400).json({ error: '新密碼格式不符，僅允許使用英文字母 (A-Z, a-z) 與數字 (0-9)' });
-    }
-
-    if (newPassword.length < 6) {
-        return res.status(400).json({ error: '新密碼長度至少需要 6 個字元' });
-    }
-
-    try {
-        // 1. 查詢該使用者資訊
-        let query = supabase.from('admin_users').select('*');
-        if (!isNaN(userId)) {
-            query = query.or(`id.eq.${userId},username.eq.${userId}`);
-        } else {
-            query = query.eq('username', userId);
-        }
-
-        const { data: user, error: userErr } = await query.single();
-        if (userErr || !user) {
-            return res.status(404).json({ error: '找不到該使用者帳號' });
-        }
-
-        // 2. 校驗舊密碼是否正確
-        if (user.password !== oldPassword) {
-            return res.status(400).json({ error: '舊密碼輸入錯誤' });
-        }
-
-        // 3. 更新密碼
-        const { error: updateErr } = await supabase
-            .from('admin_users')
-            .update({ password: newPassword })
-            .eq('id', user.id);
-
-        if (updateErr) throw updateErr;
-
-        // 4. 寫入審計日誌 (與 LOGIN_SUCCESS 格式一致)
-        await logAudit(
-            user.username,
-            'CHANGE_PASSWORD',
-            null,
-            {
-                role: user.role,
-                ip: clientIp
-            },
-            req.userAgent
-        );
-
-        res.json({ success: true, message: '密碼已成功修改，請重新登入或妥善保管新密碼' });
-    } catch (err) {
-        console.error('❌ 修改密碼失敗:', err.message);
-        res.status(500).json({ error: '伺服器內部錯誤: ' + err.message });
-    }
+// 客製化 404 路由中間件 (防止 ZAP 掃描誤抓預設 Cannot GET 訊息)
+app.use((req, res) => {
+    res.status(404).json({ success: false, error: 'Resource Not Found' });
 });
 
-// 📜 讀取審計日誌 API (僅限 Super Admin 及 Web Owner)
-app.get('/api/audit-logs', requireSuperAdmin, async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('audit_logs')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(50);
-
-        if (error) {
-            console.error('Fetch audit_logs error:', error.message);
-            return res.status(500).json({ error: error.message });
-        }
-
-        res.json(data || []);
-    } catch (err) {
-        res.status(500).json({ error: '伺服器錯誤: ' + err.message });
-    }
-});
-
-// 清理 test 帳號建立的測試資料。賽事建立者目前由 audit_logs 的 target_id 追蹤。
-async function cleanupTestData() {
-    console.log('[System Cron] 開始執行 test 用戶數據自動清理作業...');
-
-    try {
-        const { data: testUser, error: userError } = await supabase
-            .from('admin_users')
-            .select('id, username')
-            .eq('username', 'test')
-            .maybeSingle();
-
-        if (userError) throw userError;
-        if (!testUser) {
-            console.log('[System Cron] 未找到 test 用戶，跳過清理。');
-            return;
-        }
-
-        const { data: creationLogs, error: auditQueryError } = await supabase
-            .from('audit_logs')
-            .select('target_id')
-            .eq('user_id', testUser.username)
-            .eq('action', 'CREATE_COMPETITION');
-
-        if (auditQueryError) throw auditQueryError;
-
-        const competitionIds = [...new Set(
-            (creationLogs || [])
-                .map(log => Number(log.target_id))
-                .filter(Number.isInteger)
-        )];
-
-        let deletedCompetitionCount = 0;
-        if (competitionIds.length > 0) {
-            const { data: deletedCompetitions, error: competitionDeleteError } = await supabase
-                .from('competitions')
-                .delete()
-                .in('id', competitionIds)
-                .select('id');
-
-            if (competitionDeleteError) throw competitionDeleteError;
-            deletedCompetitionCount = deletedCompetitions?.length || 0;
-        }
-
-        const { error: auditDeleteError } = await supabase
-            .from('audit_logs')
-            .delete()
-            .eq('user_id', testUser.username);
-
-        if (auditDeleteError) throw auditDeleteError;
-
-        const { error: errorLogDeleteError } = await supabase
-            .from('error_logs')
-            .delete()
-            .eq('user_id', testUser.id);
-
-        if (errorLogDeleteError) throw errorLogDeleteError;
-
-        console.log(`[System Cron] 清理完成！已清除 ${deletedCompetitionCount} 筆 test 產生的賽事資料。`);
-    } catch (err) {
-        console.error('[System Cron] 清理 test 數據時發生錯誤:', err.message);
-    }
-}
-
-// ==========================================
-// 3. 後端全域 Express Error Handler 中間件
-// 注意：必須放在所有 app.use() 與 API 路由的最下方！
-// ==========================================
+// 全域 Error Handler (寫入 Supabase 日誌，僅回傳安全 JSON 訊息)
 app.use(async (err, req, res, next) => {
     console.error('[Global Server Error]:', err);
+    await logErrorToDb(req, 'unhandled_server_error', err);
 
-    const rawUserId = req.headers ? req.headers['x-user-id'] : null;
-    const isNumeric = /^\d+$/.test(rawUserId);
-    const userId = isNumeric ? parseInt(rawUserId, 10) : null;
-    const userAgent = req.headers ? req.headers['user-agent'] : '';
-
-    // 自動紀錄後端未預期崩潰/異常至 Supabase
-    try {
-        await supabase.from('error_logs').insert([
-            {
-                user_id: userId,
-                error_type: 'backend_error',
-                message: err.message || 'Internal Server Error',
-                stack_trace: err.stack || '',
-                path: req.originalUrl || req.url,
-                user_agent: userAgent
-            }
-        ]);
-    } catch (loggingErr) {
-        console.error('[Failed to write backend error to DB]:', loggingErr.message);
-    }
-
-    // 回傳標準化 500 JSON 響應
     res.status(500).json({
         success: false,
-        error: 'Internal Server Error',
-        message: err.message
+        error: 'An unexpected internal server error occurred.'
     });
 });
 
-// 本地開發監聽
+// Express App 監聽
 const PORT = process.env.PORT || 3000;
-if (require.main === module) {
-    const SIX_HOURS = 6 * 60 * 60 * 1000;
-    setInterval(cleanupTestData, SIX_HOURS).unref();
-
+if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, () => {
-        console.log(`🚀 Server connected to Supabase & listening on http://localhost:${PORT}`);
+        console.log(`🚀 Server running on http://localhost:${PORT}`);
     });
 }
 
-// 匯出 Express App 適配 Vercel Serverless Functions
 module.exports = app;

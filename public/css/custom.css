@@ -1,0 +1,216 @@
+/* ============================================================
+   自訂補強樣式 (Custom Overrides)
+   用途 1：Tailwind 2.2.19 不支援任意值語法 (max-h-[90vh] 等)，
+          補上等價 class，並強化 backdrop-blur 在 Safari 的相容性。
+   用途 2：Tailwind 2.2.19 缺少 slate / amber / rose / emerald
+          四個色系，這裡手動補上專案實際用到的 class。
+   用途 3：檔案選擇按鈕 (file input) 樣式，補上原生 CSS 避免
+          依賴 Tailwind `file:` variant 支援度。
+   ============================================================ */
+
+/* ---------- 用途 1：Modal 高度、滾動、背景模糊 ---------- */
+
+.max-h-90vh {
+    max-height: 90vh;
+}
+
+.max-h-85vh {
+    max-height: 85vh;
+}
+
+.modal-scroll {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.backdrop-blur-sm {
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+}
+
+/* ---------- 用途 2：slate 色系 (2.2.19 缺) ---------- */
+
+.bg-slate-50 {
+    background-color: #f8fafc;
+}
+
+.bg-slate-100 {
+    background-color: #f1f5f9;
+}
+
+.bg-slate-200 {
+    background-color: #e2e8f0;
+}
+
+.bg-slate-300 {
+    background-color: #cbd5e1;
+}
+
+.bg-slate-700 {
+    background-color: #334155;
+}
+
+.bg-slate-800 {
+    background-color: #1e293b;
+}
+
+.bg-slate-900 {
+    background-color: #0f172a;
+}
+
+.text-slate-400 {
+    color: #94a3b8;
+}
+
+.text-slate-500 {
+    color: #64748b;
+}
+
+.text-slate-600 {
+    color: #475569;
+}
+
+.text-slate-700 {
+    color: #334155;
+}
+
+.text-slate-800 {
+    color: #1e293b;
+}
+
+.text-slate-900 {
+    color: #0f172a;
+}
+
+.border-slate-100 {
+    border-color: #f1f5f9;
+}
+
+.border-slate-200 {
+    border-color: #e2e8f0;
+}
+
+.border-slate-300 {
+    border-color: #cbd5e1;
+}
+
+.border-slate-600 {
+    border-color: #475569;
+}
+
+/* ---------- 用途 2：amber 色系 (2.2.19 缺) ---------- */
+
+.bg-amber-50 {
+    background-color: #fffbeb;
+}
+
+.bg-amber-100 {
+    background-color: #fef3c7;
+}
+
+.bg-amber-600 {
+    background-color: #d97706;
+}
+
+.bg-amber-700 {
+    background-color: #b45309;
+}
+
+.text-amber-700 {
+    color: #b45309;
+}
+
+.text-amber-800 {
+    color: #92400e;
+}
+
+.border-amber-300 {
+    border-color: #fcd34d;
+}
+
+/* ---------- 用途 2：rose 色系 (2.2.19 缺) ---------- */
+
+.bg-rose-100 {
+    background-color: #ffe4e6;
+}
+
+.text-rose-700 {
+    color: #be123c;
+}
+
+.border-rose-300 {
+    border-color: #fda4af;
+}
+
+/* ---------- 用途 2：emerald 色系 (2.2.19 缺) ---------- */
+
+.bg-emerald-50 {
+    background-color: #ecfdf5;
+}
+
+.bg-emerald-100 {
+    background-color: #d1fae5;
+}
+
+.bg-emerald-600 {
+    background-color: #059669;
+}
+
+.bg-emerald-700 {
+    background-color: #047857;
+}
+
+.text-emerald-600 {
+    color: #059669;
+}
+
+.text-emerald-700 {
+    color: #047857;
+}
+
+.border-emerald-200 {
+    border-color: #a7f3d0;
+}
+
+.border-emerald-300 {
+    border-color: #6ee7b7;
+}
+
+/* ---------- 用途 3：檔案選擇按鈕 (file input) ---------- */
+
+input[type="file"]::file-selector-button {
+    background-color: #eff6ff;
+    /* blue-50 */
+    color: #1d4ed8;
+    /* blue-700 */
+    border: 0;
+    border-radius: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-right: 1rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+input[type="file"]::file-selector-button:hover {
+    background-color: #dbeafe;
+    /* blue-100 */
+}
+
+/* Safari 舊版相容 */
+input[type="file"]::-webkit-file-upload-button {
+    background-color: #eff6ff;
+    color: #1d4ed8;
+    border: 0;
+    border-radius: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-right: 1rem;
+    cursor: pointer;
+}
+
+input[type="file"]::-webkit-file-upload-button:hover {
+    background-color: #dbeafe;
+}
