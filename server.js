@@ -22,8 +22,8 @@ app.use((req, res, next) => {
     next();
 });
 
-// 中間件配置
-app.use(cors());
+// 中間件配置：將 CORS 限制僅套用於 /api 路由，避免靜態資源帶有跨域標頭引起安全掃描警報
+app.use('/api', cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
