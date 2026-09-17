@@ -420,7 +420,7 @@ app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
 // 比賽賽事 API (CRUD)
 // ==========================================
 
-// 取得比賽列表 (透由 audit_logs 計算發佈者資訊)
+// 取得比賽列表 (透過 audit_logs 計算發佈者資訊)
 app.get('/api/competitions', async (req, res) => {
     try {
         const { data: competitions, error: compErr } = await supabase
