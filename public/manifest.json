@@ -1,0 +1,23 @@
+{
+  "name": "比賽管理系統",
+  "short_name": "比賽管理",
+  "description": "發佈、搜尋與報名各類比賽；支援組隊報名、隊伍編排與賽事推播通知。",
+  "lang": "zh-Hant",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f1f5f9",
+  "theme_color": "#2563eb",
+  "categories": ["sports", "productivity", "utilities"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-32.png", "sizes": "32x32", "type": "image/png", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "我的報名", "url": "/?view=myregs" },
+    { "name": "通知設定", "url": "/?view=notify" }
+  ]
+}

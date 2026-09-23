@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.10.0
+# 🏆 比賽管理系統 (Competition Manager) v2.11.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -27,6 +27,12 @@
 - **密碼雜湊儲存 (v2.9.0)**：新註冊帳號與變更密碼一律以 Node 內建 `crypto.scrypt` 加鹽雜湊後才寫入資料庫（`scrypt$<salt>$<hash>`，驗證使用 `timingSafeEqual`）；既有明碼舊帳號仍可登入，於下次變更密碼時自動升級為雜湊。
 
 ---
+
+- **可安裝成手機 App（PWA）與 iOS 推播 (v2.11.0)**：新增 `manifest.json` 與自製 App 圖示（192／512／maskable／apple-touch-icon，以純 Python 產生、無外部套件），網站可「加入主畫面」並以獨立視窗全螢幕開啟。**iOS Safari 的推播必須由主畫面 App 開啟才支援**，因此通知設定視窗會依裝置自動顯示對應指引（加入主畫面步驟、權限被拒時的重設說明），不會只丟出一句「不支援」。
+- **手機介面優化 (v2.11.0)**：以 390×844 實機尺寸逐項驗證——頂部導覽列壓縮為單行、篩選列在手機改為兩欄（搜尋框滿寬）、卡片動作按鈕觸控高度 ≥36px、彈出視窗改用 `dvh` 動態高度（網址列收合不會把按鈕推出畫面）、`env(safe-area-inset-bottom)` 保留 iPhone 手勢條空間、輸入框字級 ≥16px（避免 iOS 聚焦時自動放大）、頁面橫向溢出為 0。
+- **深連結直達賽事 (v2.11.0)**：推播通知與分享連結帶 `?comp=<id>`，開啟後會自動切回列表、捲動到該賽事並高亮提示（處理完即清除查詢字串）。
+- **我的報名 → 加入行事曆 (v2.11.0)**：每筆報名可下載標準 `.ics` 行程檔（含賽事名稱、時間、地點、說明與前一天提醒，採 RFC5545 跳脫與 CRLF）或一鍵開到 Google 日曆。
+- **報名名單匯出 (v2.11.0)**：管理員以上可在「👥 報名／隊伍」視窗把該場報名名單（姓名、隊伍、備註、報名時間）匯出成 CSV，方便現場報到與計分。
 
 ## 🛠️ 技術棧 (Tech Stack)
 
@@ -123,7 +129,10 @@ competition-manager/
 │   │   ├── csv.js            # CSV 解析／產生（前後端共用 UMD 模組，手寫 RFC4180）
 │   │   ├── notify.js         # 通知／提醒模組（判斷邏輯為純函式，可單元測試）
 │   │   └── theme-init.js     # 主題初始化（<head> 同步執行，防止強制深色時閃爍）
-│   ├── sw.js                 # 極簡 Service Worker（僅用於顯示通知，不做 Web Push）
+│   ├── icons/                # PWA 圖示（192／512／maskable／apple-touch-icon，純 Python 產生）
+│   ├── manifest.json         # PWA manifest（可「加入主畫面」；iOS 推播的必要條件）
+│   ├── favicon.ico           # 網站圖示（ICO 內嵌 PNG）
+│   ├── sw.js                 # Service Worker（顯示通知、接收 push 事件、點擊通知開啟指定賽事）
 │   └── index.html            # 前端頁面結構
 ├── migrations/
 │   └── *.sql                 # 資料庫結構變更（需手動於 Supabase SQL Editor 執行）
@@ -136,17 +145,33 @@ competition-manager/
 │   ├── registration-no-migration.test.js # 未執行 v2.9.0 migration 時：新功能停用、舊功能不受影響
 │   ├── support/fake-supabase.js        # 假 Supabase（PostgREST）服務，供端到端測試完全不碰正式資料庫
 │   ├── import-no-migration.test.js  # 資料庫尚未 migration 時的匯入行為
-│   ├── notify.test.js        # 通知判斷邏輯單元測試（新賽事、開賽提醒、去重）
+│   ├── notify.test.js        # 通知判斷邏輯與 iOS／PWA 推播能力判斷單元測試
+│   ├── poster-push.test.js   # 海報格式／推播候選條件純函式單元測試
 │   └── server.bootstrap.test.js  # 啟動階段與 JWT_SECRET fail-fast 測試
 ├── .env                      # 環境變數 (不進 Git)
 ├── .gitignore                # 忽略 node_modules 與環境變數設定
 ├── package.json              # 專案依賴套件設定檔
 ├── vercel.json               # Vercel Serverless Functions 路由設定
+├── docs/
+│   └── 功能總覽與規劃.md      # 功能現況總表與後續規劃（可貼進 Google Docs）
 ├── server.js                 # Express 後端伺服器、API 路由與 Error 中間件
 └── README.md                 # 專案說明文件
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.11.0 (2026-09-24) - 手機介面優化、PWA 與 iOS 推播、權限修復
+
+- **修正 — 登出後仍可看到 CSV 匯入／匯出**：`updateUIByRole()` 原本由各角色分支各自隱藏選單項目，訪客分支漏了 `csvToolBtn`，因此「先登入管理員再登出」就會殘留管理功能（後端 `requireAdmin` 仍會擋，但 UI 不該顯示）。現在改為**單一權限表 `CM_MENU_PERMISSIONS`**（guest／user／test／admin／super_admin／web_owner 一目了然），每次更新 UI 一律先套用該表，杜絕同類漏寫；`openCsvModal()` / `csvDownloadTemplate()` / `csvExport()` / `csvPickFile()` 另加 `isAdminUser()` 防護，即使被繞過也無法使用。
+- **修正 — 「我的報名」顯示 migration 訊息**：該視窗原本有一行開發期留下的靜態文字（「報名紀錄需要資料庫已執行 v2.9.0 migration…」）。已移除，改為**依實際情況顯示狀態**：載入中／沒有紀錄／登入逾期（401）／資料庫尚未完成設定（503，直接顯示後端原文）／連線失敗。
+- **新功能 — 可安裝成 App（PWA）＋ iOS 推播支援**：新增 `public/manifest.json` 與自製圖示（純 Python 產生 PNG／ICO，無外部套件、不放寬 CSP）。新增 `CMNotify.pushSupportState()` 判斷裝置能力：iOS 未加入主畫面時回傳 `ios-needs-homescreen` 並顯示逐步指引（而非「不支援」）；權限被拒、Android／桌面可安裝（`beforeinstallprompt`）也各有對應提示。**iOS 16.4+ 必須加入主畫面以獨立 App 開啟才能收到 Web Push。**
+- **新功能 — 手機介面優化**：以 390×844 與 360×640 實測。標題列在 360px 仍為單行（≤360px 時選單只留 ☰）、篩選列手機版改兩欄（搜尋框滿寬，省下約兩行高度）、彈窗改用 `92dvh`／`94dvh`、卡片動作鈕最小高度 36px、`html, body { overflow-x: hidden }` 與長字串換行確保**橫向溢出為 0**、輸入框 16px 避免 iOS 聚焦放大、保留 iPhone 底部安全區域。
+- **新功能 — 深連結 `?comp=<id>`**：推播通知（伺服器已帶此參數）與任何分享連結點擊後會自動切到列表、捲動並以動畫高亮目標賽事，處理後清除查詢字串；另支援 `?view=myregs` / `?view=notify`（manifest 捷徑）。
+- **新功能 — 行程檔（.ics）與 Google 日曆**：我的報名每筆可下載 `.ics`（RFC5545 跳脫、CRLF、含 `VALARM` 前一天提醒）或直接開 Google 日曆新增行程，純前端產生、無外部依賴。
+- **新功能 — 報名名單匯出 CSV**：管理員以上在隊伍編排視窗可匯出該場報名名單（姓名／隊伍／備註／報名時間）。
+- **其他**：卡片名額顯示改為「N / M 人」＋「剩 X 個名額」或「🔒 名額已滿」；彈窗高度改用 `dvh` 類別（`.cm-modal-panel`）。
+- **Testing**：`npm test` 共 **77 項**全綠（新增 `pushSupportState`／`isIosDevice`／`isStandalone` 單元測試，涵蓋 iOS 分頁、加入主畫面後、Android、權限被拒與桌機不支援）；headless Chrome 以 **390×844 手機尺寸**實測 v2.11.0 **41 項**全綠（版面、權限、我的報名、.ics 內容、深連結、名額、深色模式），並通過 v2.10.0（29）、v2.9.0（50）、v2.8.0（50）、v2.7.0（48）回歸。
+- **資料庫**：不需新的 migration（v2.9.0／v2.10.0 的 migration 仍為必跑）。
 
 ### v2.10.0 (2026-09-24) - 手動上傳海報、Web Push 推播訂閱
 

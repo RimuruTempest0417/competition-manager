@@ -174,3 +174,62 @@ test('runCheck：更新基準、標記已通知、顯示失敗不中斷流程', 
     assert.strictEqual(fired2.length, 0, '未啟用時不顯示任何通知');
     assert.strictEqual(CMNotify.loadState(store2).seenMaxId, 12, '未啟用時仍應建立基準，避免日後一次灌出大量通知');
 });
+
+/* ---------- v2.11.0：iOS / PWA 推播能力判斷 ---------- */
+
+function fakeWin(opts) {
+    const o = opts || {};
+    const win = {
+        navigator: {
+            userAgent: o.ua || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+            maxTouchPoints: o.maxTouchPoints === undefined ? 0 : o.maxTouchPoints,
+            serviceWorker: o.serviceWorker === false ? undefined : {},
+            standalone: o.standaloneFlag === true ? true : undefined
+        },
+        matchMedia: (q) => ({ matches: q.indexOf('standalone') !== -1 && !!o.displayStandalone })
+    };
+    if (o.pushManager !== false) win.PushManager = function PushManager() {};
+    if (o.notification !== false) win.Notification = { permission: o.permission || 'default' };
+    return win;
+}
+
+const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+const IPAD_OS_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
+const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36';
+
+test('isIosDevice：iPhone / iPad / iPadOS 13+ 偽裝成 Mac 的判斷', () => {
+    assert.strictEqual(CMNotify.isIosDevice({ userAgent: IPHONE_UA, maxTouchPoints: 5 }), true);
+    // iPadOS 13+ 的 Safari 會回報 Macintosh，必須靠觸控點數辨識
+    assert.strictEqual(CMNotify.isIosDevice({ userAgent: IPAD_OS_UA, maxTouchPoints: 5 }), true);
+    assert.strictEqual(CMNotify.isIosDevice({ userAgent: IPAD_OS_UA, maxTouchPoints: 0 }), false, '真正的 macOS 不該被誤判');
+    assert.strictEqual(CMNotify.isIosDevice({ userAgent: ANDROID_UA, maxTouchPoints: 5 }), false);
+    assert.strictEqual(CMNotify.isIosDevice({}), false);
+});
+
+test('isStandalone：iOS 旗標與 display-mode 都要認', () => {
+    assert.strictEqual(CMNotify.isStandalone(fakeWin({ standaloneFlag: true })), true);
+    assert.strictEqual(CMNotify.isStandalone(fakeWin({ displayStandalone: true, ua: ANDROID_UA })), true);
+    assert.strictEqual(CMNotify.isStandalone(fakeWin({ ua: ANDROID_UA })), false);
+    assert.strictEqual(CMNotify.isStandalone(null), false, '沒有 window 時不應拋錯');
+});
+
+test('pushSupportState：iOS 分頁回報「需加入主畫面」而不是「不支援」', () => {
+    // iOS Safari 分頁：沒有 PushManager / Notification，但錯誤訊息必須是可操作的那一種
+    const iosTab = CMNotify.pushSupportState(fakeWin({ ua: IPHONE_UA, maxTouchPoints: 5, pushManager: false, notification: false }));
+    assert.strictEqual(iosTab.level, 'ios-needs-homescreen');
+    assert.strictEqual(iosTab.canSubscribe, false);
+
+    // 加入主畫面後（standalone）且瀏覽器有 API → 可用
+    const iosApp = CMNotify.pushSupportState(fakeWin({ ua: IPHONE_UA, maxTouchPoints: 5, standaloneFlag: true, permission: 'granted' }));
+    assert.strictEqual(iosApp.level, 'ok');
+    assert.strictEqual(iosApp.canSubscribe, true);
+
+    // Android Chrome → 可用
+    assert.strictEqual(CMNotify.pushSupportState(fakeWin({ ua: ANDROID_UA, maxTouchPoints: 5 })).level, 'ok');
+
+    // 桌機不支援 Push API → 不支援
+    assert.strictEqual(CMNotify.pushSupportState(fakeWin({ pushManager: false })).level, 'unsupported');
+
+    // 權限被拒 → 要提示去設定開啟
+    assert.strictEqual(CMNotify.pushSupportState(fakeWin({ ua: ANDROID_UA, permission: 'denied' })).level, 'denied');
+});

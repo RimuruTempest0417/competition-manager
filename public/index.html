@@ -3,13 +3,21 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <!-- 深淺色模式：宣告本站同時支援 light / dark，讓瀏覽器在 CSS 載入前
          就以正確的配色渲染原生控制項（日期選擇器、下拉選單、捲軸） -->
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.10.0</title>
+    <title>比賽管理系統 v2.11.0</title>
+    <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="比賽管理">
     <!-- Tailwind CSS 2.2.19 (本地靜態檔，符合 CSP style-src 'self') -->
     <link href="/css/tailwind.min.css" rel="stylesheet">
     <!-- 自訂補強樣式 (Modal 高度、滾動、背景模糊、色系補強、檔案按鈕、深淺色模式) -->
@@ -22,27 +30,27 @@
 
     <!-- 頂部導覽列 -->
     <header class="bg-white shadow-sm border-b border-slate-200">
-        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center cm-header-inner">
             <div>
-                <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2 cm-app-title">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.10.0)</p>
+                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.11.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
             <div class="flex items-center gap-3">
                 <!-- 權限身份標籤 -->
                 <span id="authStatus"
-                    class="text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                    class="text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 cm-auth-pill">
                     👤 普通訪客
                 </span>
 
                 <!-- 🍔 統一功能選單按鈕 -->
                 <div id="mainNavMenu" class="relative">
                     <button id="navMenuBtn"
-                        class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-1.5 rounded-lg border border-slate-300 text-sm font-medium flex items-center gap-1.5 transition">
-                        ☰ 選單
+                        class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3.5 py-1.5 rounded-lg border border-slate-300 text-sm font-medium flex items-center gap-1.5 transition cm-menu-btn">
+                        ☰ <span class="cm-menu-label">選單</span>
                         <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7">
                             </path>
@@ -51,7 +59,7 @@
 
                     <!-- 下拉選單浮窗 -->
                     <div id="navDropdown"
-                        class="hidden absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50">
+                        class="hidden absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50 cm-dropdown">
 
                         <!-- 帳號資訊 (僅登入時顯示) -->
                         <div id="dropdownUserInfo" class="hidden px-4 py-2 border-b border-slate-100 bg-slate-50">
@@ -310,7 +318,7 @@
                 </div>
 
                 <!-- 搜尋與篩選列 + 回收桶按鈕 -->
-                <div class="flex flex-wrap items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2 cm-filter-row">
                     <input type="text" id="searchInput" placeholder="🔍 搜尋比賽名稱、地點..."
                         class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <select id="filterCategory"
@@ -558,7 +566,7 @@
     <!-- 彈出視窗 2：系統操作日誌 Modal (超級管理員專屬) -->
     <div id="auditLogModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-85vh flex flex-col">
+        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
                     📜 系統操作日誌 (Audit Logs)
@@ -576,7 +584,7 @@
     <!-- 彈出視窗 3：系統錯誤日誌 Modal (超級管理員專屬) -->
     <div id="errorLogsModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full p-6 space-y-4 max-h-85vh flex flex-col">
+        <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-red-600 flex items-center gap-2">
                     🚨 系統異常錯誤日誌 (Error Logs)
@@ -636,7 +644,7 @@
     <!-- 彈出視窗 5：資源回收桶 Modal -->
     <div id="trashModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-85vh flex flex-col">
+        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
                     🗑️ 資源回收桶 (已刪除賽事)
@@ -701,12 +709,12 @@
     <!-- 彈出視窗 9：我的報名（v2.9.0） -->
     <div id="myRegsModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-85vh flex flex-col">
+        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-slate-800">📝 我的報名</h3>
                 <button id="closeMyRegsModalBtn" class="text-slate-400 hover:text-slate-600">✕</button>
             </div>
-            <p class="text-xs text-slate-500">報名紀錄需要資料庫已執行 v2.9.0 migration；若顯示提示訊息，請通知站方管理員。</p>
+            <div id="myRegsStatus" class="hidden text-xs p-2.5 rounded-lg border"></div>
             <div id="myRegsList" class="flex-1 overflow-y-auto space-y-2"></div>
             <div class="flex justify-end pt-1 border-t">
                 <button id="closeMyRegsModalBtn2"
@@ -718,7 +726,7 @@
     <!-- 彈出視窗 10：報名名單與隊伍編排（管理員以上，v2.9.0） -->
     <div id="teamModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-85vh flex flex-col">
+        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
             <div class="flex justify-between items-start border-b pb-3">
                 <div>
                     <h3 class="text-lg font-bold text-slate-800">👥 報名名單與隊伍編排</h3>
@@ -741,6 +749,14 @@
             </div>
 
             <div id="teamMsg" class="hidden text-xs p-2.5 rounded-lg border"></div>
+
+            <div class="flex flex-wrap items-center gap-2">
+                <button id="exportRegsCsvBtn"
+                    class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-medium px-3 py-2 rounded-lg border border-emerald-200 transition">
+                    ⬇️ 匯出報名名單 (CSV)
+                </button>
+                <span class="text-[11px] text-slate-400">含姓名、帳號、隊伍、備註與報名時間</span>
+            </div>
 
             <div class="flex-1 overflow-y-auto space-y-3">
                 <div>
@@ -767,7 +783,7 @@
     <!-- 彈出視窗 7：通知設定 (所有人皆可用) -->
     <div id="notifyModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-85vh flex flex-col">
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 cm-modal-panel flex flex-col">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
                     🔔 通知設定
@@ -812,6 +828,10 @@
                 <div id="pushStatus" class="text-xs p-2.5 rounded-lg border bg-slate-50 border-slate-200 text-slate-600">
                     尚未開啟推播訂閱
                 </div>
+                <!-- iOS 專用指引（以指令碼動態填入；iOS 需「加入主畫面」才能推播） -->
+                <div id="pushIosHint" class="hidden text-xs p-2.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 space-y-1"></div>
+                <!-- 可安裝提示（Android / 桌面 Chrome） -->
+                <div id="pushInstallHint" class="hidden text-xs p-2.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-800"></div>
                 <div class="flex flex-wrap gap-2">
                     <button id="pushSubscribeBtn"
                         class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-3 py-2 rounded-lg transition">
@@ -844,7 +864,7 @@
     <!-- 彈出視窗 6：CSV 匯入 / 匯出 (管理員以上) -->
     <div id="csvModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-85vh flex flex-col">
+        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
                     📥 CSV 匯入 / 匯出

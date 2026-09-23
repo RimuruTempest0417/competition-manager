@@ -407,8 +407,53 @@
         return data;
     }
 
+    // iOS（含 iPadOS 13+ 偽裝成 Mac 的情況）：Safari 分頁不支援 Web Push，
+    // 必須「加入主畫面」後以獨立 App（display: standalone）開啟才會拿到 PushManager 與 Notification。
+    function isIosDevice(navArg) {
+        const n = navArg || (typeof navigator !== 'undefined' ? navigator : null);
+        if (!n) return false;
+        const ua = n.userAgent || '';
+        const iPadOsLikeMac = /Macintosh/.test(ua) && Number(n.maxTouchPoints) > 1;
+        return /iPad|iPhone|iPod/.test(ua) || iPadOsLikeMac;
+    }
+
+    function isStandalone(winArg) {
+        const w = winArg || (typeof window !== 'undefined' ? window : null);
+        if (!w) return false;
+        if (w.navigator && w.navigator.standalone === true) return true;   // iOS Safari 專有旗標
+        if (typeof w.matchMedia === 'function') {
+            try { return w.matchMedia('(display-mode: standalone)').matches; } catch (e) { /* 忽略 */ }
+        }
+        return false;
+    }
+
+    // 回傳推播可用狀態，讓 UI 能給出「該怎麼做」而不是只說不支援
+    function pushSupportState(winArg, navArg) {
+        const w = winArg || (typeof window !== 'undefined' ? window : null);
+        const n = navArg || (w && w.navigator) || (typeof navigator !== 'undefined' ? navigator : null);
+        const ios = isIosDevice(n);
+        const standalone = isStandalone(w);
+        const hasPushApi = !!(w && w.PushManager && n && n.serviceWorker);
+        const hasNotification = !!(w && typeof w.Notification !== 'undefined');
+
+        if (ios && !standalone) {
+            return { level: 'ios-needs-homescreen', ios, standalone, canSubscribe: false };
+        }
+        if (!hasPushApi || !hasNotification) {
+            return { level: 'unsupported', ios, standalone, canSubscribe: false };
+        }
+        const permission = (w.Notification && w.Notification.permission) || 'default';
+        if (permission === 'denied') {
+            return { level: 'denied', ios, standalone, permission, canSubscribe: false };
+        }
+        return { level: 'ok', ios, standalone, permission, canSubscribe: true };
+    }
+
     return {
         STORAGE_KEY,
+        isIosDevice,
+        isStandalone,
+        pushSupportState,
         REMIND_WINDOW_HOURS,
         DEFAULTS,
         loadState,

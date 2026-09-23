@@ -675,8 +675,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('closeMyRegsModalBtn2')?.addEventListener('click', closeMyRegsModal);
     document.getElementById('myRegsList')?.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
-        if (!btn || btn.dataset.action !== 'cancel-reg') return;
-        cancelRegistration(Number(btn.dataset.id));
+        if (!btn) return;
+        const action = btn.dataset.action;
+        if (action === 'cancel-reg') return cancelRegistration(Number(btn.dataset.id));
+        if (action === 'reg-ics') return downloadRegistrationIcs(Number(btn.dataset.id));
+        if (action === 'reg-gcal') return openRegistrationGoogleCalendar(Number(btn.dataset.id));
     });
 
     document.getElementById('cancelEditBtn')?.addEventListener('click', clearTeamFormFields);
@@ -692,6 +695,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('closeTeamModalBtn')?.addEventListener('click', closeTeamModal);
     document.getElementById('closeTeamModalBtn2')?.addEventListener('click', closeTeamModal);
     document.getElementById('createTeamBtn')?.addEventListener('click', createTeam);
+    document.getElementById('exportRegsCsvBtn')?.addEventListener('click', exportCompetitionRegistrationsCsv);
     document.getElementById('unassignedList')?.addEventListener('change', (e) => {
         const sel = e.target.closest('select');
         if (!sel || sel.dataset.action !== 'assign-select') return;
@@ -832,7 +836,78 @@ document.addEventListener('DOMContentLoaded', async () => {
     await fetchRegistrationCounts();              // v2.9.0：報名人數與公開設定
     if (currentUser) await fetchMyRegistrations(); // v2.9.0：我的報名
     await fetchCompetitions();
+
+    // v2.11.0：處理網址意圖（推播通知點擊 ?comp=ID、manifest 捷徑 ?view=...）
+    await applyUrlIntent();
 });
+
+// 讓通知／分享連結能直達目標：?comp=<id> 會捲動並高亮該賽事；?view=myregs|notify 會開啟對應視窗
+async function applyUrlIntent() {
+    let params;
+    try {
+        params = new URLSearchParams(window.location.search);
+    } catch (e) {
+        return;
+    }
+
+    const view = params.get('view');
+    if (view === 'notify') {
+        if (window.refreshPushStatus) refreshPushStatus();
+        document.getElementById('notifyModal')?.classList.remove('hidden');
+    } else if (view === 'myregs') {
+        await openMyRegsModal();
+    }
+
+    const compId = params.get('comp');
+    if (compId) {
+        setView('list');   // 日曆模式下卡片不在畫面上，先切回列表
+        focusCompetitionCard(compId);
+    }
+
+    // 清掉查詢字串，避免重新整理時重複觸發（保留路徑與雜湊）
+    if (view || compId) {
+        try { history.replaceState(null, '', window.location.pathname); } catch (e) { /* 忽略 */ }
+    }
+}
+
+function focusCompetitionCard(compId) {
+    const card = document.querySelector(`#competitionList .cm-card[data-comp-id="${CSS.escape(String(compId))}"]`);
+    if (!card) return false;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('cm-flash');
+    setTimeout(() => card.classList.remove('cm-flash'), 3200);
+    return true;
+}
+
+// 角色 → 選單／功能可見性（單一來源）
+// 為什麼要這樣寫：過去每個角色分支各自列 classList.add('hidden')，
+// 只要有分支漏寫（例如訪客分支忘了隱藏 CSV 按鈕），登出後就會殘留管理員功能。
+const CM_MENU_PERMISSIONS = {
+    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, create: false, myRegs: false, changePwd: false },
+    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, create: false, myRegs: true,  changePwd: true },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, create: true,  myRegs: true,  changePwd: true },
+    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: false, create: true,  myRegs: true,  changePwd: true },
+    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  create: true,  myRegs: true,  changePwd: true },
+    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  create: true,  myRegs: true,  changePwd: true }
+};
+
+function applyMenuVisibility(role) {
+    const perm = CM_MENU_PERMISSIONS[role] || CM_MENU_PERMISSIONS.admin;
+    const map = [
+        ['csvToolBtn', perm.csvTool],
+        ['mainTrashBtn', perm.trash],
+        ['auditLogBtn', perm.audit],
+        ['btn-error-logs', perm.errorLogs],
+        ['adminMgmtBtn', perm.adminMgmt],
+        ['createSection', perm.create],
+        ['myRegsBtn', perm.myRegs],
+        ['changePwdBtn', perm.changePwd]
+    ];
+    map.forEach(([id, visible]) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', !visible);
+    });
+}
 
 function updateUIByRole() {
     const authStatus = document.getElementById('authStatus');
@@ -850,8 +925,11 @@ function updateUIByRole() {
     const menuDivider = document.getElementById('menuDivider');
     const myRegsBtn = document.getElementById('myRegsBtn');
 
+    // 先依角色統一套用選單可見性（避免任何角色殘留上一輪登入的功能）
+    applyMenuVisibility(currentUser ? currentUser.role : 'guest');
+
     if (!currentUser) {
-        authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200";
+        authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 cm-auth-pill";
         authStatus.innerText = `${getRoleEmoji('guest')} 普通訪客`;
 
         dropdownUserInfo?.classList.add('hidden');
@@ -922,6 +1000,8 @@ function updateUIByRole() {
             mainTrashBtn?.classList.remove('hidden');
             csvToolBtn?.classList.remove('hidden');
         }
+        // className 會被上面的分支整串覆蓋，這裡補回手機版排版用的標記 class
+        authStatus.classList.add('cm-auth-pill');
     }
     renderCurrentView(allCompetitions);
 }
@@ -978,8 +1058,16 @@ function regStatusBadgeHtml(item) {
 function regMetaHtml(item) {
     const parts = [];
     const count = Number(regCounts[String(item.id)]) || 0;
-    if (count > 0) parts.push(`<span class="text-emerald-600 font-medium">👥 ${count} 人已報名</span>`);
-    if (Number(item.max_registrations) > 0) parts.push(`<span>名額 ${item.max_registrations} 人</span>`);
+    const max = Number(item.max_registrations) || 0;
+    if (max > 0) {
+        const left = Math.max(0, max - count);
+        parts.push(`<span class="text-slate-600">👥 ${count} / ${max} 人</span>`);
+        parts.push(left > 0
+            ? `<span class="text-emerald-600 font-medium">剩 ${left} 個名額</span>`
+            : '<span class="text-red-500 font-medium">🔒 名額已滿</span>');
+    } else if (count > 0) {
+        parts.push(`<span class="text-emerald-600 font-medium">👥 ${count} 人已報名</span>`);
+    }
     if (item.is_team_event && Number(item.team_size) > 0) parts.push(`<span>每隊上限 ${item.team_size} 人</span>`);
     if (item.registration_deadline) {
         const open = clientRegistrationState(item).open;
@@ -1135,13 +1223,31 @@ function clearTeamFormFields() {
     setValue('registration_deadline', '');
 }
 
+let myRegsError = null;   // { kind, message }：讓「我的報名」能顯示真正的原因，而不是靜默空白
+
 async function fetchMyRegistrations() {
+    myRegsError = null;
     if (!currentUser) { myRegistrations = []; return; }
     try {
         const res = await customFetch('/api/my/registrations');
-        myRegistrations = res.ok ? await res.json() : [];
+        if (res.ok) {
+            const data = await res.json();
+            myRegistrations = Array.isArray(data) ? data : [];
+            return;
+        }
+        myRegistrations = [];
+        const body = await res.json().catch(() => ({}));
+        if (res.status === 401) {
+            myRegsError = { kind: 'auth', message: '登入狀態已過期，請重新登入後再查看報名紀錄。' };
+        } else if (res.status === 503) {
+            // 後端明確告知需要執行資料庫遷移時，把原文帶出來（管理員看得懂怎麼修）
+            myRegsError = { kind: 'schema', message: body.error || '資料庫尚未完成報名相關設定。' };
+        } else {
+            myRegsError = { kind: 'error', message: body.error || `讀取報名紀錄失敗（HTTP ${res.status}）` };
+        }
     } catch (e) {
         myRegistrations = [];
+        myRegsError = { kind: 'offline', message: '目前無法連線到伺服器，請稍後再試。' };
     }
 }
 
@@ -1223,12 +1329,102 @@ async function confirmRegister() {
 }
 
 /* ---------- 我的報名 ---------- */
+function findMyRegistration(regId) {
+    return myRegistrations.find((r) => String(r.id) === String(regId)) || null;
+}
+
+// 行程檔（.ics）：純前端產生，不依賴外部服務；iOS／Android／Outlook 都能直接匯入
+function buildIcsContent(comp) {
+    const stamp = (dateStr, timeStr) =>
+        String(dateStr).replace(/-/g, '') + 'T' + String(timeStr || '09:00').replace(':', '') + '00';
+    const start = stamp(comp.date, comp.time || '09:00');
+    let end;
+    if (comp.end_date) {
+        end = stamp(comp.end_date, comp.end_time || '18:00');
+    } else {
+        const d = new Date(`${comp.date}T${comp.time || '09:00'}:00`);
+        d.setHours(d.getHours() + 2);
+        const p = (n) => String(n).padStart(2, '0');
+        end = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}00`;
+    }
+    const esc = (s) => String(s == null ? '' : s)
+        .replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    const now = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+    const lines = [
+        'BEGIN:VCALENDAR', 'VERSION:2.0', 'CALSCALE:GREGORIAN',
+        'PRODID:-//competition-manager//zh-TW//v2.11.0',
+        'BEGIN:VEVENT',
+        `UID:cm-competition-${comp.id}@competition-manager`,
+        `DTSTAMP:${now}`,
+        `DTSTART:${start}`,
+        `DTEND:${end}`,
+        `SUMMARY:${esc(comp.name)}`,
+        comp.location ? `LOCATION:${esc(comp.location)}` : '',
+        comp.description ? `DESCRIPTION:${esc(comp.description)}` : '',
+        'BEGIN:VALARM', 'TRIGGER:-P1D', 'ACTION:DISPLAY', 'DESCRIPTION:提醒：明天的比賽', 'END:VALARM',
+        'END:VEVENT', 'END:VCALENDAR'
+    ];
+    return lines.filter(Boolean).join('\r\n');
+}
+
+function downloadRegistrationIcs(regId) {
+    const reg = findMyRegistration(regId);
+    const comp = reg && reg.competitions;
+    if (!comp || !comp.date) return alert('這筆報名沒有可加入行事曆的日期資訊。');
+    const safeName = String(comp.name || 'competition').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
+    downloadCsvBlob(`${safeName}.ics`, new Blob([buildIcsContent(comp)], { type: 'text/calendar;charset=utf-8' }));
+}
+
+function openRegistrationGoogleCalendar(regId) {
+    const reg = findMyRegistration(regId);
+    const comp = reg && reg.competitions;
+    if (!comp || !comp.date) return alert('這筆報名沒有可加入行事曆的日期資訊。');
+    const pad = (n) => String(n).padStart(2, '0');
+    const startStamp = String(comp.date).replace(/-/g, '') + 'T' + String(comp.time || '09:00').replace(':', '') + '00';
+    let endStamp;
+    if (comp.end_date) {
+        endStamp = String(comp.end_date).replace(/-/g, '') + 'T' + String(comp.end_time || '18:00').replace(':', '') + '00';
+    } else {
+        const d = new Date(`${comp.date}T${comp.time || '09:00'}:00`);
+        d.setHours(d.getHours() + 2);
+        endStamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
+    }
+    const params = new URLSearchParams({
+        action: 'TEMPLATE',
+        text: comp.name || '比賽',
+        dates: `${startStamp}/${endStamp}`,
+        details: comp.description ? String(comp.description).slice(0, 900) : '比賽報名紀錄（來自比賽管理系統）',
+        location: comp.location || ''
+    });
+    window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, '_blank', 'noopener');
+}
+
+function setMyRegsStatus(kind, message) {
+    const box = document.getElementById('myRegsStatus');
+    if (!box) return;
+    if (!message) { box.classList.add('hidden'); box.textContent = ''; return; }
+    box.className = 'text-xs p-2.5 rounded-lg border ' +
+        (kind === 'schema'
+            ? 'bg-amber-50 border-amber-300 text-amber-900'
+            : kind === 'auth'
+                ? 'bg-blue-50 border-blue-200 text-blue-800'
+                : 'bg-red-50 border-red-200 text-red-700');
+    box.textContent = message;
+    box.classList.remove('hidden');
+}
+
 function renderMyRegs() {
     const list = document.getElementById('myRegsList');
     if (!list) return;
 
+    if (myRegsError) {
+        setMyRegsStatus(myRegsError.kind, myRegsError.message);
+    } else {
+        setMyRegsStatus(null, null);
+    }
+
     if (!myRegistrations.length) {
-        list.innerHTML = '<p class="text-center text-slate-400 py-6 text-sm">目前沒有報名紀錄</p>';
+        list.innerHTML = `<p class="text-center text-slate-400 py-6 text-sm">${myRegsError ? '暫時無法顯示報名紀錄' : '目前沒有報名紀錄'}</p>`;
         return;
     }
 
@@ -1243,8 +1439,15 @@ function renderMyRegs() {
                 ${r.note ? `<p class="text-xs text-slate-500 mt-0.5">📝 ${escapeHtml(r.note)}</p>` : ''}
                 <p class="text-xs text-slate-400 mt-0.5">報名時間：${escapeHtml(String(r.created_at || '').slice(0, 16).replace('T', ' '))}</p>
             </div>
-            <button data-action="cancel-reg" data-id="${r.id}"
-                class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition shrink-0">取消報名</button>
+            <div class="flex flex-col items-end gap-1.5 shrink-0">
+                ${comp.date ? `
+                <button data-action="reg-ics" data-id="${r.id}"
+                    class="text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">📅 行程檔</button>
+                <button data-action="reg-gcal" data-id="${r.id}"
+                    class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">🗓️ 日曆</button>` : ''}
+                <button data-action="cancel-reg" data-id="${r.id}"
+                    class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition">取消報名</button>
+            </div>
         </div>`;
     }).join('');
 }
@@ -1253,6 +1456,7 @@ async function openMyRegsModal() {
     if (!currentUser) return openLoginModal('請先登入才能查看你的報名紀錄。');
 
     closeNavDropdown();
+    setMyRegsStatus(null, null);
     const list = document.getElementById('myRegsList');
     if (list) list.innerHTML = '<p class="text-center text-slate-400 py-6 text-sm">載入中…</p>';
     document.getElementById('myRegsModal')?.classList.remove('hidden');
@@ -1295,6 +1499,41 @@ function setTeamMsg(message, type) {
         : 'bg-emerald-50 border-emerald-200 text-emerald-700');
     el.textContent = message;
     el.classList.remove('hidden');
+}
+
+// 管理員匯出單場賽事的報名名單（含隊伍），方便現場報到與計分
+async function exportCompetitionRegistrationsCsv() {
+    const comp = currentTeamComp;
+    if (!comp) return;
+    if (!isAdminUser()) return alert('匯出報名名單僅限管理員以上使用。');
+    const btn = document.getElementById('exportRegsCsvBtn');
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ 匯出中...'; }
+        const res = await customFetch(`/api/competitions/${comp.id}/registrations`);
+        if (!res.ok) throw new Error('讀取報名名單失敗');
+        const payload = await res.json();
+        const list = Array.isArray(payload) ? payload : (payload.registrations || []);
+        if (!list.length) {
+            setTeamMsg('這場賽事目前沒有報名資料。', 'error');
+            return;
+        }
+        const rows = list.map((r) => ({
+            姓名: r.username || '',
+            隊伍: r.team_name || '',
+            備註: r.note || '',
+            報名時間: String(r.created_at || '').slice(0, 16).replace('T', ' ')
+        }));
+        const csv = window.CMCSV
+            ? CMCSV.stringify(rows, { bom: true })
+            : rows.map((r) => Object.values(r).join(',')).join('\n');
+        const safeName = String(comp.name || 'competition').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
+        downloadCsvBlob(`${safeName}-報名名單.csv`, new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        setTeamMsg(`已匯出 ${rows.length} 筆報名資料（檔案已下載）`, 'success');
+    } catch (err) {
+        setTeamMsg(err.message || '匯出失敗', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⬇️ 匯出報名名單 (CSV)'; }
+    }
 }
 
 async function openTeamModal(id) {
@@ -1489,11 +1728,55 @@ function isSubscribed(id) {
     return !!(window.CMNotify && CMNotify.isSubscribed(id));
 }
 
+// iOS Safari 的推播指引（必須「加入主畫面」後以 App 方式開啟）
+function renderIosPushInstructions() {
+    const hint = document.getElementById('pushIosHint');
+    if (!hint) return;
+    hint.innerHTML = `
+        <p class="font-bold">📲 iPhone / iPad 需要多一個步驟</p>
+        <p>Safari 分頁不支援推播，請把本站加入主畫面後，從主畫面開啟：</p>
+        <ol class="list-decimal ml-4 space-y-0.5">
+            <li>用 <b>Safari</b> 開啟本站</li>
+            <li>點畫面下方（或上方）的「<b>分享</b>」圖示 <span aria-hidden="true">⬆️</span></li>
+            <li>選擇「<b>加入主畫面</b>」，名稱按「新增」</li>
+            <li>回主畫面點開剛新增的圖示（<b>比賽管理</b>）</li>
+            <li>在選單 → 🔔 通知設定 → 點「📲 開啟推播訂閱」</li>
+        </ol>
+        <p class="text-[11px]">※ 需 iOS 16.4 以上；加入主畫面後推播才能像 App 一樣在關閉網頁時送達。</p>`;
+    hint.classList.remove('hidden');
+}
+
 async function refreshPushStatus() {
     const el = document.getElementById('pushStatus');
     if (!el) return;
     const notes = window.CMNotify;
-    if (!notes || !notes.pushSupported || !notes.pushSupported()) {
+    const hint = document.getElementById('pushIosHint');
+    const state = (notes && notes.pushSupportState)
+        ? notes.pushSupportState()
+        : { level: (notes && notes.pushSupported && notes.pushSupported()) ? 'ok' : 'unsupported', canSubscribe: !!(notes && notes.pushSupported && notes.pushSupported()) };
+
+    const showIosHint = state.level === 'ios-needs-homescreen';
+    if (showIosHint) renderIosPushInstructions();
+    else hint?.classList.add('hidden');
+
+    if (state.level === 'ios-needs-homescreen') {
+        el.className = 'text-xs p-2.5 rounded-lg border bg-amber-50 border-amber-300 text-amber-900';
+        el.innerText = 'iOS 需先「加入主畫面」再從主畫面開啟，才能開啟推播訂閱（詳見下方步驟）。';
+        document.getElementById('pushSubscribeBtn')?.setAttribute('disabled', 'disabled');
+        document.getElementById('pushUnsubscribeBtn')?.setAttribute('disabled', 'disabled');
+        document.getElementById('pushTestBtn')?.removeAttribute('disabled');
+        return;
+    }
+
+    if (state.level === 'denied') {
+        el.className = 'text-xs p-2.5 rounded-lg border bg-red-50 border-red-200 text-red-700';
+        el.innerText = '通知權限已被拒絕：請到瀏覽器／系統設定把本站的通知改為「允許」後再試。';
+        ['pushSubscribeBtn', 'pushUnsubscribeBtn'].forEach((id) => document.getElementById(id)?.setAttribute('disabled', 'disabled'));
+        document.getElementById('pushTestBtn')?.removeAttribute('disabled');
+        return;
+    }
+
+    if (!state.canSubscribe) {
         el.className = 'text-xs p-2.5 rounded-lg border bg-slate-50 border-slate-200 text-slate-500';
         el.innerText = '此瀏覽器不支援推播訂閱（需要 HTTPS 與支援 Push 的瀏覽器）。';
         ['pushSubscribeBtn', 'pushTestBtn', 'pushUnsubscribeBtn'].forEach((id) => {
@@ -1851,6 +2134,8 @@ function resetCsvUi() {
 }
 
 function openCsvModal() {
+    // 雙重防護：選單按鈕本身已依角色隱藏，這裡再擋一次，避免任何殘留狀態下被開啟
+    if (!isAdminUser()) return alert('匯入／匯出 CSV 僅限管理員以上使用。');
     closeNavDropdown();
     resetCsvUi();
     document.getElementById('csvModal')?.classList.remove('hidden');
@@ -1884,6 +2169,7 @@ function downloadCsvBlob(filename, blob) {
 }
 
 async function csvExport() {
+    if (!isAdminUser()) return alert('匯出賽事資料僅限管理員以上使用。');
     const btn = document.getElementById('csvExportBtn');
     try {
         if (btn) { btn.disabled = true; btn.textContent = '⏳ 匯出中...'; }
@@ -1903,12 +2189,17 @@ async function csvExport() {
 }
 
 function csvDownloadTemplate() {
+    if (!isAdminUser()) return alert('匯入／匯出 CSV 僅限管理員以上使用。');
     const { rows } = CMCSV.templateRows();
     downloadCsvBlob('competitions-template.csv', new Blob([CMCSV.stringify(rows, { bom: true })], { type: 'text/csv;charset=utf-8' }));
     showCsvResult('success', '已下載匯入範本（含表頭與一列示範資料）');
 }
 
 async function csvPickFile(event) {
+    if (!isAdminUser()) {
+        if (event && event.target) event.target.value = '';
+        return alert('匯入賽事資料僅限管理員以上使用。');
+    }
     const file = event.target.files && event.target.files[0];
     if (!file) return;
 
@@ -2266,10 +2557,10 @@ function renderCompetitionCards(data, targetEl) {
 
 function competitionCardHtml(item) {
     return `
-        <div class="border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition bg-white shadow-sm flex flex-col md:flex-row justify-between gap-4">
+        <div class="cm-card border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition bg-white shadow-sm flex flex-col md:flex-row justify-between gap-4" data-comp-id="${escapeHtml(String(item.id))}">
             <div class="space-y-2 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
-                    <h3 class="text-base font-bold text-slate-800">${escapeHtml(item.name)}</h3>
+                    <h3 class="text-base font-bold text-slate-800 cm-break">${escapeHtml(item.name)}</h3>
                     ${item.publisher_name ? `<span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium" title="權限層級：${escapeHtml(getRoleLabel(item.publisher_role, item.publisher_name))}"><span>${getRoleEmoji(item.publisher_role, item.publisher_name)}</span> <span>${escapeHtml(item.publisher_name)}</span></span>` : ''}
                     ${categoryBadgeHtml(item)}
                     ${regStatusBadgeHtml(item)}
@@ -2293,7 +2584,7 @@ function competitionCardHtml(item) {
                 ${item.description ? `<p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg whitespace-pre-line border border-slate-100">${escapeHtml(item.description)}</p>` : ''}
             </div>
 
-            <div class="flex items-start gap-1.5 self-end md:self-start flex-wrap">
+            <div class="flex items-start gap-1.5 self-end md:self-start flex-wrap cm-card-actions">
                 <button data-action="copy-text" 
                         data-name="${escapeHtml(item.name)}" 
                         data-date="${item.date || ''}" 
