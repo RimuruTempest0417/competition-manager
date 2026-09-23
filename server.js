@@ -276,28 +276,10 @@ function registrationState(comp, now, registeredCount) {
 }
 
 /* ---------- 密碼雜湊 ----------
-   既有帳號的密碼是明碼儲存（歷史因素），這裡不強制改寫；
-   新註冊／新設定的密碼一律用 scrypt 雜湊，登入時兩種格式都能驗證。 */
-function hashPassword(plain) {
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.scryptSync(String(plain), salt, 64).toString('hex');
-    return `scrypt$${salt}$${hash}`;
-}
-
-function verifyPassword(stored, input) {
-    if (typeof stored !== 'string' || stored === '') return false;
-    if (!stored.startsWith('scrypt$')) {
-        // 舊資料：明碼比對（長度不同時避免 timingSafeEqual 拋錯）
-        const a = Buffer.from(stored);
-        const b = Buffer.from(String(input));
-        return a.length === b.length && crypto.timingSafeEqual(a, b);
-    }
-    const parts = stored.split('$');
-    if (parts.length !== 3) return false;
-    const expected = Buffer.from(parts[2], 'hex');
-    const candidate = crypto.scryptSync(String(input), parts[1], 64);
-    return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
-}
+   實作抽到 lib/passwords.js，與 scripts/hash-legacy-passwords.js 共用同一份程式碼，
+   確保「升級腳本算出來的雜湊」與「伺服器驗證邏輯」永遠一致。
+   既有帳號的密碼若是明碼（歷史因素），登入成功時會自動升級。 */
+const { hashPassword, verifyPassword, needsPasswordUpgrade } = require('./lib/passwords');
 
 const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 const PASSWORD_RE = /^[a-zA-Z0-9]{6,64}$/;
@@ -696,6 +678,13 @@ app.get('/api/admin/error-logs', requireSuperAdmin, async (req, res) => {
 
 // 錯誤日誌系統自身的狀態（寫入失敗時可在後台直接看到，不再只有 console）
 app.get('/api/admin/error-logs/health', requireSuperAdmin, async (req, res) => {
+    // v2.12.1：順便統計還有幾個帳號的密碼是舊的明碼格式（只回數量，絕不回傳任何密碼內容）
+    let plaintextPasswords = null;
+    try {
+        const { data, error } = await supabase.from('admin_users').select('id, password');
+        if (!error) plaintextPasswords = (data || []).filter(u => needsPasswordUpgrade(u.password)).length;
+    } catch (e) { /* 統計失敗不影響健康檢查 */ }
+
     res.json({
         success: true,
         supabase_configured: hasSupabaseConfig,
@@ -704,7 +693,8 @@ app.get('/api/admin/error-logs/health', requireSuperAdmin, async (req, res) => {
         schema: {
             severity: await columnExists('error_logs', 'severity'),
             resolved: await columnExists('error_logs', 'resolved')
-        }
+        },
+        plaintext_passwords: plaintextPasswords
     });
 });
 
@@ -1122,6 +1112,23 @@ const loginHandler = async (req, res) => {
         }
 
         clearLoginFailures(username);
+
+        // v2.12.1：明碼密碼的帳號在登入成功時自動升級成 scrypt 雜湊（失敗不影響登入）
+        let passwordUpgraded = false;
+        if (needsPasswordUpgrade(user.password)) {
+            try {
+                const { error: upErr } = await supabase
+                    .from('admin_users')
+                    .update({ password: hashPassword(String(password)) })
+                    .eq('id', user.id);
+                if (upErr) throw upErr;
+                passwordUpgraded = true;
+                await logAudit(user.username, 'PASSWORD_HASH_UPGRADED', user.id, { ip: clientIp }, req.userAgent);
+            } catch (upErr) {
+                console.error('⚠️ 密碼雜湊升級失敗:', upErr.message);
+                logErrorToDb(req, 'password_hash_upgrade_error', upErr, { severity: 'warn', context: { user: user.username } }).catch(() => {});
+            }
+        }
 
         const token = jwt.sign(
             { sub: user.id, username: user.username, role: user.role },
@@ -2588,6 +2595,7 @@ app.__test__ = {
     toDateString,
     hashPassword,
     verifyPassword,
+    needsPasswordUpgrade,
     allowRegisterAttempt,
     USERNAME_RE,
     PASSWORD_RE,

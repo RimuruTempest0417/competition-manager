@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.12.0
+# 🏆 比賽管理系統 (Competition Manager) v2.12.1
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -68,7 +68,8 @@
 - **CSRF / XSS 防護**：所有使用者輸入於前端以 `escapeHtml()` 轉義；後端不使用 `x-user-id` / `x-user-role` 作為授權依據。
 - **其他標頭**：`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Strict-Transport-Security`、`Referrer-Policy: strict-origin-when-cross-origin`。
 - **審計日誌**：登入、資料異動、錯誤事件皆寫入 Supabase `audit_logs` / `error_logs`。
-- **RBAC**：四級角色 `admin` / `super_admin` / `web_owner` / `test`，後端 `requireRole` 中介層把關。
+- **密碼儲存**：一律 `scrypt$<salt>$<hash>`（`lib/passwords.js`），資料庫不保存明碼。舊帳號的明碼會在**登入成功時自動升級**，並可用 `scripts/hash-legacy-passwords.js` 批次處理；`/api/admin/error-logs/health` 會回報尚未升級的數量。
+- **RBAC**：四級角色 `admin` / `super_admin` / `web_owner` / `test`，後端 `requireRole` 中介層把關；帳號管理另有角色階梯（`canCreateRole` / `canManageUser`），不允許提權、不能操作同級以上或自己。
 
 ---
 
@@ -151,18 +152,35 @@ competition-manager/
 │   ├── import-no-migration.test.js  # 資料庫尚未 migration 時的匯入行為
 │   ├── notify.test.js        # 通知判斷邏輯與 iOS／PWA 推播能力判斷單元測試
 │   ├── poster-push.test.js   # 海報格式／推播候選條件純函式單元測試
+│   ├── user-management.test.js      # 角色階梯、登入鎖定、日誌節流純函式單元測試
+│   ├── user-management-api.test.js  # 帳號管理與錯誤日誌 API 端到端測試（含提權阻擋）
+│   ├── password-hash.test.js # 密碼雜湊、登入自動升級、批次升級腳本自我驗證測試
 │   └── server.bootstrap.test.js  # 啟動階段與 JWT_SECRET fail-fast 測試
 ├── .env                      # 環境變數 (不進 Git)
 ├── .gitignore                # 忽略 node_modules 與環境變數設定
 ├── package.json              # 專案依賴套件設定檔
 ├── vercel.json               # Vercel Serverless Functions 路由設定
 ├── docs/
-│   └── 功能總覽與規劃.md      # 功能現況總表與後續規劃（可貼進 Google Docs）
+│   ├── 功能總覽與規劃.md      # 功能現況總表與後續規劃（可貼進 Google Docs）
+│   └── 安全性檢查-v2.12.0.md  # 路由逐項安全性盤點、修復清單與刻意保留的限制
+├── lib/
+│   └── passwords.js          # 密碼雜湊（scrypt）與驗證；伺服器與升級腳本共用同一份實作
+├── scripts/
+│   └── hash-legacy-passwords.js # 一次性把舊帳號的明碼密碼升級為雜湊（支援 --dry-run）
 ├── server.js                 # Express 後端伺服器、API 路由與 Error 中間件
 └── README.md                 # 專案說明文件
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.12.1 (2026-09-25) - 密碼儲存安全強化（明碼自動升級為雜湊）
+
+- **修正**：早期帳號的密碼在資料庫中是**明碼儲存**（`admin_users.password` 直接存使用者當初設定的原始密碼文字）。只要 Supabase 憑證外流，所有人的密碼就一次曝光，而多數人會在其他網站重複使用同一組密碼。
+- **登入時自動升級**：使用者登入成功後，伺服器立即把該筆密碼改寫為 `scrypt$<salt>$<hash>`，並留下 `PASSWORD_HASH_UPGRADED` 稽核紀錄；升級失敗不影響登入本身（只寫警告日誌）。
+- **一次批次升級**：新增 `scripts/hash-legacy-passwords.js`（`--dry-run` 可先檢查）處理「還沒登入過的舊帳號」，讓資料庫不再有待升級的明碼。腳本與伺服器共用 `lib/passwords.js`，**寫入前先自我驗證、寫入後複驗，全程不輸出任何密碼內容**。
+- **可觀測**：`GET /api/admin/error-logs/health` 新增 `plaintext_passwords` 數量（只回數量、絕不回傳內容），後台可直接確認是否還有明碼帳號。
+- **重構**：`hashPassword`／`verifyPassword`／`needsPasswordUpgrade` 抽到 `lib/passwords.js`，伺服器與腳本共用同一份實作，避免「腳本算的雜湊伺服器驗不過」而把使用者鎖在門外。
+- 新增 `tests/password-hash.test.js`（4 個案例）：雜湊格式與驗證、登入自動升級、批次腳本自我驗證與複驗、健康端點只回數量。
 
 ### v2.12.0 (2026-09-25) - 使用者管理、錯誤日誌修復、漏洞總檢查
 
