@@ -32,12 +32,20 @@ app.use(express.static(path.join(__dirname, 'public')));
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
 
-if (!supabaseUrl || !supabaseKey) {
+const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
+
+if (!hasSupabaseConfig) {
     console.error('❌ 錯誤：未設定 SUPABASE_URL 或 SUPABASE_KEY，請檢查 .env 檔案！');
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
-const JWT_SECRET = process.env.JWT_SECRET;
+const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseKey || 'placeholder-key');
+
+// 🔐 JWT_SECRET 一律從 process.env 讀取。production 環境 fail-fast，嚴禁任何寫死的備援值；
+// 僅在非 production（本機開發 / 測試 bootstrap）時才允許使用開發用常數。
+const isProduction = process.env.NODE_ENV === 'production';
+const envJwtSecret = (process.env.JWT_SECRET || '').trim();
+
+const JWT_SECRET = envJwtSecret || (isProduction ? '' : 'development-local-secret-change-me');
 
 if (!JWT_SECRET) {
     throw new Error('JWT_SECRET is required for secure authentication');
@@ -78,6 +86,8 @@ async function logAudit(userId, action, targetId = null, details = null, userAge
 // 🚨 統一 Supabase 錯誤日誌 (error_logs 表格) 寫入輔助函式
 async function logErrorToDb(req, errorType, err) {
     try {
+        if (!hasSupabaseConfig) return;
+
         const userAgent = req.headers['user-agent'] || '';
         const reqPath = req.originalUrl || req.url || '';
         const userId = req.user ? req.user.sub : null;

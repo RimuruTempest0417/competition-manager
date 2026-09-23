@@ -1,10 +1,11 @@
 {
   "name": "competition-manager",
-  "version": "2.4.6",
+  "version": "2.5.0",
   "description": "比賽管理系統正式版",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
   },
   "keywords": [],
   "author": "Rimuru",
