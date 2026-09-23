@@ -3358,6 +3358,12 @@ async function handleAdminListAction(ev) {
     const el = ev.target.closest('[data-action]');
     if (!el) return;
 
+
+    // 下拉選單必須等 change（使用者真的選了）才處理：
+    // click 會在使用者才剛點開選單、還沒挑選時就以「目前（舊）角色」觸發，
+    // 造成彈出「確定要把 X 的角色改為 <原本角色>？」而且真正選完反而沒送出。
+    if (el.tagName === 'SELECT' && ev.type !== 'change') return;
+
     const action = el.dataset.action;
     const id = el.dataset.id;
     const username = el.dataset.username || '';
