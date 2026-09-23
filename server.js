@@ -64,6 +64,111 @@ function sanitizeInput(val) {
     return str === '' ? null : str;
 }
 
+// ==========================================
+// 🏷️ 賽事分類（單選，固定清單）與標籤（多選，自由輸入）
+// 這裡是唯一真實來源：前端透過 GET /api/meta 取得，避免兩邊各寫一份而不同步。
+// color 對應 custom.css 的 .cat-chip-<color>（沿用既有 --cm-* 變數，深淺色都適用）。
+// ==========================================
+const COMPETITION_CATEGORIES = [
+    { id: 'ball', label: '球類運動', emoji: '🏀', color: 'blue' },
+    { id: 'racket', label: '球拍運動', emoji: '🏸', color: 'indigo' },
+    { id: 'track', label: '田徑路跑', emoji: '🏃', color: 'emerald' },
+    { id: 'aquatic', label: '水上運動', emoji: '🏊', color: 'blue' },
+    { id: 'martial', label: '技擊武術', emoji: '🥋', color: 'red' },
+    { id: 'mind', label: '棋藝益智', emoji: '♟️', color: 'purple' },
+    { id: 'esports', label: '電子競技', emoji: '🎮', color: 'rose' },
+    { id: 'art', label: '藝文競賽', emoji: '🎨', color: 'amber' },
+    { id: 'academic', label: '學科競賽', emoji: '📚', color: 'emerald' },
+    { id: 'other', label: '其他', emoji: '🏅', color: 'slate' },
+];
+
+const CATEGORY_IDS = new Set(COMPETITION_CATEGORIES.map((c) => c.id));
+const MAX_TAGS = 10;
+const MAX_TAG_LENGTH = 24;
+
+// 分類：只接受清單內的值，其餘一律視為未分類（null），避免任意字串進資料庫
+function normalizeCategory(val) {
+    const s = sanitizeInput(val);
+    if (!s) return null;
+    return CATEGORY_IDS.has(s) ? s : null;
+}
+
+// 標籤：接受陣列或字串（逗號/頓號/分號/換行分隔），去空白、去 #、去重（忽略大小寫）、限量
+function normalizeTags(val) {
+    let list = [];
+    if (Array.isArray(val)) {
+        list = val;
+    } else if (typeof val === 'string') {
+        list = val.split(/[,，、;；\n\t]+/);
+    }
+
+    const seen = new Set();
+    const out = [];
+    for (const raw of list) {
+        const t = String(raw === undefined || raw === null ? '' : raw)
+            .trim()
+            .replace(/^#+/, '')
+            .slice(0, MAX_TAG_LENGTH);
+        if (!t) continue;
+        const key = t.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(t);
+        if (out.length >= MAX_TAGS) break;
+    }
+    return out;
+}
+
+// 資料庫欄位還不存在時（尚未執行 migration），Supabase 會回 PGRST204 / 42703。
+// 這種情況要回可行動的訊息，而不是讓使用者看到不明所以的 500。
+const MIGRATION_HINT =
+    '資料庫尚未加入 category / tags 欄位，請先在 Supabase SQL Editor 執行 migrations/2026-09-23-v2.7.0-competition-category-tags.sql';
+
+// 快取「資料庫是否已有 category / tags 欄位」。null = 尚未探測。
+// 目的是讓 v2.7.0 在尚未執行 migration 的資料庫上仍與 v2.6.0 行為相同：
+// 沒有要寫分類/標籤時就不帶這兩個欄位，因此編輯既有賽事照常可用。
+let schemaHasTaxonomy = null;
+
+async function taxonomySchemaReady() {
+    if (schemaHasTaxonomy !== null) return schemaHasTaxonomy;
+
+    try {
+        const { error } = await supabase.from('competitions').select('id,category,tags').limit(1);
+        schemaHasTaxonomy = !isMissingColumnError(error);
+        if (!schemaHasTaxonomy) {
+            console.warn('⚠️ competitions 表缺少 category / tags 欄位，分類與標籤將無法儲存（請執行 migrations/ 內的 SQL）');
+        }
+    } catch (e) {
+        // 探測本身失敗（例如網路問題）不阻擋請求，交由實際寫入結果決定
+        return true;
+    }
+    return schemaHasTaxonomy;
+}
+
+function hasTaxonomyContent(taxonomy) {
+    return taxonomy.category !== null || taxonomy.tags.length > 0;
+}
+
+// 決定寫入時是否帶上 category / tags：
+// - 有內容 → 一定帶（呼叫端已先確認欄位存在）
+// - 無內容且欄位已知存在 → 帶空值（讓使用者能清空分類/標籤）
+// - 無內容且欄位未知或不存在 → 不帶，維持 migration 前的舊版行為，
+//   否則使用者在還沒執行 migration 時連「編輯既有賽事」都會失敗。
+function shouldIncludeTaxonomy(taxonomy, schemaState) {
+    return hasTaxonomyContent(taxonomy) || schemaState === true;
+}
+
+function isMissingColumnError(err) {
+    const code = (err && err.code) || '';
+    const msg = (err && err.message) || '';
+    return (
+        code === 'PGRST204' ||
+        code === '42703' ||
+        /column .*\.(category|tags).* does not exist/i.test(msg) ||
+        /Could not find the '(category|tags)' column/i.test(msg)
+    );
+}
+
 // 📜 統一 Supabase 審計日誌 (audit_logs 表格) 寫入輔助函式
 async function logAudit(userId, action, targetId = null, details = null, userAgent = '') {
     try {
@@ -427,6 +532,19 @@ app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
+// 前端共用設定 API
+// ==========================================
+// 分類清單定義在後端（server.js），前端一律由此取得，避免兩邊各寫一份而不同步。
+app.get('/api/meta', (req, res) => {
+    res.json({
+        categories: COMPETITION_CATEGORIES,
+        maxTags: MAX_TAGS,
+        maxTagLength: MAX_TAG_LENGTH,
+        version: require('./package.json').version
+    });
+});
+
+// ==========================================
 // 比賽賽事 API (CRUD)
 // ==========================================
 
@@ -511,12 +629,20 @@ app.get('/api/competitions/deleted', requireAdmin, getTrashCompetitionsHandler);
 
 // 新增比賽
 app.post('/api/competitions', requireAdmin, async (req, res) => {
-    const { name, location, date, time, end_date, end_time, description, is_registration_open } = req.body;
+    const { name, location, date, time, end_date, end_time, description, is_registration_open, category, tags } = req.body;
     const operator = req.currentUser;
 
     if (!name || name.trim() === '') {
         return res.status(400).json({ error: '比賽名稱為必填項目' });
     }
+
+    const taxonomy = { category: normalizeCategory(category), tags: normalizeTags(tags) };
+    const wantsTaxonomy = hasTaxonomyContent(taxonomy);
+
+    if (wantsTaxonomy && !(await taxonomySchemaReady())) {
+        return res.status(503).json({ error: MIGRATION_HINT });
+    }
+    const includeTaxonomy = shouldIncludeTaxonomy(taxonomy, schemaHasTaxonomy);
 
     try {
         const payload = {
@@ -528,6 +654,7 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
             end_time: sanitizeInput(end_time),
             description: sanitizeInput(description),
             is_registration_open: !!is_registration_open,
+            ...(includeTaxonomy ? taxonomy : {}),
             is_deleted: false,
             created_at: new Date().toISOString()
         };
@@ -544,6 +671,10 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
 
         res.json(newComp);
     } catch (err) {
+        if (isMissingColumnError(err)) {
+            schemaHasTaxonomy = false;
+            return res.status(503).json({ error: MIGRATION_HINT });
+        }
         await logErrorToDb(req, 'create_competition_error', err);
         res.status(500).json({ error: err.message });
     }
@@ -552,12 +683,20 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
 // 編輯比賽
 app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
-    const { name, location, date, time, end_date, end_time, description, is_registration_open } = req.body;
+    const { name, location, date, time, end_date, end_time, description, is_registration_open, category, tags } = req.body;
     const operator = req.currentUser;
 
     if (!name || name.trim() === '') {
         return res.status(400).json({ error: '比賽名稱為必填項目' });
     }
+
+    const taxonomy = { category: normalizeCategory(category), tags: normalizeTags(tags) };
+    const wantsTaxonomy = hasTaxonomyContent(taxonomy);
+
+    if (wantsTaxonomy && !(await taxonomySchemaReady())) {
+        return res.status(503).json({ error: MIGRATION_HINT });
+    }
+    const includeTaxonomy = shouldIncludeTaxonomy(taxonomy, schemaHasTaxonomy);
 
     try {
         const payload = {
@@ -568,7 +707,8 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
             end_date: sanitizeInput(end_date),
             end_time: sanitizeInput(end_time),
             description: sanitizeInput(description),
-            is_registration_open: !!is_registration_open
+            is_registration_open: !!is_registration_open,
+            ...(includeTaxonomy ? taxonomy : {})
         };
 
         const { data, error } = await supabase
@@ -584,6 +724,10 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
 
         res.json(data[0]);
     } catch (err) {
+        if (isMissingColumnError(err)) {
+            schemaHasTaxonomy = false;
+            return res.status(503).json({ error: MIGRATION_HINT });
+        }
         await logErrorToDb(req, 'update_competition_error', err);
         res.status(500).json({ error: err.message });
     }
@@ -682,3 +826,15 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 module.exports = app;
+
+// 供單元測試使用的內部函式（Vercel 只取 app 本身，掛額外屬性不影響部署）。
+// 測試時請設 NODE_ENV=production，這樣 require 本檔才不會真的 app.listen 佔用 port。
+app.__test__ = {
+    COMPETITION_CATEGORIES,
+    normalizeCategory,
+    normalizeTags,
+    isMissingColumnError,
+    hasTaxonomyContent,
+    shouldIncludeTaxonomy,
+    isProductionFlag: isProduction
+};

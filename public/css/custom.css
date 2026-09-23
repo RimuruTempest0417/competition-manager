@@ -784,3 +784,111 @@ input[type="file"]::-webkit-file-upload-button {
 input[type="file"]::-webkit-file-upload-button:hover {
     background-color: var(--cm-file-bg-hover);
 }
+
+
+/* ============================================================
+   用途 6：賽事分類 / 標籤徽章與日曆檢視 (v2.7.0)
+   - 色票沿用既有 --cm-* 變數，因此淺色與深色自動同步，不需另寫深色規則。
+     分類 → 顏色的對應由 server.js 的 COMPETITION_CATEGORIES 決定。
+   - .cal-* 為純手寫月曆，未使用任何外部套件（CSP 為 script-src 'self'）。
+   ============================================================ */
+
+/* 分類徽章 */
+.cat-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.5;
+    padding: 0.05rem 0.4rem;
+    border-radius: 9999px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.cat-chip-blue    { background-color: var(--cm-blue-100);    color: var(--cm-blue-tx-800);    border-color: var(--cm-blue-bd-200); }
+.cat-chip-indigo  { background-color: var(--cm-indigo-100);  color: var(--cm-indigo-tx-800);  border-color: var(--cm-indigo-bd-300); }
+.cat-chip-emerald { background-color: var(--cm-emerald-100); color: var(--cm-emerald-tx-700); border-color: var(--cm-emerald-bd-200); }
+.cat-chip-red     { background-color: var(--cm-red-100);     color: var(--cm-red-tx-800);     border-color: var(--cm-red-bd-200); }
+.cat-chip-purple  { background-color: var(--cm-purple-100);  color: var(--cm-purple-tx-900);  border-color: var(--cm-purple-bd-200); }
+.cat-chip-rose    { background-color: var(--cm-rose-100);    color: var(--cm-rose-tx-700);    border-color: var(--cm-rose-bd-300); }
+.cat-chip-amber   { background-color: var(--cm-amber-100);   color: var(--cm-amber-tx-800);   border-color: var(--cm-amber-bd-300); }
+.cat-chip-slate   { background-color: var(--cm-cell);        color: var(--cm-tx-700);         border-color: var(--cm-bd-300); }
+
+/* 標籤徽章 */
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1.5;
+    padding: 0.05rem 0.35rem;
+    border-radius: 0.25rem;
+    background-color: var(--cm-cell);
+    color: var(--cm-tx-600);
+    border: 1px solid var(--cm-bd-200);
+    white-space: nowrap;
+}
+
+/* 日曆格線 */
+.cal-cell {
+    min-height: 6.75rem;
+    padding: 0.3rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--cm-bd-200);
+    background-color: var(--cm-surface);
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.cal-cell.is-other { background-color: var(--cm-inset); }
+.cal-cell.is-other .cal-day-num { color: var(--cm-tx-500); }
+.cal-cell.is-today { border-color: var(--cm-blue-bd-300); box-shadow: inset 0 0 0 1px var(--cm-blue-bd-300); }
+.cal-cell.is-today .cal-day-num { color: var(--cm-blue-tx-700); }
+.cal-cell.is-selected { border-color: var(--cm-blue-tx-600); box-shadow: inset 0 0 0 2px var(--cm-blue-tx-600); }
+.cal-cell.is-clickable { cursor: pointer; }
+.cal-cell.is-clickable:hover { border-color: var(--cm-bd-300); }
+
+.cal-day-num { font-size: 0.75rem; font-weight: 700; color: var(--cm-tx-600); }
+
+/* 日曆內的賽事小卡 */
+.cal-chip {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font-size: 10px;
+    line-height: 1.4;
+    padding: 0.1rem 0.3rem;
+    margin-top: 0.15rem;
+    border-radius: 0.25rem;
+    border: 1px solid transparent;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.cal-chip:hover { filter: brightness(0.96); }
+.cal-more { font-size: 10px; color: var(--cm-tx-500); margin-top: 0.15rem; }
+.cal-empty { color: var(--cm-tx-500); font-size: 0.75rem; }
+
+/* 手機版：格子縮小、賽事名稱改以顏色圓點表示（點日期即看當天清單） */
+.cal-dots { display: none; flex-wrap: wrap; gap: 2px; margin-top: 0.2rem; }
+.cal-dot { width: 6px; height: 6px; border-radius: 9999px; }
+.cal-dot-blue    { background-color: var(--cm-blue-tx-600); }
+.cal-dot-indigo  { background-color: var(--cm-indigo-tx-600); }
+.cal-dot-emerald { background-color: var(--cm-emerald-tx-600); }
+.cal-dot-red     { background-color: var(--cm-red-tx-600); }
+.cal-dot-purple  { background-color: var(--cm-purple-tx-700); }
+.cal-dot-rose    { background-color: var(--cm-rose-tx-700); }
+.cal-dot-amber   { background-color: var(--cm-amber-tx-700); }
+.cal-dot-slate   { background-color: var(--cm-tx-500); }
+
+@media (max-width: 640px) {
+    .cal-cell { min-height: 4.25rem; padding: 0.2rem; }
+    .cal-chip { display: none; }
+    .cal-dots { display: flex; }
+}

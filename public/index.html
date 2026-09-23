@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.6.0</title>
+    <title>比賽管理系統 v2.7.0</title>
     <!-- Tailwind CSS 2.2.19 (本地靜態檔，符合 CSP style-src 'self') -->
     <link href="/css/tailwind.min.css" rel="stylesheet">
     <!-- 自訂補強樣式 (Modal 高度、滾動、背景模糊、色系補強、檔案按鈕、深淺色模式) -->
@@ -27,7 +27,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.6.0)</p>
+                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.7.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
@@ -117,7 +117,7 @@
     </header>
 
     <!-- 主要內容區 -->
-    <main class="max-w-7xl mx-auto px-4 py-8 space-y-8">
+    <main id="mainContent" class="max-w-7xl mx-auto px-4 py-8 space-y-8">
 
         <!-- 1. 表單區塊：新增/編輯比賽 (僅限管理員) -->
         <section id="createSection" class="hidden bg-white p-6 rounded-xl shadow-sm border border-slate-200">
@@ -131,6 +131,23 @@
                     <label class="block text-xs font-semibold text-slate-600 mb-1">比賽名稱 *</label>
                     <input type="text" id="name" required placeholder="例如：2026 全國羽球公開賽"
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <!-- 賽事分類（單選）與標籤（多個，逗號分隔） -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">賽事分類</label>
+                        <select id="category"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                            <option value="">— 未分類 —</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1">標籤 (選填，以逗號分隔，最多 10 個)</label>
+                        <input type="text" id="tags" placeholder="例如：國中組, 團體賽, 免費報名"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <div id="tagPreview" class="flex flex-wrap gap-1 mt-2"></div>
+                    </div>
                 </div>
 
                 <div>
@@ -208,14 +225,37 @@
         <!-- 2. 比賽列表區塊 -->
         <section class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-                <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-                    📋 比賽列表
-                </h2>
+                <div class="flex items-center gap-3 flex-wrap">
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        📋 比賽列表
+                    </h2>
+
+                    <!-- 檢視模式切換：列表 / 日曆 -->
+                    <div class="inline-flex rounded-lg border border-slate-300 overflow-hidden shadow-sm"
+                        role="group" aria-label="檢視模式">
+                        <button id="viewListBtn" aria-pressed="true"
+                            class="text-xs px-3 py-1.5 font-medium bg-blue-600 text-white transition">
+                            📋 列表
+                        </button>
+                        <button id="viewCalendarBtn" aria-pressed="false"
+                            class="text-xs px-3 py-1.5 font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition border-l border-slate-300">
+                            📅 日曆
+                        </button>
+                    </div>
+                </div>
 
                 <!-- 搜尋與篩選列 + 回收桶按鈕 -->
                 <div class="flex flex-wrap items-center gap-2">
                     <input type="text" id="searchInput" placeholder="🔍 搜尋比賽名稱、地點..."
                         class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <select id="filterCategory"
+                        class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                        <option value="">全部分類</option>
+                    </select>
+                    <select id="filterTag"
+                        class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                        <option value="">全部標籤</option>
+                    </select>
                     <input type="date" id="filterDateInput"
                         class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <button id="clearFilterBtn"
@@ -232,6 +272,36 @@
             <!-- 動態渲染卡片清單 -->
             <div id="competitionList" class="space-y-4">
                 <p class="text-center text-slate-400 py-8">載入中...</p>
+            </div>
+
+            <!-- 日曆檢視 (由 /js/calendar.js 渲染) -->
+            <div id="calendarView" class="hidden">
+                <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+                    <div class="flex items-center gap-1.5">
+                        <button id="calPrevBtn" title="上一個月" aria-label="上一個月"
+                            class="text-sm px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition">◀</button>
+                        <button id="calTodayBtn"
+                            class="text-xs px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition font-medium">今天</button>
+                        <button id="calNextBtn" title="下一個月" aria-label="下一個月"
+                            class="text-sm px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-300 transition">▶</button>
+                    </div>
+                    <p id="calMonthLabel" class="text-sm font-bold text-slate-700"></p>
+                    <p class="text-xs text-slate-400">點日期可看當天完整清單</p>
+                </div>
+
+                <div class="grid grid-cols-7 gap-1 mb-1">
+                    <div class="text-center text-xs font-semibold text-slate-500 py-1">日</div>
+                    <div class="text-center text-xs font-semibold text-slate-500 py-1">一</div>
+                    <div class="text-center text-xs font-semibold text-slate-500 py-1">二</div>
+                    <div class="text-center text-xs font-semibold text-slate-500 py-1">三</div>
+                    <div class="text-center text-xs font-semibold text-slate-500 py-1">四</div>
+                    <div class="text-center text-xs font-semibold text-slate-500 py-1">五</div>
+                    <div class="text-center text-xs font-semibold text-slate-500 py-1">六</div>
+                </div>
+                <div id="calGrid" class="grid grid-cols-7 gap-1"></div>
+
+                <!-- 選定日期的賽事清單 (沿用列表卡片) -->
+                <div id="calDayPanel" class="hidden mt-4 pt-4 border-t border-slate-200"></div>
             </div>
         </section>
 
@@ -493,6 +563,8 @@
         </div>
     </div>
 
+    <!-- 日曆檢視 (純前端月曆，無外部套件) -->
+    <script src="/js/calendar.js"></script>
     <!-- 引入外置主邏輯 -->
     <script src="/js/app.js"></script>
 </body>

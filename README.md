@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.6.0
+# 🏆 比賽管理系統 (Competition Manager) v2.7.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -14,6 +14,9 @@
 - **審計日誌 (Audit Logs)**：完整追蹤登入/登出事件與關鍵資料變更軌跡，自動解析 User-Agent 裝置類型。
 - **分享海報 (v2.4.0)**：Canvas 動態繪製賽事宣傳海報，支援複製與下載 PNG。
 - **深淺色模式自動適配 (v2.5.0)**：以 CSS `@media (prefers-color-scheme)` 跟隨裝置系統設定，無需 JS 或手動切換；頁面底層、卡片、Modal、徽章與表單控制項（含日期選擇器、捲軸）皆同步轉換。
+- **主題手動切換 (v2.6.0)**：選單內「🌗 主題」三態切換（跟隨系統 → 淺色 → 深色），可覆寫裝置設定並記住選擇。
+- **賽事分類與標籤 (v2.7.0)**：單一分類（10 種，含 emoji 與專屬色系）+ 自由標籤（最多 10 個）。列表可依分類／標籤／日期／關鍵字聯合篩選，分類清單由後端 `GET /api/meta` 提供單一真實來源。
+- **日曆檢視模式 (v2.7.0)**：列表頁「📋 列表 / 📅 日曆」切換，月曆格線顯示每日賽事（依分類上色、跨日賽事展開到每一天、超過 3 場顯示「+N 更多」），點日期即看當天完整清單與操作按鈕。純手寫無外部套件（符合 CSP），手機版自動改為顏色圓點，檢視選擇會被記住。
 
 ---
 
@@ -28,7 +31,8 @@
 ### 前端 (Frontend)
 - **HTML5** & **JavaScript (ES6+)**：原生 DOM 操作、`fetch` API 攔截器與全域 Error 監聽器。
 - **Tailwind CSS 2.2.19 (本地靜態檔)**：Utility-First CSS 框架，以本地 `/css/tailwind.min.css` 載入，符合嚴格 CSP `style-src 'self'`。
-- **深淺色模式**：CSS `prefers-color-scheme: dark` 媒體查詢 + `color-scheme` 屬性。因本地 Tailwind 靜態檔建置時 `darkMode: false`（無 `dark:` variant 可用），改於 `/css/custom.css` 以同特異度覆寫專案實際使用的顏色 class，全程不使用 inline style。
+- **深淺色模式**：CSS 自訂變數（`--cm-*`）+ `prefers-color-scheme` 媒體查詢 + `<html data-theme>` 三態覆寫。因本地 Tailwind 靜態檔建置時 `darkMode: false`（無 `dark:` variant 可用），改於 `/css/custom.css` 以同特異度覆寫專案實際使用的顏色 class，全程不使用 inline style。主題色票集中於「用途 3」，顏色 class 覆寫只寫一次。
+- **日曆檢視**：`public/js/calendar.js` 手寫月曆模組（無 FullCalendar 等外部套件，因 CSP 為 `script-src 'self'`），當天清單沿用列表卡片樣板。
 
 ### 部署與工具 (Deployment & Tools)
 - **Vercel Serverless Functions**：全站與 API 無伺服器託管部署。
@@ -72,6 +76,20 @@ node server.js
 
 ---
 
+## 🗄️ 資料庫 Migration
+
+本專案的資料表結構變更以 `migrations/` 內的 SQL 檔為準，需**手動**在 Supabase 執行（本機與 Vercel 都會連到同一個資料庫）。
+
+| 檔案 | 內容 | 必要性 |
+|---|---|---|
+| `migrations/2026-09-23-v2.7.0-competition-category-tags.sql` | 為 `competitions` 加入 `category`、`tags` 欄位與索引 | **v2.7.0 起必須執行**，否則無法儲存分類與標籤 |
+
+執行方式：Supabase Dashboard → **SQL Editor** → 貼上整份檔案 → **Run**。SQL 為 idempotent（可重複執行）。
+
+> 尚未執行時，程式不會壞掉：讀取與其他欄位照常運作，但儲存帶有分類／標籤的賽事時會回傳明確訊息「資料庫尚未加入 category / tags 欄位…」，前端會直接顯示該訊息。
+
+---
+
 ## 📂 資料夾結構 (Project Structure)
 
 ```text
@@ -84,8 +102,14 @@ competition-manager/
 │   │   └── tailwind.min.css  # Tailwind CSS 2.2.19 本地靜態檔
 │   ├── js/
 │   │   ├── app.js            # 前端 DOM 邏輯、fetch 攔截器與全域錯誤監聽器
+│   │   ├── calendar.js       # 月曆檢視模組（手寫，無外部套件）
 │   │   └── theme-init.js     # 主題初始化（<head> 同步執行，防止強制深色時閃爍）
 │   └── index.html            # 前端頁面結構
+├── migrations/
+│   └── *.sql                 # 資料庫結構變更（需手動於 Supabase SQL Editor 執行）
+├── tests/
+│   ├── helpers.test.js       # 後端純函式單元測試（分類/標籤正規化、migration 偵測）
+│   └── server.bootstrap.test.js  # 啟動階段與 JWT_SECRET fail-fast 測試
 ├── .env                      # 環境變數 (不進 Git)
 ├── .gitignore                # 忽略 node_modules 與環境變數設定
 ├── package.json              # 專案依賴套件設定檔
@@ -95,6 +119,26 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.7.0 (2026-09-23) - 賽事分類與標籤系統、日曆檢視模式
+
+- **Feature — 賽事分類與標籤**：
+  - `competitions` 新增 `category`（單選，10 種含 emoji 與專屬色系）與 `tags`（`text[]`，最多 10 個、每個 24 字元）。
+  - 分類清單集中定義於 `server.js` 的 `COMPETITION_CATEGORIES`，由 `GET /api/meta` 提供給前端，避免前後端各寫一份而不同步。
+  - 後端正規化：分類只接受清單內的值（其餘視為未分類）；標籤接受陣列或字串（支援逗號／頓號／分號／換行分隔），自動去 `#`、去空白、去重（忽略大小寫）並限量。
+  - 列表新增分類與標籤篩選器（標籤選項由既有資料歸納），可與關鍵字、日期條件聯合套用。
+  - **需先執行 `migrations/2026-09-23-v2.7.0-competition-category-tags.sql`**；未執行時不會壞掉，儲存時會回傳明確的指示訊息。
+- **Feature — 日曆檢視模式**：
+  - 列表頁新增「📋 列表 / 📅 日曆」切換（`aria-pressed` 同步、選擇以 `cm-view` 記住）。
+  - 月曆顯示每日賽事並依分類上色；**跨日賽事會展開到涵蓋的每一天**（上限 400 天防呆）；單日超過 3 場顯示「+N 更多」。
+  - 點日期開啟當天清單面板，沿用列表卡片樣板（複製文字／分享海報／編輯／刪除行為完全一致）；今天與選取日期各有不同外框，可一鍵回「今天」。
+  - 手機版（≤640px）自動改為顏色圓點，避免文字溢出。
+  - 純手寫模組（`public/js/calendar.js`），無任何外部套件 —— CSP 為 `script-src 'self'`，不可載入 CDN。
+- **Refactor**：
+  - 卡片 HTML 抽成 `competitionCardHtml()`，列表與日曆共用，避免兩份樣板日後不同步。
+  - 事件委派由 `#competitionList` 改綁在 `main#mainContent`，涵蓋日曆的當天清單。
+  - 主題色票沿用既有 `--cm-*` 變數（未新增任何變數），分類與日曆在深淺色下自動同步。
+- **Tests**：新增 `tests/helpers.test.js`（分類/標籤正規化、migration 偵測、分類清單完整性），`npm test` 共 6 項；另以 headless Chrome 實測 48 項 UI 行為。
 
 ### v2.6.0 (2026-09-23) - 主題手動切換與色票架構重構
 

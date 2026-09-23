@@ -2,6 +2,8 @@ let allCompetitions = [];
 let currentUser = null;
 let currentBase64Screenshot = '';
 let currentPosterItem = null;
+let currentView = 'list';                                        // 'list' | 'calendar'
+let CM_META = { categories: [], maxTags: 10, maxTagLength: 24 }; // 由 GET /api/meta 取得
 
 // 下拉選單開關邏輯
 function toggleNavDropdown() {
@@ -575,9 +577,10 @@ function cycleTheme() {
     applyTheme(next);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     initTimeSelects();
     updateThemeButton(getStoredTheme());
+    renderTagPreview();
 
     // 綁定靜態按鈕事件
     document.getElementById('themeToggleBtn')?.addEventListener('click', cycleTheme);
@@ -595,8 +598,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('searchInput')?.addEventListener('input', filterCompetitions);
     document.getElementById('filterDateInput')?.addEventListener('change', filterCompetitions);
+    document.getElementById('filterCategory')?.addEventListener('change', filterCompetitions);
+    document.getElementById('filterTag')?.addEventListener('change', filterCompetitions);
     document.getElementById('clearFilterBtn')?.addEventListener('click', clearFilter);
     document.getElementById('mainTrashBtn')?.addEventListener('click', openTrashModal);
+
+    // 檢視模式切換（列表 / 日曆）
+    document.getElementById('viewListBtn')?.addEventListener('click', () => setView('list'));
+    document.getElementById('viewCalendarBtn')?.addEventListener('click', () => setView('calendar'));
+
+    // 標籤輸入即時預覽
+    document.getElementById('tags')?.addEventListener('input', renderTagPreview);
 
     document.getElementById('closeChangePwdModalBtn')?.addEventListener('click', closeChangePasswordModal);
     document.getElementById('cancelChangePwdBtn')?.addEventListener('click', closeChangePasswordModal);
@@ -628,8 +640,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('closeTrashModalBtn')?.addEventListener('click', closeTrashModal);
     document.getElementById('closeTrashModalBtn2')?.addEventListener('click', closeTrashModal);
 
-    // 事件委派：動態清單按鈕點擊處理
-    document.getElementById('competitionList')?.addEventListener('click', (e) => {
+    // 事件委派：動態清單按鈕點擊處理（綁在 main 上，列表與日曆的當天清單共用同一組行為）
+    document.getElementById('mainContent')?.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
         if (!btn) return;
         const id = Number(btn.dataset.id);
@@ -676,8 +688,22 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.removeItem('competition_user');
         localStorage.removeItem('auth_token');
     }
+    // 日曆初始化：當天清單沿用列表的卡片樣板，因此按鈕行為完全一致
+    if (window.CMCalendar) {
+        window.CMCalendar.init({
+            renderDayList: (container, items) => renderCompetitionCards(items, container)
+        });
+    }
+
+    let savedView = 'list';
+    try {
+        savedView = localStorage.getItem('cm-view') === 'calendar' ? 'calendar' : 'list';
+    } catch (e) { /* 忽略 */ }
+    setView(savedView);
+
     updateUIByRole();
-    fetchCompetitions();
+    await fetchMeta();          // 先取得分類清單，卡片才能顯示分類徽章
+    await fetchCompetitions();
 });
 
 function updateUIByRole() {
@@ -748,7 +774,85 @@ function updateUIByRole() {
             mainTrashBtn?.classList.remove('hidden');
         }
     }
-    renderCompetitions(allCompetitions);
+    renderCurrentView(allCompetitions);
+}
+
+// 分類清單由後端 /api/meta 提供（單一真實來源，避免前後端各寫一份）
+async function fetchMeta() {
+    try {
+        const res = await customFetch('/api/meta');
+        if (res.ok) {
+            const meta = await res.json();
+            CM_META.categories = meta.categories || [];
+            CM_META.maxTags = meta.maxTags || 10;
+            CM_META.maxTagLength = meta.maxTagLength || 24;
+        }
+    } catch (e) {
+        // 取不到時仍可正常使用，只是分類選項變少（不影響其他功能）
+    }
+
+    const optionsHtml = CM_META.categories
+        .map((c) => `<option value="${escapeHtml(c.id)}">${c.emoji} ${escapeHtml(c.label)}</option>`)
+        .join('');
+
+    const formSel = document.getElementById('category');
+    if (formSel) formSel.innerHTML = '<option value="">— 未分類 —</option>' + optionsHtml;
+
+    const filterSel = document.getElementById('filterCategory');
+    if (filterSel) {
+        const keep = filterSel.value;
+        filterSel.innerHTML = '<option value="">全部分類</option>' + optionsHtml;
+        filterSel.value = keep;
+    }
+}
+
+// 標籤篩選選項由現有資料歸納（僅列出實際出現過的標籤）
+function populateTagFilter() {
+    const sel = document.getElementById('filterTag');
+    if (!sel) return;
+
+    const keep = sel.value;
+    const all = new Set();
+    allCompetitions.forEach((c) => {
+        if (Array.isArray(c.tags)) c.tags.forEach((t) => all.add(t));
+    });
+
+    const sorted = Array.from(all).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+    sel.innerHTML = '<option value="">全部標籤</option>' +
+        sorted.map((t) => `<option value="${escapeHtml(t)}"># ${escapeHtml(t)}</option>`).join('');
+
+    if (keep && sorted.some((t) => t.toLowerCase() === keep.toLowerCase())) sel.value = keep;
+}
+
+// 與後端 normalizeTags 相同的規則：去空白、去 #、去重（忽略大小寫）、限量
+function parseTagInput(value) {
+    const maxTags = CM_META.maxTags || 10;
+    const maxLen = CM_META.maxTagLength || 24;
+    const seen = new Set();
+    const out = [];
+
+    String(value || '').split(/[,，、;；\n\t]+/).forEach((raw) => {
+        const t = raw.trim().replace(/^#+/, '').slice(0, maxLen);
+        if (!t) return;
+        const key = t.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        if (out.length < maxTags) out.push(t);
+    });
+
+    return out;
+}
+
+function renderTagPreview() {
+    const input = document.getElementById('tags');
+    const box = document.getElementById('tagPreview');
+    if (!input || !box) return;
+
+    const tags = parseTagInput(input.value);
+    box.innerHTML = tags.length
+        ? tags.map((t) => `<span class="tag-chip"># ${escapeHtml(t)}</span>`).join('') +
+          `<span class="text-xs text-slate-400 self-center">共 ${tags.length} 個</span>`
+        : '';
 }
 
 async function fetchCompetitions() {
@@ -756,48 +860,132 @@ async function fetchCompetitions() {
         const res = await customFetch('/api/competitions');
         if (!res.ok) throw new Error('無法載入比賽資料');
         allCompetitions = await res.json();
-        renderCompetitions(allCompetitions);
+        populateTagFilter();
+        renderCurrentView(allCompetitions);
     } catch (err) {
         document.getElementById('competitionList').innerHTML = `<p class="text-red-500 text-center py-4">無法載入比賽資料</p>`;
     }
 }
 
+function getCategoryById(id) {
+    if (!id) return null;
+    return CM_META.categories.find((c) => c.id === id) || null;
+}
+
+function categoryBadgeHtml(item) {
+    const cat = getCategoryById(item.category);
+    if (!cat) return '';
+    return `<span class="cat-chip cat-chip-${cat.color}" title="分類：${escapeHtml(cat.label)}">${cat.emoji} ${escapeHtml(cat.label)}</span>`;
+}
+
+function tagsBadgeHtml(item) {
+    const tags = Array.isArray(item.tags) ? item.tags : [];
+    if (tags.length === 0) return '';
+    return tags.map((t) => `<span class="tag-chip"># ${escapeHtml(t)}</span>`).join('');
+}
+
+function currentFilters() {
+    return {
+        query: (document.getElementById('searchInput')?.value || '').toLowerCase().trim(),
+        date: document.getElementById('filterDateInput')?.value || '',
+        category: document.getElementById('filterCategory')?.value || '',
+        tag: document.getElementById('filterTag')?.value || ''
+    };
+}
+
+function matchesFilters(item, f) {
+    const matchQuery = !f.query ||
+        (item.name && item.name.toLowerCase().includes(f.query)) ||
+        (item.location && item.location.toLowerCase().includes(f.query)) ||
+        (item.description && item.description.toLowerCase().includes(f.query));
+
+    const matchDate = !f.date || item.date === f.date || item.end_date === f.date;
+    const matchCategory = !f.category || item.category === f.category;
+    const matchTag = !f.tag ||
+        (Array.isArray(item.tags) && item.tags.some((t) => t.toLowerCase() === f.tag.toLowerCase()));
+
+    return matchQuery && matchDate && matchCategory && matchTag;
+}
+
 function filterCompetitions() {
-    const query = document.getElementById('searchInput').value.toLowerCase().trim();
-    const filterDate = document.getElementById('filterDateInput').value;
-
-    const filtered = allCompetitions.filter(item => {
-        const matchQuery = !query ||
-            (item.name && item.name.toLowerCase().includes(query)) ||
-            (item.location && item.location.toLowerCase().includes(query)) ||
-            (item.description && item.description.toLowerCase().includes(query));
-
-        const matchDate = !filterDate || item.date === filterDate || item.end_date === filterDate;
-        return matchQuery && matchDate;
-    });
-
-    renderCompetitions(filtered);
+    const f = currentFilters();
+    renderCurrentView(allCompetitions.filter((item) => matchesFilters(item, f)));
 }
 
 function clearFilter() {
-    document.getElementById('searchInput').value = '';
-    document.getElementById('filterDateInput').value = '';
-    renderCompetitions(allCompetitions);
+    const search = document.getElementById('searchInput');
+    const dateInput = document.getElementById('filterDateInput');
+    const catInput = document.getElementById('filterCategory');
+    const tagInput = document.getElementById('filterTag');
+    if (search) search.value = '';
+    if (dateInput) dateInput.value = '';
+    if (catInput) catInput.value = '';
+    if (tagInput) tagInput.value = '';
+    renderCurrentView(allCompetitions);
+}
+
+// 列表與日曆共用同一份篩選結果，切換檢視不會遺失篩選條件
+function renderCurrentView(data) {
+    const listEl = document.getElementById('competitionList');
+    const calEl = document.getElementById('calendarView');
+
+    if (currentView === 'calendar') {
+        listEl?.classList.add('hidden');
+        calEl?.classList.remove('hidden');
+        if (window.CMCalendar) window.CMCalendar.setData(data, CM_META.categories);
+    } else {
+        calEl?.classList.add('hidden');
+        listEl?.classList.remove('hidden');
+        renderCompetitions(data);
+    }
+}
+
+function setView(view) {
+    currentView = view === 'calendar' ? 'calendar' : 'list';
+    try {
+        localStorage.setItem('cm-view', currentView);
+    } catch (e) { /* 無痕模式等情況：不記住即可 */ }
+
+    const activeCls = 'text-xs px-3 py-1.5 font-medium bg-blue-600 text-white transition';
+    const inactiveCls = 'text-xs px-3 py-1.5 font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition border-l border-slate-300';
+
+    const listBtn = document.getElementById('viewListBtn');
+    const calBtn = document.getElementById('viewCalendarBtn');
+    if (listBtn) {
+        listBtn.className = currentView === 'list' ? activeCls : inactiveCls;
+        listBtn.setAttribute('aria-pressed', String(currentView === 'list'));
+    }
+    if (calBtn) {
+        calBtn.className = currentView === 'calendar' ? activeCls : inactiveCls;
+        calBtn.setAttribute('aria-pressed', String(currentView === 'calendar'));
+    }
+
+    filterCompetitions();
 }
 
 function renderCompetitions(data) {
-    const listEl = document.getElementById('competitionList');
+    renderCompetitionCards(data, document.getElementById('competitionList'));
+}
+
+// 日曆的「當天清單」也共用這個函式，確保兩邊的操作按鈕行為完全一致
+function renderCompetitionCards(data, targetEl) {
+    if (!targetEl) return;
     if (!data || data.length === 0) {
-        listEl.innerHTML = `<p class="text-center text-slate-400 py-8">目前無符合條件的比賽資料</p>`;
+        targetEl.innerHTML = `<p class="text-center text-slate-400 py-8">目前無符合條件的比賽資料</p>`;
         return;
     }
 
-    listEl.innerHTML = data.map(item => `
+    targetEl.innerHTML = data.map(competitionCardHtml).join('');
+}
+
+function competitionCardHtml(item) {
+    return `
         <div class="border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition bg-white shadow-sm flex flex-col md:flex-row justify-between gap-4">
             <div class="space-y-2 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
                     <h3 class="text-base font-bold text-slate-800">${escapeHtml(item.name)}</h3>
                     ${item.publisher_name ? `<span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium" title="權限層級：${escapeHtml(getRoleLabel(item.publisher_role, item.publisher_name))}"><span>${getRoleEmoji(item.publisher_role, item.publisher_name)}</span> <span>${escapeHtml(item.publisher_name)}</span></span>` : ''}
+                    ${categoryBadgeHtml(item)}
                     ${item.is_registration_open ? '<span class="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">🔥 報名中</span>' : '<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium">已截止</span>'}
                     ${getBadgeStatus(item.date, item.end_date)}
                 </div>
@@ -807,6 +995,8 @@ function renderCompetitions(data) {
                     ${item.date ? `<span>📅 開始：${escapeHtml(item.date)} ${item.time ? format24HourTime(escapeHtml(item.time)) : ''}</span>` : ''}
                     ${item.end_date ? `<span>📅 結束：${escapeHtml(item.end_date)} ${item.end_time ? format24HourTime(escapeHtml(item.end_time)) : ''}</span>` : ''}
                 </div>
+
+                ${(Array.isArray(item.tags) && item.tags.length) ? `<div class="flex flex-wrap gap-1">${tagsBadgeHtml(item)}</div>` : ''}
 
                 ${item.description ? `<p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg whitespace-pre-line border border-slate-100">${escapeHtml(item.description)}</p>` : ''}
             </div>
@@ -833,7 +1023,7 @@ function renderCompetitions(data) {
                 ` : ''}
             </div>
         </div>
-    `).join('');
+    `;
 }
 
 async function handleFormSubmit(e) {
@@ -849,7 +1039,9 @@ async function handleFormSubmit(e) {
         end_date: document.getElementById('end_date').value,
         end_time: getSelectedTime('end_hour', 'end_minute'),
         description: document.getElementById('description').value,
-        is_registration_open: document.getElementById('is_registration_open').checked
+        is_registration_open: document.getElementById('is_registration_open').checked,
+        category: document.getElementById('category').value,
+        tags: parseTagInput(document.getElementById('tags').value)
     };
 
     const url = editingId ? `/api/competitions/${editingId}` : '/api/competitions';
@@ -862,7 +1054,11 @@ async function handleFormSubmit(e) {
             body: JSON.stringify(payload)
         });
 
-        if (!res.ok) throw new Error('儲存失敗');
+        if (!res.ok) {
+            // 把後端訊息帶出來（例如資料庫尚未執行 migration 時的明確指示）
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.error || errJson.message || '儲存失敗');
+        }
 
         resetForm();
         fetchCompetitions();
@@ -885,6 +1081,9 @@ function startEdit(id) {
     setSelectedTime(item.end_time || '', 'end_hour', 'end_minute');
     document.getElementById('description').value = item.description || '';
     document.getElementById('is_registration_open').checked = !!item.is_registration_open;
+    document.getElementById('category').value = item.category || '';
+    document.getElementById('tags').value = (Array.isArray(item.tags) ? item.tags : []).join(', ');
+    renderTagPreview();
 
     document.getElementById('formTitle').innerText = '✏️ 編輯比賽資料';
     document.getElementById('submitBtn').innerText = '儲存變更';
@@ -905,6 +1104,9 @@ function copyCompetition(id) {
     setSelectedTime(item.end_time || '', 'end_hour', 'end_minute');
     document.getElementById('description').value = item.description || '';
     document.getElementById('is_registration_open').checked = !!item.is_registration_open;
+    document.getElementById('category').value = item.category || '';
+    document.getElementById('tags').value = (Array.isArray(item.tags) ? item.tags : []).join(', ');
+    renderTagPreview();
 
     document.getElementById('formTitle').innerText = '➕ 發佈新比賽 (複製內容)';
     document.getElementById('submitBtn').innerText = '發佈比賽';
@@ -927,6 +1129,7 @@ function copyToClipboard(name, date, endDate, location) {
 function resetForm() {
     document.getElementById('competitionForm').reset();
     document.getElementById('editingId').value = '';
+    renderTagPreview();
     setSelectedTime('', 'start_hour', 'start_minute');
     setSelectedTime('', 'end_hour', 'end_minute');
     document.getElementById('formTitle').innerText = '➕ 發佈新比賽';
