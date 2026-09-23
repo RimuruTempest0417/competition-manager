@@ -640,6 +640,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('closeTrashModalBtn')?.addEventListener('click', closeTrashModal);
     document.getElementById('closeTrashModalBtn2')?.addEventListener('click', closeTrashModal);
 
+    // 通知設定
+    document.getElementById('notifyBtn')?.addEventListener('click', openNotifyModal);
+    document.getElementById('closeNotifyModalBtn')?.addEventListener('click', closeNotifyModal);
+    document.getElementById('closeNotifyModalBtn2')?.addEventListener('click', closeNotifyModal);
+    document.getElementById('notifyEnableBtn')?.addEventListener('click', notifyEnable);
+    document.getElementById('notifyTestBtn')?.addEventListener('click', () => notifyTest(false));
+    document.getElementById('notifyDisableBtn')?.addEventListener('click', notifyDisable);
+    document.getElementById('notifyNewComp')?.addEventListener('change', (e) => {
+        if (!window.CMNotify) return;
+        const state = CMNotify.loadState();
+        state.newCompetitions = e.target.checked;
+        CMNotify.saveState(state);
+    });
+
+    // 訂閱清單的「取消」按鈕（Modal 不在 main 內，另外綁定）
+    document.getElementById('notifySubList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn || btn.dataset.action !== 'unsubscribe') return;
+        if (window.CMNotify) CMNotify.setSubscribed(btn.dataset.id, null);
+        refreshAfterSubscriptionChange();
+    });
+
+    // CSV 匯入 / 匯出
+    document.getElementById('csvToolBtn')?.addEventListener('click', openCsvModal);
+    document.getElementById('closeCsvModalBtn')?.addEventListener('click', closeCsvModal);
+    document.getElementById('closeCsvModalBtn2')?.addEventListener('click', closeCsvModal);
+    document.getElementById('csvExportBtn')?.addEventListener('click', csvExport);
+    document.getElementById('csvTemplateBtn')?.addEventListener('click', csvDownloadTemplate);
+    document.getElementById('csvFileInput')?.addEventListener('change', csvPickFile);
+    document.getElementById('csvConfirmBtn')?.addEventListener('click', csvConfirmImport);
+
     // 事件委派：動態清單按鈕點擊處理（綁在 main 上，列表與日曆的當天清單共用同一組行為）
     document.getElementById('mainContent')?.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
@@ -650,6 +681,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             copyToClipboard(btn.dataset.name, btn.dataset.date, btn.dataset.endDate, btn.dataset.location);
         } else if (action === 'share-poster') {
             openPosterModal(id);
+        } else if (action === 'toggle-subscribe') {
+            toggleSubscription(id);
         } else if (action === 'copy-comp') {
             copyCompetition(id);
         } else if (action === 'edit-comp') {
@@ -701,6 +734,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (e) { /* 忽略 */ }
     setView(savedView);
 
+    // 通知監看：載入時與每 5 分鐘檢查一次，切回分頁時也會檢查
+    if (window.CMNotify) {
+        notifyWatcher = CMNotify.startWatcher(() => allCompetitions, { intervalMs: 5 * 60 * 1000 });
+    }
+
     updateUIByRole();
     await fetchMeta();          // 先取得分類清單，卡片才能顯示分類徽章
     await fetchCompetitions();
@@ -715,6 +753,7 @@ function updateUIByRole() {
     const btnErrorLogs = document.getElementById('btn-error-logs');
     const adminMgmtBtn = document.getElementById('adminMgmtBtn');
     const mainTrashBtn = document.getElementById('mainTrashBtn');
+    const csvToolBtn = document.getElementById('csvToolBtn');
     const changePwdBtn = document.getElementById('changePwdBtn');
     const authBtn = document.getElementById('authBtn');
     const logoutBtn = document.getElementById('logoutBtn');
@@ -751,6 +790,7 @@ function updateUIByRole() {
             btnErrorLogs?.classList.remove('hidden');
             adminMgmtBtn?.classList.remove('hidden');
             mainTrashBtn?.classList.remove('hidden');
+            csvToolBtn?.classList.remove('hidden');
         } else if (currentUser.role === 'super_admin') {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
             authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
@@ -758,6 +798,7 @@ function updateUIByRole() {
             btnErrorLogs?.classList.remove('hidden');
             adminMgmtBtn?.classList.remove('hidden');
             mainTrashBtn?.classList.remove('hidden');
+            csvToolBtn?.classList.remove('hidden');
         } else if (currentUser.role === 'test') {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-purple-100 text-purple-700 border border-purple-300";
             authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
@@ -765,6 +806,7 @@ function updateUIByRole() {
             btnErrorLogs?.classList.add('hidden');
             adminMgmtBtn?.classList.add('hidden');
             mainTrashBtn?.classList.add('hidden');
+            csvToolBtn?.classList.add('hidden');
         } else {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
             authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
@@ -772,9 +814,384 @@ function updateUIByRole() {
             btnErrorLogs?.classList.add('hidden');
             adminMgmtBtn?.classList.add('hidden');
             mainTrashBtn?.classList.remove('hidden');
+            csvToolBtn?.classList.remove('hidden');
         }
     }
     renderCurrentView(allCompetitions);
+}
+
+/* ==========================================
+   通知設定 (v2.8.0)
+   - 純本機提醒：設定與訂閱只存在這台裝置的 localStorage。
+   - 實際判斷邏輯在 public/js/notify.js（純函式，另有單元測試）。
+   ========================================== */
+let pendingSubscribeId = null;
+let notifyWatcher = null;
+
+function isSubscribed(id) {
+    return !!(window.CMNotify && CMNotify.isSubscribed(id));
+}
+
+function openNotifyModal() {
+    closeNavDropdown();
+    renderNotifyModal();
+    document.getElementById('notifyModal')?.classList.remove('hidden');
+}
+
+function closeNotifyModal() {
+    document.getElementById('notifyModal')?.classList.add('hidden');
+    pendingSubscribeId = null;
+}
+
+function renderNotifyModal() {
+    if (!window.CMNotify) return;
+
+    const state = CMNotify.loadState();
+    const perm = CMNotify.permissionState();
+
+    const statusEl = document.getElementById('notifyStatus');
+    if (statusEl) {
+        const map = {
+            granted: ['bg-emerald-50 border-emerald-200 text-emerald-700', '✅ 通知已啟用，賽事提醒會以系統通知顯示。'],
+            denied: ['bg-red-50 border-red-200 text-red-700', '🚫 通知權限被封鎖。請點網址列左側的鎖頭圖示 → 將「通知」改為允許，再重新載入頁面。'],
+            default: ['bg-blue-50 border-blue-200 text-blue-700', 'ℹ️ 尚未開啟通知。按「啟用」後，瀏覽器會詢問是否允許。'],
+            unsupported: ['bg-slate-100 border-slate-200 text-slate-600', '⚠️ 此瀏覽器不支援通知功能。'],
+            error: ['bg-amber-50 border-amber-200 text-amber-700', '⚠️ 無法取得通知權限，請稍後再試。']
+        };
+        const entry = map[perm] || map.default;
+        statusEl.className = 'text-xs p-3 rounded-lg border ' + entry[0];
+        statusEl.textContent = entry[1];
+    }
+
+    const checkbox = document.getElementById('notifyNewComp');
+    if (checkbox) checkbox.checked = !!state.newCompetitions;
+
+    const subs = CMNotify.subscriptionList(state);
+    const countEl = document.getElementById('notifySubCount');
+    if (countEl) countEl.textContent = String(subs.length);
+
+    const listEl = document.getElementById('notifySubList');
+    if (listEl) {
+        listEl.innerHTML = subs.length === 0
+            ? '<p class="text-xs text-slate-400">尚未訂閱任何賽事。在比賽卡片上按「🔕 訂閱提醒」即可加入。</p>'
+            : subs.map((s) => `
+                <div class="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <div class="min-w-0">
+                        <p class="text-xs font-medium text-slate-700 truncate">${escapeHtml(s.name)}</p>
+                        <p class="text-xs text-slate-500">${escapeHtml(s.date || '')}${s.time ? ' ' + escapeHtml(s.time) : ''}</p>
+                    </div>
+                    <button data-action="unsubscribe" data-id="${escapeHtml(String(s.id))}"
+                        class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition shrink-0">取消</button>
+                </div>`).join('');
+    }
+}
+
+async function notifyEnable() {
+    if (!window.CMNotify) return;
+
+    const perm = await CMNotify.requestPermission();
+
+    if (perm === 'granted') {
+        const state = CMNotify.loadState();
+        state.enabled = true;
+        CMNotify.saveState(state);
+
+        // 若使用者是從卡片點訂閱而被導到這裡，啟用後直接完成該筆訂閱
+        if (pendingSubscribeId) {
+            const item = allCompetitions.find((c) => c.id === pendingSubscribeId);
+            if (item) CMNotify.setSubscribed(pendingSubscribeId, item);
+            pendingSubscribeId = null;
+            filterCompetitions();
+        }
+
+        renderNotifyModal();
+        await notifyTest(true);
+    } else {
+        renderNotifyModal();
+    }
+}
+
+async function notifyTest(fromEnable) {
+    if (!window.CMNotify) return;
+
+    if (CMNotify.permissionState() !== 'granted') {
+        alert('請先按「啟用」並在瀏覽器允許通知，才能傳送測試通知。');
+        return;
+    }
+
+    try {
+        await CMNotify.show('🔔 測試通知', '如果你看到這則通知，表示賽事提醒功能正常運作。', '/', 'cm-test');
+        if (!fromEnable) {
+            alert('已送出測試通知。若沒看到，請檢查系統的「專注模式」或瀏覽器的通知設定。');
+        }
+    } catch (err) {
+        alert('無法顯示通知：' + err.message);
+    }
+}
+
+function notifyDisable() {
+    if (!window.CMNotify) return;
+    const state = CMNotify.loadState();
+    state.enabled = false;
+    CMNotify.saveState(state);
+    renderNotifyModal();
+}
+
+function toggleSubscription(id) {
+    if (!window.CMNotify) return alert('此瀏覽器不支援通知功能');
+
+    const item = allCompetitions.find((c) => c.id === id);
+    if (!item) return;
+
+    if (CMNotify.isSubscribed(id)) {
+        CMNotify.setSubscribed(id, null);
+        refreshAfterSubscriptionChange();
+        return;
+    }
+
+    // 尚未啟用通知時先開啟設定視窗，避免使用者以為訂閱了卻收不到任何提醒
+    if (!CMNotify.loadState().enabled || CMNotify.permissionState() !== 'granted') {
+        pendingSubscribeId = id;
+        openNotifyModal();
+        return;
+    }
+
+    CMNotify.setSubscribed(id, item);
+    refreshAfterSubscriptionChange();
+}
+
+function refreshAfterSubscriptionChange() {
+    const modal = document.getElementById('notifyModal');
+    if (modal && !modal.classList.contains('hidden')) renderNotifyModal();
+    filterCompetitions();
+}
+
+/* ==========================================
+   CSV 匯入 / 匯出 (v2.8.0)
+   - 解析與驗證規則與後端共用同一份 public/js/csv.js。
+   - 前端先預檢並顯示預覽，後端再權威驗證一次才寫入。
+   - 下載一律用 Blob + <a download>，不使用 inline 事件屬性（維持 CSP）。
+   ========================================== */
+let pendingCsvRecords = [];
+
+function resetCsvUi() {
+    pendingCsvRecords = [];
+    ['csvPreview', 'csvResult', 'csvConfirmBtn'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+    const input = document.getElementById('csvFileInput');
+    if (input) input.value = '';
+}
+
+function openCsvModal() {
+    closeNavDropdown();
+    resetCsvUi();
+    document.getElementById('csvModal')?.classList.remove('hidden');
+}
+
+function closeCsvModal() {
+    document.getElementById('csvModal')?.classList.add('hidden');
+    resetCsvUi();
+}
+
+function showCsvResult(type, message) {
+    const box = document.getElementById('csvResult');
+    if (!box) return;
+    box.className = 'text-xs p-3 rounded-lg border ' +
+        (type === 'success'
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            : 'bg-red-50 border-red-200 text-red-700');
+    box.textContent = message;
+    box.classList.remove('hidden');
+}
+
+function downloadCsvBlob(filename, blob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+async function csvExport() {
+    const btn = document.getElementById('csvExportBtn');
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ 匯出中...'; }
+        const res = await customFetch('/api/competitions/export.csv');
+        if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.error || '匯出失敗');
+        }
+        const today = new Date().toISOString().slice(0, 10);
+        downloadCsvBlob(`competitions-${today}.csv`, await res.blob());
+        showCsvResult('success', `已開始下載 competitions-${today}.csv（含全部未刪除賽事）`);
+    } catch (err) {
+        showCsvResult('error', err.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⬇️ 匯出全部賽事 (CSV)'; }
+    }
+}
+
+function csvDownloadTemplate() {
+    const { rows } = CMCSV.templateRows();
+    downloadCsvBlob('competitions-template.csv', new Blob([CMCSV.stringify(rows, { bom: true })], { type: 'text/csv;charset=utf-8' }));
+    showCsvResult('success', '已下載匯入範本（含表頭與一列示範資料）');
+}
+
+async function csvPickFile(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+
+    pendingCsvRecords = [];
+    document.getElementById('csvConfirmBtn')?.classList.add('hidden');
+
+    try {
+        const text = await file.text();
+
+        if (text.indexOf('\uFFFD') !== -1) {
+            showCsvResult('error', '檔案編碼可能不是 UTF-8（出現無法解讀的字元）。請在 Excel 另存新檔時選擇「CSV UTF-8」。');
+        }
+
+        const parsed = CMCSV.parse(text);
+        const { headerMap, records } = CMCSV.recordsFromParsed(parsed);
+
+        if (records.length === 0) return showCsvResult('error', '檔案中找不到任何資料列');
+        if (headerMap.name === undefined) return showCsvResult('error', '找不到「名稱」欄位，請確認表頭（可先下載範本參考）');
+        if (records.length > CMCSV.MAX_IMPORT_ROWS) {
+            return showCsvResult('error', `單次最多匯入 ${CMCSV.MAX_IMPORT_ROWS} 筆，本檔有 ${records.length} 筆，請分批處理`);
+        }
+
+        // 用與後端相同的規則預檢，讓使用者在送出前就看到問題列
+        const checked = records.map((record, i) => ({
+            index: i + 1,
+            result: CMCSV.normalizeRecord(record, {
+                categories: CM_META.categories,
+                maxTags: CM_META.maxTags,
+                maxTagLength: CM_META.maxTagLength
+            })
+        }));
+
+        pendingCsvRecords = records;
+        renderCsvPreview(checked, file.name, parsed.delimiter);
+    } catch (err) {
+        showCsvResult('error', '讀取檔案失敗：' + err.message);
+    }
+}
+
+function renderCsvPreview(checked, fileName, delimiter) {
+    const box = document.getElementById('csvPreview');
+    if (!box) return;
+
+    const okCount = checked.filter((c) => c.result.ok).length;
+    const badCount = checked.length - okCount;
+    const delimLabel = delimiter === '\t' ? 'Tab' : delimiter;
+
+    const rows = checked.slice(0, 12).map(({ index, result }) => {
+        const v = result.value;
+        const cat = v.category ? getCategoryById(v.category) : null;
+        return `<tr class="border-b border-slate-100">
+            <td class="px-2 py-1.5 text-slate-400">${index}</td>
+            <td class="px-2 py-1.5 font-medium text-slate-800 whitespace-nowrap">${escapeHtml(v.name || '')}</td>
+            <td class="px-2 py-1.5 whitespace-nowrap">${cat ? escapeHtml(cat.emoji + ' ' + cat.label) : '<span class="text-slate-400">未分類</span>'}</td>
+            <td class="px-2 py-1.5 text-slate-600 whitespace-nowrap">${escapeHtml(v.tags.join(', '))}</td>
+            <td class="px-2 py-1.5 text-slate-600 whitespace-nowrap">${escapeHtml(v.date || '')}${v.time ? ' ' + escapeHtml(v.time) : ''}</td>
+            <td class="px-2 py-1.5">${result.ok ? '✅' : '❌ ' + escapeHtml(result.errors.join('；'))}</td>
+        </tr>`;
+    }).join('');
+
+    box.innerHTML = `
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2 text-xs">
+            <p class="font-bold text-slate-700 break-all">${escapeHtml(fileName)}</p>
+            <p class="text-slate-600 mt-1">
+                共 ${checked.length} 筆｜可匯入 <span class="text-emerald-600 font-bold">${okCount}</span> 筆
+                ${badCount ? `｜格式有誤 <span class="text-red-600 font-bold">${badCount}</span> 筆（將被跳過）` : ''}
+                ｜分隔符：${escapeHtml(delimLabel)}
+            </p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+                <thead>
+                    <tr class="text-left text-slate-500 border-b border-slate-200">
+                        <th class="px-2 py-1">#</th><th class="px-2 py-1">名稱</th><th class="px-2 py-1">分類</th>
+                        <th class="px-2 py-1">標籤</th><th class="px-2 py-1">開始</th><th class="px-2 py-1">狀態</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+        ${checked.length > 12 ? `<p class="text-xs text-slate-400 mt-2">僅預覽前 12 筆，匯入時會處理全部 ${checked.length} 筆。</p>` : ''}
+    `;
+    box.classList.remove('hidden');
+
+    const confirmBtn = document.getElementById('csvConfirmBtn');
+    if (confirmBtn) {
+        confirmBtn.textContent = `✅ 確認匯入 ${okCount} 筆`;
+        confirmBtn.classList.toggle('hidden', okCount === 0);
+    }
+}
+
+function renderCsvImportResult(data) {
+    const box = document.getElementById('csvResult');
+    if (!box) return;
+
+    const list = (arr, render) => arr.slice(0, 8).map(render).join('') +
+        (arr.length > 8 ? `<li class="text-slate-400">…另有 ${arr.length - 8} 筆</li>` : '');
+
+    box.className = 'text-xs p-3 rounded-lg border bg-slate-50 border-slate-200 text-slate-700 space-y-2';
+    box.innerHTML = `
+        <p class="font-bold text-slate-800">
+            ✅ 匯入完成：新增 <span class="text-emerald-600">${data.created}</span> 筆
+            ${data.skipped.length ? `｜跳過重複 <span class="text-amber-600">${data.skipped.length}</span> 筆` : ''}
+            ${data.failed.length ? `｜格式有誤 <span class="text-red-600">${data.failed.length}</span> 筆` : ''}
+            （共 ${data.total} 筆）
+        </p>
+        ${data.skipped.length ? `<div>
+            <p class="font-semibold text-amber-700">跳過的重複資料：</p>
+            <ul class="list-disc pl-5">${list(data.skipped, (s) => `<li>第 ${s.index} 筆：${escapeHtml(s.name || '')}</li>`)}</ul>
+        </div>` : ''}
+        ${data.failed.length ? `<div>
+            <p class="font-semibold text-red-700">未匯入的資料：</p>
+            <ul class="list-disc pl-5">${list(data.failed, (f) => `<li>第 ${f.index} 筆：${escapeHtml(f.reason)}</li>`)}</ul>
+        </div>` : ''}
+        ${(data.warnings && data.warnings.length) ? `<div>
+            <p class="font-semibold text-slate-600">提醒：</p>
+            <ul class="list-disc pl-5">${list(data.warnings, (w) => `<li>${escapeHtml(w)}</li>`)}</ul>
+        </div>` : ''}
+    `;
+    box.classList.remove('hidden');
+}
+
+async function csvConfirmImport() {
+    if (pendingCsvRecords.length === 0) return;
+
+    const btn = document.getElementById('csvConfirmBtn');
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ 匯入中...'; }
+
+        const res = await customFetch('/api/competitions/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows: pendingCsvRecords })
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) throw new Error(data.error || '匯入失敗');
+
+        renderCsvImportResult(data);
+        document.getElementById('csvPreview')?.classList.add('hidden');
+        btn?.classList.add('hidden');
+        pendingCsvRecords = [];
+
+        fetchCompetitions();
+    } catch (err) {
+        showCsvResult('error', err.message);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 // 分類清單由後端 /api/meta 提供（單一真實來源，避免前後端各寫一份）
@@ -862,6 +1279,9 @@ async function fetchCompetitions() {
         allCompetitions = await res.json();
         populateTagFilter();
         renderCurrentView(allCompetitions);
+
+        // 資料到齊後再檢查一次通知（第一次執行只建立基準，不會灌通知）
+        if (notifyWatcher) notifyWatcher.tick();
     } catch (err) {
         document.getElementById('competitionList').innerHTML = `<p class="text-red-500 text-center py-4">無法載入比賽資料</p>`;
     }
@@ -1014,6 +1434,11 @@ function competitionCardHtml(item) {
                 <button data-action="share-poster" data-id="${item.id}"
                         class="text-xs text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded transition font-medium">
                     🖼️ 分享海報
+                </button>
+
+                <button data-action="toggle-subscribe" data-id="${item.id}"
+                        class="text-xs ${isSubscribed(item.id) ? 'text-emerald-700 bg-emerald-100 hover:bg-emerald-200 font-medium' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'} px-2.5 py-1 rounded transition">
+                    ${isSubscribed(item.id) ? '🔔 已訂閱' : '🔕 訂閱提醒'}
                 </button>
 
                 ${currentUser ? `

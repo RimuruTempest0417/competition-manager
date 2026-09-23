@@ -117,13 +117,16 @@
     /* amber */
     --cm-amber-50: #fffbeb;
     --cm-amber-100: #fef3c7;
+    --cm-amber-bd-200: #fde68a;
     --cm-amber-bd-300: #fcd34d;
+    --cm-amber-tx-600: #d97706;
     --cm-amber-tx-700: #b45309;
     --cm-amber-tx-800: #92400e;
 
     /* emerald */
     --cm-emerald-50: #ecfdf5;
     --cm-emerald-100: #d1fae5;
+    --cm-emerald-200: #a7f3d0;
     --cm-emerald-bd-200: #a7f3d0;
     --cm-emerald-bd-300: #6ee7b7;
     --cm-emerald-tx-600: #059669;
@@ -205,12 +208,15 @@ html[data-theme="dark"] {
 
     --cm-amber-50: #3a2c10;
     --cm-amber-100: #4a3a14;
+    --cm-amber-bd-200: #7a5c1c;
     --cm-amber-bd-300: #8a6a1f;
+    --cm-amber-tx-600: #fcd34d;
     --cm-amber-tx-700: #fbbf24;
     --cm-amber-tx-800: #fcd34d;
 
     --cm-emerald-50: #10302a;
     --cm-emerald-100: #14453a;
+    --cm-emerald-200: #1d6b56;
     --cm-emerald-bd-200: #1d6b56;
     --cm-emerald-bd-300: #27876c;
     --cm-emerald-tx-600: #34d399;
@@ -289,12 +295,15 @@ html[data-theme="dark"] {
 
         --cm-amber-50: #3a2c10;
         --cm-amber-100: #4a3a14;
+        --cm-amber-bd-200: #7a5c1c;
         --cm-amber-bd-300: #8a6a1f;
+        --cm-amber-tx-600: #fcd34d;
         --cm-amber-tx-700: #fbbf24;
         --cm-amber-tx-800: #fcd34d;
 
         --cm-emerald-50: #10302a;
         --cm-emerald-100: #14453a;
+        --cm-emerald-200: #1d6b56;
         --cm-emerald-bd-200: #1d6b56;
         --cm-emerald-bd-300: #27876c;
         --cm-emerald-tx-600: #34d399;
@@ -518,8 +527,16 @@ body.bg-slate-100 {
     background-color: #b45309;
 }
 
+.border-amber-200 {
+    border-color: var(--cm-amber-bd-200);
+}
+
 .border-amber-300 {
     border-color: var(--cm-amber-bd-300);
+}
+
+.text-amber-600 {
+    color: var(--cm-amber-tx-600);
 }
 
 .text-amber-700 {
@@ -706,8 +723,16 @@ body.bg-slate-100 {
     background-color: #b45309;
 }
 
+.hover\:bg-emerald-50:hover {
+    background-color: var(--cm-emerald-50);
+}
+
 .hover\:bg-emerald-100:hover {
     background-color: var(--cm-emerald-100);
+}
+
+.hover\:bg-emerald-200:hover {
+    background-color: var(--cm-emerald-200);
 }
 
 .hover\:bg-emerald-700:hover {
@@ -873,8 +898,6 @@ input[type="file"]::-webkit-file-upload-button:hover {
 
 .cal-chip:hover { filter: brightness(0.96); }
 .cal-more { font-size: 10px; color: var(--cm-tx-500); margin-top: 0.15rem; }
-.cal-empty { color: var(--cm-tx-500); font-size: 0.75rem; }
-
 /* 手機版：格子縮小、賽事名稱改以顏色圓點表示（點日期即看當天清單） */
 .cal-dots { display: none; flex-wrap: wrap; gap: 2px; margin-top: 0.2rem; }
 .cal-dot { width: 6px; height: 6px; border-radius: 9999px; }

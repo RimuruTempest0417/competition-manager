@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.7.0
+# 🏆 比賽管理系統 (Competition Manager) v2.8.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -17,6 +17,8 @@
 - **主題手動切換 (v2.6.0)**：選單內「🌗 主題」三態切換（跟隨系統 → 淺色 → 深色），可覆寫裝置設定並記住選擇。
 - **賽事分類與標籤 (v2.7.0)**：單一分類（10 種，含 emoji 與專屬色系）+ 自由標籤（最多 10 個）。列表可依分類／標籤／日期／關鍵字聯合篩選，分類清單由後端 `GET /api/meta` 提供單一真實來源。
 - **日曆檢視模式 (v2.7.0)**：列表頁「📋 列表 / 📅 日曆」切換，月曆格線顯示每日賽事（依分類上色、跨日賽事展開到每一天、超過 3 場顯示「+N 更多」），點日期即看當天完整清單與操作按鈕。純手寫無外部套件（符合 CSP），手機版自動改為顏色圓點，檢視選擇會被記住。
+- **一鍵匯入 / 匯出 CSV (v2.8.0)**：管理員選單「📥 CSV 匯入 / 匯出」——可下載匯入範本、批次匯入（Excel 另存的 CSV 或從 Excel 複製的 Tab 分隔內容，欄位順序不拘、表頭中英文皆可），或將現有賽事一次匯出備份（UTF-8 含 BOM，Excel 直接開啟不亂碼）。匯入前先預覽，重複（同名同日）自動跳過並回報列號。
+- **訊息提醒 (v2.8.0)**：瀏覽器原生通知（Web Notification）。可開啟「新賽事發布通知」，並在任一張賽事卡片按「🔕 訂閱提醒」訂閱該場賽事，開賽前 24 小時內自動跳出提醒。設定與訂閱只存在該裝置的 `localStorage`，不上傳、不需登入；Android 透過 `public/sw.js`（極簡 Service Worker）顯示。
 
 ---
 
@@ -33,6 +35,8 @@
 - **Tailwind CSS 2.2.19 (本地靜態檔)**：Utility-First CSS 框架，以本地 `/css/tailwind.min.css` 載入，符合嚴格 CSP `style-src 'self'`。
 - **深淺色模式**：CSS 自訂變數（`--cm-*`）+ `prefers-color-scheme` 媒體查詢 + `<html data-theme>` 三態覆寫。因本地 Tailwind 靜態檔建置時 `darkMode: false`（無 `dark:` variant 可用），改於 `/css/custom.css` 以同特異度覆寫專案實際使用的顏色 class，全程不使用 inline style。主題色票集中於「用途 3」，顏色 class 覆寫只寫一次。
 - **日曆檢視**：`public/js/calendar.js` 手寫月曆模組（無 FullCalendar 等外部套件，因 CSP 為 `script-src 'self'`），當天清單沿用列表卡片樣板。
+- **CSV 匯入 / 匯出 (v2.8.0)**：`public/js/csv.js` 為前後端共用的 UMD 模組，內含手寫 RFC4180 解析器（引號內逗號／換行、`""` 跳脫、CRLF、自動判斷逗號／Tab／分號）。前端負責解析上傳檔與預覽，後端負責匯出與匯入的**權威驗證**，兩邊共用同一份規則。
+- **訊息提醒 (v2.8.0)**：`public/js/notify.js` 負責權限、訂閱與提醒判斷（`dueNotifications` 為純函式，附單元測試）；`public/sw.js` 為極簡 Service Worker，只處理顯示通知與點擊聚焦，不做 Web Push 訂閱。
 
 ### 部署與工具 (Deployment & Tools)
 - **Vercel Serverless Functions**：全站與 API 無伺服器託管部署。
@@ -103,12 +107,19 @@ competition-manager/
 │   ├── js/
 │   │   ├── app.js            # 前端 DOM 邏輯、fetch 攔截器與全域錯誤監聽器
 │   │   ├── calendar.js       # 月曆檢視模組（手寫，無外部套件）
+│   │   ├── csv.js            # CSV 解析／產生（前後端共用 UMD 模組，手寫 RFC4180）
+│   │   ├── notify.js         # 通知／提醒模組（判斷邏輯為純函式，可單元測試）
 │   │   └── theme-init.js     # 主題初始化（<head> 同步執行，防止強制深色時閃爍）
+│   ├── sw.js                 # 極簡 Service Worker（僅用於顯示通知，不做 Web Push）
 │   └── index.html            # 前端頁面結構
 ├── migrations/
 │   └── *.sql                 # 資料庫結構變更（需手動於 Supabase SQL Editor 執行）
 ├── tests/
-│   ├── helpers.test.js       # 後端純函式單元測試（分類/標籤正規化、migration 偵測）
+│   ├── csv.test.js           # CSV 解析／產生／正規化單元測試（含往返測試）
+│   ├── helpers.test.js       # 後端純函式單元測試（分類/標籤正規化、migration 偵測、匯入去重）
+│   ├── import-export.test.js # 匯入／匯出 API 端到端測試（內建假 Supabase）
+│   ├── import-no-migration.test.js  # 資料庫尚未 migration 時的匯入行為
+│   ├── notify.test.js        # 通知判斷邏輯單元測試（新賽事、開賽提醒、去重）
 │   └── server.bootstrap.test.js  # 啟動階段與 JWT_SECRET fail-fast 測試
 ├── .env                      # 環境變數 (不進 Git)
 ├── .gitignore                # 忽略 node_modules 與環境變數設定
@@ -119,6 +130,28 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.8.0 (2026-09-23) - 訊息提醒、一鍵匯入/匯出 CSV、專案清理
+
+- **Feature — 訊息提醒（Web Notification）**：
+  - 選單新增「🔔 通知設定」：啟用／關閉通知、「新賽事發布時通知我」開關、訂閱清單管理、傳送測試通知；狀態列明確顯示瀏覽器權限狀態（未決定／已允許／被封鎖，被封鎖時提示如何重新允許）。
+  - 每張賽事卡片新增「🔕 訂閱提醒 / 🔔 已訂閱」按鈕，任何人皆可使用（純本機偏好、不需登入）。已訂閱賽事在**開賽前 24 小時內**跳出一則提醒（顯示約幾小時後開始）。
+  - 新增 `public/sw.js`（極簡 Service Worker）：Android Chrome 不允許 `new Notification()`，通知必須由 `registration.showNotification()` 顯示；點通知會聚焦既有分頁。
+  - 防擾設計：第一次執行只建立「看過的最大 id」基準，不會把既有賽事全部當成新賽事灌通知；同一事件只通知一次（新賽事以組合 key 記住、開賽提醒以場次＋日期＋時間記住）；已通知紀錄保留 30 天後自動清理。
+  - 誠實說明限制：**未串接 Web Push（VAPID）**，因此完全關閉網頁時不會收到通知；提醒在開啟頁面、切回分頁與每 5 分鐘檢查一次。設定與訂閱只存在該裝置的 `localStorage`，不上傳。
+- **Feature — 一鍵匯入 / 匯出 CSV**（管理員以上）：
+  - 管理員選單新增「📥 CSV 匯入 / 匯出」：⬇️ 匯出全部賽事、📄 下載匯入範本、📤 選擇 CSV 檔案，並顯示匯入說明。
+  - 匯入支援 Excel 另存的 CSV（UTF-8）或直接從 Excel 複製的 Tab 分隔內容；自動判斷逗號／Tab／分號分隔，欄位順序不拘、表頭可用中文或英文、缺欄位或多餘欄位都能容忍。
+  - 上傳後**先在前端預覽**（總筆數、可匯入筆數、格式錯誤筆數與原因、分隔符），確認後才送出；後端以**同一份規則**再驗證一次（前端只是體驗，後端才是權威），匯入與匯出共用 `public/js/csv.js`（UMD，手寫 RFC4180 解析器）。
+  - 重複判定為「名稱＋開始日期」相同（忽略大小寫與前後空白），重複列自動跳過並回報原始列號；單次上限 500 筆。
+  - 匯出檔為 UTF-8（含 BOM，Excel 開啟不亂碼）、CRLF 換行、中文表頭，並寫入 `EXPORT_COMPETITIONS` 稽核紀錄；匯入則寫入 `IMPORT_COMPETITIONS`。
+  - 容錯：格式錯誤的列不會讓整批失敗——成功新增、重複跳過、錯誤列及其原因分開回報；資料庫尚未執行 v2.7.0 migration 時，匯入仍可成功（略過分類／標籤欄位並明確警告）。
+  - **本版不需要新的資料庫 migration。**
+- **Change — 刪除多餘程式碼與檔案**：
+  - 刪除 `.kilo/`（殘留的舊版 git worktree 副本，內含 2.9 MB 重複的 `tailwind.min.css`）、`README 3.md`、`public/js/app 2.js` 等重複檔案，以及 `.DS_Store`；並以 `git worktree prune` 清掉失效的 worktree 註冊。
+  - 移除未使用的程式碼：`.cal-empty` CSS 規則、`app.__test__.isProductionFlag` 匯出。
+  - 補齊新程式碼用到的顏色 class 與變數（`border-amber-200`、`text-amber-600`、`hover:bg-emerald-50`、`hover:bg-emerald-200`），維持「class 皆有規則、`--cm-*` 變數三份票一致、無未使用變數」的覆蓋率檢查通過。
+- **Tests**：`npm test` 由 6 個增加到 **36 個**測試（CSV 解析／正規化／往返、匯入匯出 API 端到端含假 Supabase、資料庫未 migration 情境、通知判斷邏輯）；瀏覽器實測 47 項（通知流程、CSV 介面）與 v2.7.0 回歸 48 項全數通過。
 
 ### v2.7.0 (2026-09-23) - 賽事分類與標籤系統、日曆檢視模式
 

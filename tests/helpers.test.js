@@ -7,7 +7,45 @@ process.env.NODE_ENV = 'production';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'unit-test-secret';
 
 const app = require(path.join(__dirname, '..', 'server.js'));
-const { COMPETITION_CATEGORIES, normalizeCategory, normalizeTags, isMissingColumnError } = app.__test__;
+const { COMPETITION_CATEGORIES, normalizeCategory, normalizeTags, isMissingColumnError, planImport } = app.__test__;
+
+test('planImport：以「名稱 + 開始日期」判斷重複，忽略大小寫與前後空白', () => {
+    const existing = [
+        { name: '羽球公開賽', date: '2026-09-25' },
+        { name: '路跑活動', date: '2026-10-20' }
+    ];
+
+    const plan = planImport(existing, [
+        { name: '  羽球公開賽  ', date: '2026-09-25' },   // 與既有重複（含空白）
+        { name: '羽球公開賽', date: '2026-09-26' },        // 同名不同日 → 保留
+        { name: '新賽事', date: '2026-11-01' }             // 全新
+    ]);
+
+    assert.deepStrictEqual(plan.toInsert.map((r) => r.name), ['羽球公開賽', '新賽事']);
+    assert.strictEqual(plan.skipped.length, 1);
+    assert.strictEqual(plan.skipped[0].index, 1, 'index 應為原始列號（1 起算）');
+    assert.match(plan.skipped[0].reason, /重複/);
+});
+
+test('planImport：同批次內的重複也只保留第一筆', () => {
+    const plan = planImport([], [
+        { name: 'A', date: '2026-01-01' },
+        { name: 'a', date: '2026-01-01' },
+        { name: 'A', date: '2026-01-02' }
+    ]);
+
+    assert.strictEqual(plan.toInsert.length, 2);
+    assert.strictEqual(plan.skipped.length, 1);
+    assert.strictEqual(plan.skipped[0].index, 2);
+});
+
+test('planImport：容忍空值與缺欄位', () => {
+    assert.deepStrictEqual(planImport(null, null), { toInsert: [], skipped: [] });
+
+    const plan = planImport([{ name: 'X' }], [{ name: 'X' }, { name: 'X', date: '2026-01-01' }]);
+    assert.strictEqual(plan.toInsert.length, 1, '缺日期與有日期視為不同賽事');
+    assert.strictEqual(plan.toInsert[0].date, '2026-01-01');
+});
 
 test('分類清單：id 唯一、欄位齊全、顏色在允許清單內', () => {
     const allowedColors = new Set(['blue', 'indigo', 'emerald', 'red', 'purple', 'rose', 'amber', 'slate']);
