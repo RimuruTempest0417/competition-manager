@@ -1,6 +1,6 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.4.6
+# 🏆 比賽管理系統 (Competition Manager) v2.5.0
 
-輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌與自動化 Error 日誌收集系統。
+輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，並自動適配裝置深淺色模式。
 
 ---
 
@@ -13,6 +13,7 @@
 - **自動化 Bug 回報系統 (v2.3.0)**：全域監聽前後端 JavaScript 異常、Promise Rejection 與 API 失敗，自動寫入 Supabase 並提供超級管理員專屬日誌檢視面板。
 - **審計日誌 (Audit Logs)**：完整追蹤登入/登出事件與關鍵資料變更軌跡，自動解析 User-Agent 裝置類型。
 - **分享海報 (v2.4.0)**：Canvas 動態繪製賽事宣傳海報，支援複製與下載 PNG。
+- **深淺色模式自動適配 (v2.5.0)**：以 CSS `@media (prefers-color-scheme)` 跟隨裝置系統設定，無需 JS 或手動切換；頁面底層、卡片、Modal、徽章與表單控制項（含日期選擇器、捲軸）皆同步轉換。
 
 ---
 
@@ -27,6 +28,7 @@
 ### 前端 (Frontend)
 - **HTML5** & **JavaScript (ES6+)**：原生 DOM 操作、`fetch` API 攔截器與全域 Error 監聽器。
 - **Tailwind CSS 2.2.19 (本地靜態檔)**：Utility-First CSS 框架，以本地 `/css/tailwind.min.css` 載入，符合嚴格 CSP `style-src 'self'`。
+- **深淺色模式**：CSS `prefers-color-scheme: dark` 媒體查詢 + `color-scheme` 屬性。因本地 Tailwind 靜態檔建置時 `darkMode: false`（無 `dark:` variant 可用），改於 `/css/custom.css` 以同特異度覆寫專案實際使用的顏色 class，全程不使用 inline style。
 
 ### 部署與工具 (Deployment & Tools)
 - **Vercel Serverless Functions**：全站與 API 無伺服器託管部署。
@@ -47,9 +49,12 @@
 ## 🚀 本機啟動
 
 ```bash
-cd /Users/garycheong/Documents/competition-manager
+cd /Users/garycheong/Documents/hermes/competition-manager
 node server.js
 ```
+
+> 注意：啟動檔案是 `server.js`（不是 `sever.js`）；服務預設監聽 `http://localhost:3000`。
+> 執行測試：`npm test`（Node.js 內建 test runner）。
 
 
 ## 🔑 環境變數 (.env)
@@ -75,7 +80,7 @@ competition-manager/
 │   └── index.js              # Vercel API 入口，轉出 server.js
 ├── public/
 │   ├── css/
-│   │   ├── custom.css        # 自訂補強樣式（slate/amber/rose/emerald 色系、file input、modal 高度）
+│   │   ├── custom.css        # 自訂補強樣式（slate/amber/rose/emerald 色系、file input、modal 高度、深淺色模式）
 │   │   └── tailwind.min.css  # Tailwind CSS 2.2.19 本地靜態檔
 │   ├── js/
 │   │   └── app.js            # 前端 DOM 邏輯、fetch 攔截器與全域錯誤監聽器
@@ -89,6 +94,21 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.5.0 (2026-09-23) - 裝置深淺色模式自動適配與啟動階段安全性強化
+
+- **Feature — 深淺色模式自動適配**：
+  - 新增 `@media (prefers-color-scheme: dark)` 深色模式，跟隨裝置系統設定，無需 JS、無手動切換按鈕、無 localStorage 狀態。
+  - 因本地 `tailwind.min.css`（2.2.19）建置時 `darkMode: false`，無法使用 `dark:` variant，改由 `public/css/custom.css` 覆寫專案實際使用的顏色 class（載入順序在 Tailwind 之後，同特異度即可覆寫）。
+  - 覆寫範圍：頁面底層、卡片、Dropdown、8 個 Modal、徽章（角色 / 裝置 / 錯誤類型）、按鈕、表單欄位與 hover 變體，以及 `input[type=file]` 檔案選擇按鈕。
+  - 於 `public/index.html` 加入 `<meta name="color-scheme" content="light dark">` 與 light/dark 兩組 `<meta name="theme-color">`，並以 CSS `color-scheme: dark` 讓原生控制項（日期選擇器、下拉選單、捲軸、checkbox）同步轉為深色。
+  - 全程未新增 inline style 或 `style=` 屬性，CSP 維持嚴格 `style-src 'self'` 不放寬。
+- **Fix — 補上 2.2.19 缺漏的半透明背景 class**：`bg-slate-900/50`、`bg-slate-900/5`、`bg-white/60` 三個 class 原本在 `tailwind.min.css` 與 `custom.css` 皆不存在（2.2.19 不支援斜線透明度語法），導致 8 個 Modal 的遮罩完全透明、只有模糊效果而沒有變暗。現已於 `custom.css` 手動補上等價 `rgba()` 規則（淺色 `rgba(15,23,42,.5)`／深色 `rgba(2,6,23,.72)`）。
+- **Security — 啟動階段 fail-fast 與 JWT_SECRET 防呆**：
+  - 修正 `logErrorToDb()` 內引用**未定義變數** `hasSupabaseConfig` 的問題（每次呼叫皆拋 `ReferenceError` 並被 `catch` 吞掉，導致 `error_logs` 寫入完全失效、且保護邏輯形同無效）；現已明確定義 `const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey)`。
+  - `JWT_SECRET` 改為環境別閘控：`NODE_ENV=production` 時**只接受** `process.env.JWT_SECRET`，缺失即 `throw` 拒絕啟動（原本被寫死的開發常量架空了這個防線）；僅在非 production（本機開發／測試）才使用開發用常數。寫死的 secret 不得進入任何部署環境。
+- **Test**：新增 `tests/server.bootstrap.test.js` 與 `npm test` 指令，共 2 個測試——驗證非 production 無環境變數可正常啟動、以及 production 缺少 `JWT_SECRET` 必須拒絕啟動。
+- **Docs**：修正 README 內錯誤的專案路徑（`Documents/competition-manager` → `Documents/hermes/competition-manager`），並補上測試指令與深淺色模式技術說明。
 
 ### v2.4.6: 新增 vercel.json 於邊緣層級全面強制套用 CSP 與安全性 Headers，修復 ZAP 掃描警報
 

@@ -176,6 +176,64 @@
     border-color: #6ee7b7;
 }
 
+/* ---------- 用途 2 補完：slate / amber / emerald 缺漏的 hover: 變體 ----------
+   Tailwind 2.2.19 沒有這四個色系，因此 `hover:bg-slate-200` 這類變體
+   在本地靜態檔中完全不存在 → 滑鼠移入毫無反應。
+   （blue / red / indigo / purple 屬 2.2.19 預設色系，靜態檔已有，不在此補。）
+   ---------------------------------------------------------------------------- */
+
+.hover\:bg-slate-50:hover {
+    background-color: #f8fafc;
+}
+
+.hover\:bg-slate-100:hover {
+    background-color: #f1f5f9;
+}
+
+.hover\:bg-slate-200:hover {
+    background-color: #e2e8f0;
+}
+
+.hover\:bg-slate-300:hover {
+    background-color: #cbd5e1;
+}
+
+.hover\:bg-slate-800:hover {
+    background-color: #1e293b;
+}
+
+.hover\:text-slate-600:hover {
+    color: #475569;
+}
+
+.hover\:text-slate-800:hover {
+    color: #1e293b;
+}
+
+.hover\:text-slate-900:hover {
+    color: #0f172a;
+}
+
+.hover\:border-slate-300:hover {
+    border-color: #cbd5e1;
+}
+
+.hover\:bg-amber-50:hover {
+    background-color: #fffbeb;
+}
+
+.hover\:bg-amber-700:hover {
+    background-color: #b45309;
+}
+
+.hover\:bg-emerald-100:hover {
+    background-color: #d1fae5;
+}
+
+.hover\:bg-emerald-700:hover {
+    background-color: #047857;
+}
+
 /* ---------- 用途 3：檔案選擇按鈕 (file input) ---------- */
 
 input[type="file"]::file-selector-button {
@@ -213,4 +271,424 @@ input[type="file"]::-webkit-file-upload-button {
 
 input[type="file"]::-webkit-file-upload-button:hover {
     background-color: #dbeafe;
+}
+
+/* ============================================================
+   用途 4：裝置深淺色模式自動適配 (v2.5.0)
+   - 跟隨裝置系統設定 (prefers-color-scheme)，無需 JS、無切換按鈕。
+   - 本地 tailwind.min.css 建置時 darkMode 為 false，無任何 dark: variant
+     可用，因此以覆寫「專案實際用到的顏色 class」達成；
+     custom.css 於 tailwind.min.css 之後載入，同特異度下後者勝出。
+   - 未新增任何 inline style / style 屬性，CSP 維持 style-src 'self'。
+   ============================================================ */
+
+/* ---------- 用途 4-0：補上 2.2.19 缺漏的半透明背景 class ---------- */
+/* 這三個 class 原本在 tailwind.min.css 與 custom.css 皆不存在，
+   導致 8 個 Modal 的遮罩完全透明（僅有模糊、沒有變暗）。 */
+
+.bg-slate-900\/50 {
+    background-color: rgba(15, 23, 42, 0.5);
+}
+
+.bg-slate-900\/5 {
+    background-color: rgba(15, 23, 42, 0.05);
+}
+
+.bg-white\/60 {
+    background-color: rgba(255, 255, 255, 0.6);
+}
+
+/* ---------- 用途 4-1：深色模式色票 ----------
+   頁面底層 #0f172a < 卡片 #1e293b < 內嵌面板 #223049 < chip #2b3a52
+   階層不可顛倒，否則深色模式下卡片會「沉」進背景。
+   -------------------------------------------- */
+
+@media (prefers-color-scheme: dark) {
+
+    /* 讓原生控制項（日期選擇器、下拉箭頭、捲軸、checkbox）一併轉為深色 */
+    :root,
+    html {
+        color-scheme: dark;
+    }
+
+    /* ── 頁面底層與各種表面 ── */
+    body.bg-slate-100 {
+        background-color: #0f172a;
+    }
+
+    .bg-white {
+        background-color: #1e293b;
+    }
+
+    .bg-slate-50 {
+        background-color: #223049;
+    }
+
+    .bg-slate-100 {
+        background-color: #2b3a52;
+    }
+
+    .bg-slate-200 {
+        background-color: #3d4d66;
+    }
+
+    .bg-slate-300 {
+        background-color: #64748b;
+    }
+
+    /* Modal 遮罩加深，確保彈窗與深色背景分離 */
+    .bg-slate-900\/50 {
+        background-color: rgba(2, 6, 23, 0.72);
+    }
+
+    .bg-slate-900\/5 {
+        background-color: rgba(255, 255, 255, 0.05);
+    }
+
+    .bg-white\/60 {
+        background-color: rgba(255, 255, 255, 0.06);
+    }
+
+    /* bg-slate-700 / bg-slate-800 為深色實心按鈕，深色模式下維持原色不覆寫
+       （其 hover 變體見下方 hover 區塊） */
+
+    /* ── 邊框 ── */
+    .border-slate-100 {
+        border-color: #2b3a52;
+    }
+
+    .border-slate-200 {
+        border-color: #334155;
+    }
+
+    .border-slate-300 {
+        border-color: #475569;
+    }
+
+    /* ── 中性文字（明暗反轉，維持閱讀層級） ── */
+    .text-slate-500 {
+        color: #a3b1c2;
+    }
+
+    .text-slate-600 {
+        color: #cbd5e1;
+    }
+
+    .text-slate-700 {
+        color: #e2e8f0;
+    }
+
+    .text-slate-800 {
+        color: #f1f5f9;
+    }
+
+    .text-slate-900 {
+        color: #f8fafc;
+    }
+
+    /* text-slate-400 (#94a3b8) 於深色底對比已達 5.9:1，維持不變；
+       text-white 用於實心彩色按鈕，亦維持不變 */
+
+    /* ── blue ── */
+    .bg-blue-50 {
+        background-color: #16283f;
+    }
+
+    .bg-blue-100 {
+        background-color: #1c3557;
+    }
+
+    .border-blue-200 {
+        border-color: #2b5680;
+    }
+
+    .border-blue-300 {
+        border-color: #3b74a8;
+    }
+
+    .text-blue-600 {
+        color: #7cb8f5;
+    }
+
+    .text-blue-700 {
+        color: #9cc9f8;
+    }
+
+    .text-blue-800 {
+        color: #c7e0fb;
+    }
+
+    /* ── red ── */
+    .bg-red-50 {
+        background-color: #3a1a1f;
+    }
+
+    .bg-red-100 {
+        background-color: #4a2027;
+    }
+
+    .bg-red-200 {
+        background-color: #5c2731;
+    }
+
+    .border-red-100 {
+        border-color: #4a2027;
+    }
+
+    .border-red-200 {
+        border-color: #6b2b36;
+    }
+
+    .border-red-300 {
+        border-color: #8a3a47;
+    }
+
+    .text-red-500 {
+        color: #f87171;
+    }
+
+    .text-red-600 {
+        color: #fca5a5;
+    }
+
+    .text-red-700 {
+        color: #fecaca;
+    }
+
+    .text-red-800 {
+        color: #fee2e2;
+    }
+
+    /* ── amber ── */
+    .bg-amber-50 {
+        background-color: #3a2c10;
+    }
+
+    .bg-amber-100 {
+        background-color: #4a3a14;
+    }
+
+    .border-amber-300 {
+        border-color: #8a6a1f;
+    }
+
+    .text-amber-700 {
+        color: #fbbf24;
+    }
+
+    .text-amber-800 {
+        color: #fcd34d;
+    }
+
+    /* ── emerald ── */
+    .bg-emerald-50 {
+        background-color: #10302a;
+    }
+
+    .bg-emerald-100 {
+        background-color: #14453a;
+    }
+
+    .border-emerald-200 {
+        border-color: #1d6b56;
+    }
+
+    .border-emerald-300 {
+        border-color: #27876c;
+    }
+
+    .text-emerald-600 {
+        color: #34d399;
+    }
+
+    .text-emerald-700 {
+        color: #6ee7b7;
+    }
+
+    /* ── indigo ── */
+    .bg-indigo-50 {
+        background-color: #1e2547;
+    }
+
+    .bg-indigo-100 {
+        background-color: #2a3160;
+    }
+
+    .border-indigo-300 {
+        border-color: #4f5bb0;
+    }
+
+    .text-indigo-600 {
+        color: #a5b4fc;
+    }
+
+    .text-indigo-700 {
+        color: #c7d2fe;
+    }
+
+    .text-indigo-800 {
+        color: #e0e7ff;
+    }
+
+    /* ── purple ── */
+    .bg-purple-50 {
+        background-color: #2b1f47;
+    }
+
+    .bg-purple-100 {
+        background-color: #382a5e;
+    }
+
+    .border-purple-200 {
+        border-color: #5a43a8;
+    }
+
+    .border-purple-300 {
+        border-color: #6f55c4;
+    }
+
+    .text-purple-700 {
+        color: #d8b4fe;
+    }
+
+    .text-purple-900 {
+        color: #f3e8ff;
+    }
+
+    /* ── rose ── */
+    .bg-rose-100 {
+        background-color: #4a2028;
+    }
+
+    .border-rose-300 {
+        border-color: #9f4a5e;
+    }
+
+    .text-rose-700 {
+        color: #fda4af;
+    }
+
+    /* ── hover 變體（須與上方同色票，否則滑鼠移入會瞬間跳回淺色） ── */
+    .hover\:bg-slate-50:hover {
+        background-color: #223049;
+    }
+
+    .hover\:bg-slate-100:hover {
+        background-color: #2b3a52;
+    }
+
+    .hover\:bg-slate-200:hover {
+        background-color: #3d4d66;
+    }
+
+    .hover\:bg-slate-300:hover {
+        background-color: #64748b;
+    }
+
+    /* 資源回收桶深色按鈕 (bg-slate-700)：深色模式改以「變亮」表達 hover，
+       否則 hover 會變成與卡片底同色而消失 */
+    .hover\:bg-slate-800:hover {
+        background-color: #475569;
+    }
+
+    .hover\:bg-blue-50:hover {
+        background-color: #1c3557;
+    }
+
+    .hover\:bg-blue-100:hover {
+        background-color: #24466f;
+    }
+
+    .hover\:bg-red-50:hover {
+        background-color: #4a2027;
+    }
+
+    .hover\:bg-red-100:hover {
+        background-color: #5c2731;
+    }
+
+    .hover\:bg-amber-50:hover {
+        background-color: #4a3a14;
+    }
+
+    .hover\:bg-emerald-100:hover {
+        background-color: #1d6b56;
+    }
+
+    .hover\:bg-indigo-100:hover {
+        background-color: #343d78;
+    }
+
+    .hover\:bg-purple-100:hover {
+        background-color: #463472;
+    }
+
+    .hover\:text-slate-600:hover {
+        color: #cbd5e1;
+    }
+
+    .hover\:text-slate-800:hover {
+        color: #f1f5f9;
+    }
+
+    .hover\:text-slate-900:hover {
+        color: #f8fafc;
+    }
+
+    .hover\:text-blue-800:hover {
+        color: #dbeafe;
+    }
+
+    .hover\:text-indigo-800:hover {
+        color: #e0e7ff;
+    }
+
+    .hover\:text-purple-900:hover {
+        color: #f3e8ff;
+    }
+
+    .hover\:text-red-800:hover {
+        color: #fee2e2;
+    }
+
+    .hover\:border-slate-300:hover {
+        border-color: #64748b;
+    }
+
+    /* ── 檔案選擇按鈕（深色版，沿用淺色版的藍底藍字語意） ── */
+    input[type="file"]::file-selector-button {
+        background-color: #1c3557;
+        color: #9cc9f8;
+    }
+
+    input[type="file"]::file-selector-button:hover {
+        background-color: #24466f;
+    }
+
+    input[type="file"]::-webkit-file-upload-button {
+        background-color: #1c3557;
+        color: #9cc9f8;
+    }
+
+    input[type="file"]::-webkit-file-upload-button:hover {
+        background-color: #24466f;
+    }
+
+    /* ── 表單控制項 ──
+       未帶 bg-* class 的欄位會落到瀏覽器依 color-scheme 套用的預設灰 (#3b3b3b)，
+       與本站深藍色票不協調；這裡明確指定欄位底色。
+       checkbox / radio 不覆寫，保留原生深色繪製。 */
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    select,
+    textarea {
+        background-color: #16233a;
+        color: #f1f5f9;
+    }
+
+    /* 帶 bg-white 的 select 需提高特異度才蓋得過 .bg-white */
+    input.bg-white,
+    select.bg-white,
+    textarea.bg-white {
+        background-color: #16233a;
+    }
 }

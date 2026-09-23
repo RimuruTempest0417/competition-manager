@@ -4,10 +4,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>比賽管理系統 v2.4.6</title>
+    <!-- 深淺色模式：宣告本站同時支援 light / dark，讓瀏覽器在 CSS 載入前
+         就以正確的配色渲染原生控制項（日期選擇器、下拉選單、捲軸） -->
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
+    <title>比賽管理系統 v2.5.0</title>
     <!-- Tailwind CSS 2.2.19 (本地靜態檔，符合 CSP style-src 'self') -->
     <link href="/css/tailwind.min.css" rel="stylesheet">
-    <!-- 自訂補強樣式 (Modal 高度、滾動、背景模糊、色系補強、檔案按鈕) -->
+    <!-- 自訂補強樣式 (Modal 高度、滾動、背景模糊、色系補強、檔案按鈕、深淺色模式) -->
     <link href="/css/custom.css" rel="stylesheet">
 </head>
 
@@ -20,7 +25,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.4.6)</p>
+                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.5.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
