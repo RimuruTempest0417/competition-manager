@@ -20,6 +20,10 @@ app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    // v2.12.0：API 回應一律不快取（避免代理或 CDN 快取到含個資／權限內容的回應）
+    if (req.path && req.path.startsWith('/api/')) {
+        res.setHeader('Cache-Control', 'no-store');
+    }
     next();
 });
 
@@ -333,33 +337,171 @@ async function logAudit(userId, action, targetId = null, details = null, userAge
 }
 
 // 🚨 統一 Supabase 錯誤日誌 (error_logs 表格) 寫入輔助函式
-async function logErrorToDb(req, errorType, err) {
+// v2.12.0：改為會檢查 Supabase 回傳的 error（舊版只 await 不看結果，寫入失敗完全靜默），
+// 並把自身的失敗收進記憶體環狀緩衝，可由 /api/admin/error-logs/health 檢查。
+const ERROR_LOG_FAILURES = [];
+function noteErrorLogFailure(errorType, message) {
+    ERROR_LOG_FAILURES.push({ at: new Date().toISOString(), error_type: errorType, error: message });
+    if (ERROR_LOG_FAILURES.length > 20) ERROR_LOG_FAILURES.shift();
+}
+
+async function logErrorToDb(req, errorType, err, options = {}) {
     try {
         if (!hasSupabaseConfig) return;
 
-        const userAgent = req.headers['user-agent'] || '';
-        const reqPath = req.originalUrl || req.url || '';
-        const userId = req.user ? req.user.sub : null;
+        const severity = options.severity || 'error';
+        const userAgent = (req && req.headers && req.headers['user-agent']) || '';
+        const reqPath = (req && (req.originalUrl || req.url)) || '';
+        const userId = req && req.user ? req.user.sub : null;
 
-        await supabase.from('error_logs').insert([
-            {
-                user_id: userId,
-                error_type: errorType || 'backend_error',
-                message: err.message || String(err),
-                stack_trace: err.stack || '',
-                path: reqPath,
-                user_agent: userAgent,
-                created_at: new Date().toISOString()
-            }
-        ]);
+        let stackTrace = (err && err.stack) || '';
+        if (options.context) {
+            stackTrace = `${stackTrace}\n\n[context] ${JSON.stringify(options.context)}`.trim();
+        }
+
+        const payload = {
+            user_id: userId,
+            error_type: errorType || 'backend_error',
+            message: (err && err.message) ? err.message : String(err),
+            stack_trace: stackTrace,
+            path: reqPath,
+            user_agent: userAgent,
+            created_at: new Date().toISOString()
+        };
+
+        if (await columnExists('error_logs', 'severity')) payload.severity = severity;
+
+        const { error } = await supabase.from('error_logs').insert([payload]);
+        if (error) throw error; // ⬅️ 關鍵修正：不要再吞掉寫入失敗
     } catch (loggingErr) {
-        console.error('❌ 寫入 error_logs 失敗:', loggingErr.message);
+        noteErrorLogFailure(errorType || 'backend_error', loggingErr.message);
+        console.error('❌ 寫入 error_logs 失敗:', errorType, '—', loggingErr.message);
     }
+}
+
+// 登入失敗鎖定：同一帳號連續失敗 5 次 → 鎖定 15 分鐘（記憶體計數，重啟即歸零）
+const loginFailures = new Map();
+const LOGIN_MAX_FAILURES = 5;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
+
+function loginLockRemaining(username, now = Date.now()) {
+    const key = String(username || '').toLowerCase();
+    const hits = (loginFailures.get(key) || []).filter((t) => now - t < LOGIN_LOCK_MS);
+    loginFailures.set(key, hits);
+    if (hits.length >= LOGIN_MAX_FAILURES) return LOGIN_LOCK_MS - (now - hits[0]);
+    return 0;
+}
+
+function recordLoginFailure(username, now = Date.now()) {
+    const key = String(username || '').toLowerCase();
+    const hits = (loginFailures.get(key) || []).filter((t) => now - t < LOGIN_LOCK_MS);
+    hits.push(now);
+    loginFailures.set(key, hits);
+    if (loginFailures.size > 1000) {
+        [...loginFailures.keys()].slice(0, 200).forEach((k) => loginFailures.delete(k));
+    }
+    return hits.length;
+}
+
+function clearLoginFailures(username) {
+    loginFailures.delete(String(username || '').toLowerCase());
+}
+
+// v2.12.0：公開（未登入）寫入端點的節流，避免匿名請求灌爆資料庫或濫發推播
+const publicWriteHits = new Map();
+function allowPublicWrite(ip, bucket, limit = 30, windowMs = 60000, now = Date.now()) {
+    const key = `${bucket}:${String(ip || 'unknown')}`;
+    const hits = (publicWriteHits.get(key) || []).filter((t) => now - t < windowMs);
+    if (hits.length >= limit) {
+        publicWriteHits.set(key, hits);
+        return false;
+    }
+    hits.push(now);
+    publicWriteHits.set(key, hits);
+    if (publicWriteHits.size > 2000) {
+        [...publicWriteHits.keys()].slice(0, 500).forEach((k) => publicWriteHits.delete(k));
+    }
+    return true;
+}
+
+// 對外錯誤訊息統一樣板（DB 細節只寫進錯誤日誌，不回傳給使用者）
+const GENERIC_DB_ERROR = '伺服器暫時無法處理請求，請稍後再試；若持續發生請通知管理員（已記錄於系統錯誤日誌）';
+
+// 無效權杖日誌節流（同一 IP 每分鐘最多一筆，避免掃描器灌爆資料庫）
+const authFailureLogged = new Map();
+function shouldLogAuthFailure(ip, now = Date.now()) {
+    const key = String(ip || 'unknown');
+    const last = authFailureLogged.get(key) || 0;
+    if (now - last < 60000) return false;
+    authFailureLogged.set(key, now);
+    if (authFailureLogged.size > 500) {
+        [...authFailureLogged.keys()].slice(0, 200).forEach((k) => authFailureLogged.delete(k));
+    }
+    return true;
 }
 
 // 權限角色集合定義
 const ADMIN_ROLES = new Set(['admin', 'super_admin', 'web_owner']);
 const SUPER_ADMIN_ROLES = new Set(['super_admin', 'web_owner']);
+
+// ==========================================
+// v2.12.0 角色階梯與帳號管理規則（單一來源，前後端共用邏輯）
+// ==========================================
+const ROLE_LEVELS = { user: 1, test: 1, admin: 2, super_admin: 3, web_owner: 4 };
+const ROLE_LABELS = {
+    user: '普通用戶',
+    test: '測試帳號',
+    admin: '管理員',
+    super_admin: '超級管理員',
+    web_owner: '網站擁有者'
+};
+const MANAGED_ROLES = Object.keys(ROLE_LEVELS);
+
+function roleLevel(role) {
+    return ROLE_LEVELS[role] || 0;
+}
+
+// 可建立／指派的角色：權限必須高於目標角色；Web Owner 另可建立同級（共同擁有者）
+function canCreateRole(actorRole, targetRole) {
+    const actor = roleLevel(actorRole);
+    const target = roleLevel(targetRole);
+    if (actor < 2 || target === 0) return false;
+    if (actor === 4 && target === 4) return true;
+    return target < actor;
+}
+
+// 可管理（改密碼／改名／停用／刪除）：權限必須嚴格高於目標，且不能動自己
+function canManageUser(actor, targetUser) {
+    if (!actor || !targetUser) return false;
+    if (String(actor.id) === String(targetUser.id)) return false;
+    return roleLevel(actor.role) > roleLevel(targetUser.role);
+}
+
+function assertRoleAssignable(actorRole, targetRole) {
+    if (!MANAGED_ROLES.includes(targetRole)) return `未知的角色：${targetRole}`;
+    if (!canCreateRole(actorRole, targetRole)) {
+        return `權限不足：${ROLE_LABELS[actorRole] || actorRole} 無法建立或指派「${ROLE_LABELS[targetRole] || targetRole}」`;
+    }
+    return null;
+}
+
+// v2.12.0：未執行 migration 時自動降級（先探測欄位，沒有就不帶）
+const columnPresence = new Map();
+async function columnExists(table, column) {
+    const key = `${table}.${column}`;
+    if (columnPresence.has(key)) return columnPresence.get(key);
+    if (!hasSupabaseConfig) return false;
+    const { error } = await supabase.from(table).select(column).limit(1);
+    if (!error) {
+        columnPresence.set(key, true);
+        return true;
+    }
+    if (isMissingColumnError(error, [column])) {
+        columnPresence.set(key, false);
+        return false;
+    }
+    return false; // 暫時性錯誤不快取，下次再試
+}
 
 async function findAdminById(id) {
     const { data, error } = await supabase
@@ -371,6 +513,41 @@ async function findAdminById(id) {
     if (error) throw error;
     return data;
 }
+
+// 以 id 或帳號名稱查詢帳號（v2.12.0 帳號管理用）
+async function findUserByKey(idOrName) {
+    const key = String(idOrName || '');
+
+    // 數字優先視為 id；找不到時再退回帳號名稱（相容舊版以帳號名稱操作的前端）
+    if (/^\d+$/.test(key)) {
+        const { data, error } = await supabase
+            .from('admin_users')
+            .select('*')
+            .eq('id', key)
+            .maybeSingle();
+        if (error) throw error;
+        if (data) return data;
+    }
+
+    const { data, error } = await supabase
+        .from('admin_users')
+        .select('*')
+        .eq('username', key)
+        .maybeSingle();
+    if (error) throw error;
+    return data;
+}
+
+// 還剩幾位網站擁有者（排除指定帳號），用於「至少保留一位」保護
+async function countWebOwners(excludeId = null) {
+    let query = supabase.from('admin_users').select('id, role').eq('role', 'web_owner');
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data || []).filter((u) => excludeId === null || String(u.id) !== String(excludeId)).length;
+}
+
+const USER_MIGRATION_HINT =
+    '此功能需要資料庫執行 v2.12.0 migration（migrations/2026-09-25-v2.12.0-user-management.sql）；請聯絡網站擁有者。';
 
 // JWT 身份驗證中間件
 function authenticateToken(req, res, next) {
@@ -385,7 +562,15 @@ function authenticateToken(req, res, next) {
         req.user = jwt.verify(token, JWT_SECRET);
         next();
     } catch (err) {
-        return res.status(403).json({ error: 'Token 無效或已過期，請重新登入' });
+        // v2.12.0：無效／過期權杖也要留下紀錄（每 IP 每分鐘最多一筆，避免掃描器灌爆資料庫）
+        if (shouldLogAuthFailure(req.ip)) {
+            logErrorToDb(req, 'auth_invalid_token', err, {
+                severity: 'warn',
+                context: { reason: 'Token 驗證失敗', ua: (req.headers['user-agent'] || '').slice(0, 120) }
+            }).catch(() => {});
+        }
+        // v2.12.0：改用 401（未認證）而非 403，讓前端能分辨「登入逾期」與「權限不足」
+        return res.status(401).json({ error: 'Token 無效或已過期，請重新登入' });
     }
 }
 
@@ -406,7 +591,7 @@ function requireRole(allowedRoles) {
             next();
         } catch (err) {
             await logErrorToDb(req, 'auth_error', err);
-            res.status(500).json({ error: '權限驗證失敗: ' + err.message });
+            res.status(500).json({ error: GENERIC_DB_ERROR });
         }
     };
 }
@@ -418,8 +603,13 @@ const requireSuperAdmin = [authenticateToken, requireRole([...SUPER_ADMIN_ROLES]
 // 錯誤日誌 API
 // ==========================================
 app.post('/api/logs/error', async (req, res) => {
+    // v2.12.0：未登入就能寫入，必須節流並限制欄位長度（避免匿名灌爆資料庫）
+    if (!allowPublicWrite(req.ip, 'logs-error', 30, 60000)) {
+        return res.status(429).json({ error: '錯誤回報過於頻繁，請稍後再試' });
+    }
+
     try {
-        const { error_type, message, stack_trace, path: errPath, screenshot } = req.body;
+        const { error_type, message, stack_trace, path: errPath, screenshot } = req.body || {};
         const userAgent = req.headers['user-agent'] || '';
 
         let finalStackTrace = stack_trace || '';
@@ -427,13 +617,15 @@ app.post('/api/logs/error', async (req, res) => {
             finalStackTrace += `\n\n[Screenshot Attached (Base64 Truncated)]: ${screenshot.substring(0, 100)}...`;
         }
 
+        const trim = (v, n) => (v === undefined || v === null ? '' : String(v).slice(0, n));
+
         const logPayload = {
             user_id: null,
-            error_type: error_type || 'frontend_error',
-            message: message || 'Unknown client error',
-            stack_trace: finalStackTrace,
-            path: errPath || '',
-            user_agent: userAgent
+            error_type: trim(error_type, 60) || 'frontend_error',
+            message: trim(message, 1000) || 'Unknown client error',
+            stack_trace: finalStackTrace.slice(0, 4000),
+            path: trim(errPath, 300),
+            user_agent: trim(userAgent, 400)
         };
 
         if (screenshot) {
@@ -445,25 +637,145 @@ app.post('/api/logs/error', async (req, res) => {
         if (error) throw error;
         res.json({ success: true, message: 'Bug report saved successfully' });
     } catch (err) {
-        console.error('[Error Log API Failed]:', err.message);
+        // v2.12.0：連「寫日誌」本身的失敗也要留下痕跡（原本只有 console.error，雲端看不到）
+        await logErrorToDb(req, 'client_error_log_failed', err, {
+            severity: 'warn',
+            context: { reason: '前端錯誤回報寫入失敗' }
+        });
         res.status(500).json({ error: 'Failed to record error log' });
     }
 });
 
 app.get('/api/admin/error-logs', requireSuperAdmin, async (req, res) => {
     try {
-        const { data, error } = await supabase
-            .from('error_logs')
-            .select('*')
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+        const hasSeverity = await columnExists('error_logs', 'severity');
+        const hasResolved = await columnExists('error_logs', 'resolved');
+
+        let query = supabase.from('error_logs').select('*', { count: 'exact' });
+
+        if (req.query.type) query = query.eq('error_type', String(req.query.type).slice(0, 60));
+        if (req.query.severity && hasSeverity) query = query.eq('severity', String(req.query.severity).slice(0, 20));
+        if (req.query.resolved === 'true' && hasResolved) query = query.eq('resolved', true);
+        if (req.query.resolved === 'false' && hasResolved) query = query.eq('resolved', false);
+        if (req.query.q) {
+            // 去掉 PostgREST 的 or() 語法字元，避免查詢字串被注入
+            const q = String(req.query.q).replace(/[%,()*]/g, ' ').trim().slice(0, 80);
+            if (q) query = query.or(`message.ilike.%${q}%,error_type.ilike.%${q}%,path.ilike.%${q}%`);
+        }
+
+        const { data, error, count } = await query
             .order('created_at', { ascending: false })
-            .limit(100);
+            .range(offset, offset + limit - 1);
 
         if (error) throw error;
-        res.json({ success: true, logs: data });
+
+        const logs = (data || []).map((l) => ({
+            ...l,
+            severity: l.severity || 'error',
+            resolved: l.resolved === true
+        }));
+        const unresolvedInPage = logs.filter((l) => !l.resolved).length;
+
+        res.json({
+            success: true,
+            logs,
+            total: count === null || count === undefined ? logs.length : count,
+            limit,
+            offset,
+            unresolved_in_page: unresolvedInPage,
+            schema: { severity: hasSeverity, resolved: hasResolved }
+        });
     } catch (err) {
         await logErrorToDb(req, 'fetch_error_logs_error', err);
         console.error('[Fetch Error Logs Failed]:', err.message);
-        res.status(500).json({ error: 'Failed to fetch error logs' });
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// 錯誤日誌系統自身的狀態（寫入失敗時可在後台直接看到，不再只有 console）
+app.get('/api/admin/error-logs/health', requireSuperAdmin, async (req, res) => {
+    res.json({
+        success: true,
+        supabase_configured: hasSupabaseConfig,
+        recent_write_failures: ERROR_LOG_FAILURES.slice(-10).reverse(),
+        failure_count: ERROR_LOG_FAILURES.length,
+        schema: {
+            severity: await columnExists('error_logs', 'severity'),
+            resolved: await columnExists('error_logs', 'resolved')
+        }
+    });
+});
+
+// 標記錯誤日誌為已處理／未處理
+app.patch('/api/admin/error-logs/:id', requireSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    const operator = req.currentUser;
+    const resolved = req.body && (req.body.resolved === true || req.body.resolved === 'true');
+
+    try {
+        if (!(await columnExists('error_logs', 'resolved'))) {
+            return res.status(503).json({ error: USER_MIGRATION_HINT });
+        }
+
+        const updates = { resolved };
+        if (await columnExists('error_logs', 'resolved_at')) updates.resolved_at = resolved ? new Date().toISOString() : null;
+        if (await columnExists('error_logs', 'resolved_by')) updates.resolved_by = resolved ? operator.username : null;
+
+        const { error } = await supabase.from('error_logs').update(updates).eq('id', id);
+        if (error) throw error;
+
+        await logAudit(operator.username, resolved ? 'RESOLVE_ERROR_LOG' : 'REOPEN_ERROR_LOG', id, `標記錯誤日誌 #${id}`, req.userAgent);
+        res.json({ success: true, message: resolved ? '已標記為已處理' : '已標記為未處理', resolved });
+    } catch (err) {
+        await logErrorToDb(req, 'resolve_error_log_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// 清理舊的錯誤日誌（預設 30 天前）
+app.post('/api/admin/error-logs/cleanup', requireSuperAdmin, async (req, res) => {
+    const operator = req.currentUser;
+    const days = Math.min(Math.max(parseInt(req.body && req.body.days, 10) || 30, 1), 3650);
+
+    try {
+        const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+        const { data, error } = await supabase
+            .from('error_logs')
+            .delete()
+            .lt('created_at', cutoff)
+            .select('id');
+
+        if (error) throw error;
+
+        const removed = (data || []).length;
+        await logAudit(operator.username, 'CLEANUP_ERROR_LOGS', null, `清理 ${days} 天前的錯誤日誌：刪除 ${removed} 筆`, req.userAgent);
+        res.json({ success: true, removed, days, message: `已清理 ${removed} 筆超過 ${days} 天的日誌` });
+    } catch (err) {
+        await logErrorToDb(req, 'cleanup_error_logs_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// 推播發送紀錄（管理員以上可檢視）
+app.get('/api/admin/push-logs', requireAdmin, async (req, res) => {
+    try {
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+        const { data, error } = await supabase
+            .from('push_log')
+            .select('*')
+            .order('sent_at', { ascending: false })
+            .limit(limit);
+
+        if (error) {
+            if (isMissingTableError(error)) return res.status(503).json({ error: PUSH_HINT });
+            throw error;
+        }
+        res.json({ success: true, logs: data || [] });
+    } catch (err) {
+        await logErrorToDb(req, 'fetch_push_logs_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
     }
 });
 
@@ -489,22 +801,53 @@ app.get('/api/audit-logs', requireSuperAdmin, async (req, res) => {
 // ==========================================
 // 管理員帳號維護 API
 // ==========================================
-app.get('/api/admin/users', requireSuperAdmin, async (req, res) => {
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
     try {
+        const actor = req.currentUser;
+        const cols = ['id', 'username', 'role', 'created_at'];
+        if (await columnExists('admin_users', 'is_active')) cols.push('is_active');
+        if (await columnExists('admin_users', 'last_login_at')) cols.push('last_login_at');
+        if (await columnExists('admin_users', 'updated_at')) cols.push('updated_at');
+
         const { data: admins, error } = await supabase
             .from('admin_users')
-            .select('id, username, role, created_at')
-            .order('created_at', { ascending: false });
+            .select(cols.join(','))
+            .order('created_at', { ascending: true });
 
         if (error) throw error;
-        res.json(admins || []);
+
+        const users = (admins || []).map((u) => ({
+            id: u.id,
+            username: u.username,
+            role: u.role,
+            role_label: ROLE_LABELS[u.role] || u.role,
+            created_at: u.created_at || null,
+            is_active: u.is_active === undefined ? true : u.is_active !== false,
+            last_login_at: u.last_login_at || null,
+            is_self: String(actor.id) === String(u.id),
+            can_manage: canManageUser(actor, u),
+            can_change_role: actor.role === 'web_owner' && String(actor.id) !== String(u.id),
+            assignable_roles: MANAGED_ROLES.filter((r) => canCreateRole(actor.role, r))
+        }));
+
+        res.json({
+            success: true,
+            users,
+            roles: ROLE_LABELS,
+            my_role: actor.role,
+            my_role_label: ROLE_LABELS[actor.role] || actor.role,
+            my_level: roleLevel(actor.role),
+            can_edit_roles: actor.role === 'web_owner',
+            can_create: MANAGED_ROLES.filter((r) => canCreateRole(actor.role, r)),
+            schema_ready: await columnExists('admin_users', 'is_active')
+        });
     } catch (err) {
         await logErrorToDb(req, 'fetch_admin_users_error', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: GENERIC_DB_ERROR });
     }
 });
 
-app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
     const { username, password, role } = req.body;
     const operator = req.currentUser;
 
@@ -512,13 +855,19 @@ app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
         return res.status(400).json({ error: '帳號與密碼為必填欄位' });
     }
 
-    let targetRole = role || 'admin';
-    if (operator.role === 'super_admin') {
-        if (targetRole !== 'admin') {
-            return res.status(403).json({ error: '權限不足：超級管理員只能新增普通管理員 (admin)' });
-        }
-    } else if (operator.role !== 'web_owner') {
-        return res.status(403).json({ error: '權限不足' });
+    if (!USERNAME_RE.test(String(username))) {
+        return res.status(400).json({ error: '帳號格式錯誤：僅允許 3～20 個英文字母、數字或底線' });
+    }
+
+    if (!PASSWORD_RE.test(String(password))) {
+        return res.status(400).json({ error: '密碼格式錯誤：僅允許 6～64 個英文字母或數字' });
+    }
+
+    // v2.12.0：管理員可建立普通用戶／測試帳號；超級管理員可再建立管理員；Web Owner 可建立任何角色
+    const targetRole = role || 'user';
+    const roleErr = assertRoleAssignable(operator.role, targetRole);
+    if (roleErr) {
+        return res.status(403).json({ error: roleErr });
     }
 
     try {
@@ -532,51 +881,52 @@ app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
             return res.status(400).json({ error: '此帳號名稱已存在' });
         }
 
+        const payload = { username, password: hashPassword(password), role: targetRole };
+        if (await columnExists('admin_users', 'is_active')) payload.is_active = true;
+        if (await columnExists('admin_users', 'updated_at')) payload.updated_at = new Date().toISOString();
+
         const { data, error } = await supabase
             .from('admin_users')
-            .insert([{ username, password: hashPassword(password), role: targetRole }])
-            .select();
+            .insert([payload])
+            .select('id, username, role');
 
         if (error) throw error;
 
-        await logAudit(operator.username, 'CREATE_ADMIN', data[0].id, `新增管理員帳號: ${username} (角色: ${targetRole})`, req.userAgent);
+        await logAudit(operator.username, 'CREATE_ADMIN', data[0].id, {
+            action: '建立帳號',
+            actor_role: operator.role,
+            new_user: username,
+            new_role: targetRole
+        }, req.userAgent);
 
-        res.json({ message: '管理員新增成功', id: data[0].id });
+        res.json({ message: `帳號 ${username} 建立成功（${ROLE_LABELS[targetRole] || targetRole}）`, id: data[0].id, username, role: targetRole });
     } catch (err) {
         await logErrorToDb(req, 'create_admin_error', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: GENERIC_DB_ERROR });
     }
 });
 
-app.delete('/api/admin/users/:id', requireSuperAdmin, async (req, res) => {
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
     const operator = req.currentUser;
 
     try {
-        let query = supabase.from('admin_users').select('id, username, role');
-        if (!isNaN(id)) {
-            query = query.or(`id.eq.${id},username.eq.${id}`);
-        } else {
-            query = query.eq('username', id);
+        const targetUser = await findUserByKey(id);
+        if (!targetUser) {
+            return res.status(404).json({ error: '找不到該帳號' });
         }
 
-        const { data: targetUser, error: findErr } = await query.single();
-        if (findErr || !targetUser) {
-            return res.status(404).json({ error: '找不到該管理員帳號' });
-        }
-
-        if (targetUser.username === operator.username || targetUser.id === operator.id) {
+        if (String(targetUser.id) === String(operator.id) || targetUser.username === operator.username) {
             return res.status(400).json({ error: '無法刪除目前正在使用的帳號' });
         }
 
         if (targetUser.role === 'web_owner') {
-            return res.status(403).json({ error: '保護機制：無法刪除 Web Owner 帳號' });
+            return res.status(403).json({ error: '保護機制：無法刪除網站擁有者帳號' });
         }
 
-        if (operator.role === 'super_admin') {
-            if (targetUser.role === 'super_admin' || targetUser.role === 'web_owner') {
-                return res.status(403).json({ error: '權限不足：超級管理員不可刪除同級或高級別帳號' });
-            }
+        // v2.12.0：一律依角色階梯（權限必須高於目標），管理員只能刪除普通用戶／測試帳號
+        if (!canManageUser(operator, targetUser)) {
+            return res.status(403).json({ error: '權限不足：不可刪除同級或更高權限的帳號' });
         }
 
         const { error: delErr } = await supabase
@@ -586,12 +936,139 @@ app.delete('/api/admin/users/:id', requireSuperAdmin, async (req, res) => {
 
         if (delErr) throw delErr;
 
-        await logAudit(operator.username, 'DELETE_ADMIN', targetUser.id, `刪除帳號: ${targetUser.username} (${targetUser.role})`, req.userAgent);
+        await logAudit(operator.username, 'DELETE_ADMIN', targetUser.id, {
+            action: '刪除帳號',
+            actor_role: operator.role,
+            deleted_user: targetUser.username,
+            deleted_role: targetUser.role
+        }, req.userAgent);
 
-        res.json({ message: '帳號刪除成功' });
+        res.json({ message: `帳號 ${targetUser.username} 已刪除` });
     } catch (err) {
         await logErrorToDb(req, 'delete_admin_error', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// v2.12.0：修改帳號（角色調整僅限 Web Owner；密碼／帳號名／停用依角色階梯）
+app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const operator = req.currentUser;
+    const { role, password, username, is_active } = req.body || {};
+
+    try {
+        const target = await findUserByKey(id);
+        if (!target) {
+            return res.status(404).json({ error: '找不到該帳號' });
+        }
+
+        const isSelf = String(target.id) === String(operator.id) || target.username === operator.username;
+        const updates = {};
+        const changes = [];
+
+        // (1) 角色調整：只有網站擁有者可以調整他人角色
+        if (role !== undefined && role !== target.role) {
+            if (operator.role !== 'web_owner') {
+                return res.status(403).json({ error: '權限不足：只有網站擁有者可以調整他人角色' });
+            }
+            if (isSelf) {
+                return res.status(400).json({ error: '無法修改自己的角色' });
+            }
+            if (!MANAGED_ROLES.includes(role)) {
+                return res.status(400).json({ error: '未知的角色：' + role });
+            }
+            if (target.role === 'web_owner' && (await countWebOwners(target.id)) < 1) {
+                return res.status(400).json({ error: '保護機制：系統必須保留至少一位網站擁有者' });
+            }
+            updates.role = role;
+            changes.push(`角色 ${ROLE_LABELS[target.role] || target.role} → ${ROLE_LABELS[role] || role}`);
+        }
+
+        // (2) 重設密碼
+        if (password !== undefined && password !== '') {
+            if (!canManageUser(operator, target)) {
+                return res.status(403).json({ error: '權限不足：只能重設權限低於你的帳號密碼（自己的密碼請用「修改密碼」）' });
+            }
+            if (!PASSWORD_RE.test(String(password))) {
+                return res.status(400).json({ error: '密碼格式錯誤：僅允許 6～64 個英文字母或數字' });
+            }
+            updates.password = hashPassword(String(password));
+            changes.push('重設密碼');
+        }
+
+        // (3) 修改帳號名稱
+        if (username !== undefined && username !== '' && username !== target.username) {
+            if (!canManageUser(operator, target)) {
+                return res.status(403).json({ error: '權限不足：只能修改權限低於你的帳號名稱' });
+            }
+            if (!USERNAME_RE.test(String(username))) {
+                return res.status(400).json({ error: '帳號格式錯誤：僅允許 3～20 個英文字母、數字或底線' });
+            }
+            const { data: dup } = await supabase
+                .from('admin_users')
+                .select('id')
+                .eq('username', username)
+                .maybeSingle();
+            if (dup && String(dup.id) !== String(target.id)) {
+                return res.status(400).json({ error: '此帳號名稱已存在' });
+            }
+            updates.username = String(username);
+            changes.push(`帳號名稱 ${target.username} → ${username}`);
+        }
+
+        // (4) 停用／啟用帳號
+        if (is_active !== undefined) {
+            const wantActive = is_active === true || is_active === 'true';
+            if (wantActive !== (target.is_active !== false)) {
+                if (isSelf) {
+                    return res.status(400).json({ error: '無法停用目前正在使用的帳號' });
+                }
+                if (!canManageUser(operator, target)) {
+                    return res.status(403).json({ error: '權限不足：只能停用權限低於你的帳號' });
+                }
+                if (target.role === 'web_owner' && !wantActive && (await countWebOwners(target.id)) < 1) {
+                    return res.status(400).json({ error: '保護機制：系統必須保留至少一位網站擁有者' });
+                }
+                if (!(await columnExists('admin_users', 'is_active'))) {
+                    return res.status(503).json({ error: USER_MIGRATION_HINT });
+                }
+                updates.is_active = wantActive;
+                changes.push(wantActive ? '啟用帳號' : '停用帳號');
+            }
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ error: '沒有需要變更的內容' });
+        }
+
+        if (await columnExists('admin_users', 'updated_at')) {
+            updates.updated_at = new Date().toISOString();
+        }
+
+        const { error: updateErr } = await supabase
+            .from('admin_users')
+            .update(updates)
+            .eq('id', target.id);
+
+        if (updateErr) throw updateErr;
+
+        await logAudit(operator.username, 'UPDATE_ADMIN', target.id, {
+            action: '修改帳號',
+            actor_role: operator.role,
+            target_user: target.username,
+            changes
+        }, req.userAgent);
+
+        const roleChanged = updates.role !== undefined;
+        res.json({
+            message: `已更新帳號 ${updates.username || target.username}：${changes.join('、')}`,
+            changes,
+            role_changed: roleChanged,
+            password_changed: updates.password !== undefined
+        });
+    } catch (err) {
+        await logErrorToDb(req, 'update_admin_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
     }
 });
 
@@ -602,6 +1079,17 @@ const loginHandler = async (req, res) => {
     const { username, password } = req.body;
     const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
+    if (!username || !password) {
+        return res.status(400).json({ error: '請輸入帳號與密碼' });
+    }
+
+    // v2.12.0：連續失敗鎖定（防暴力破解）
+    const locked = loginLockRemaining(username);
+    if (locked > 0) {
+        await logAudit(username, 'LOGIN_LOCKED', null, { ip: clientIp, remaining_sec: Math.ceil(locked / 1000) }, req.userAgent);
+        return res.status(429).json({ error: `登入失敗次數過多，請於 ${Math.ceil(locked / 60000)} 分鐘後再試` });
+    }
+
     try {
         const { data: user, error } = await supabase
             .from('admin_users')
@@ -610,13 +1098,30 @@ const loginHandler = async (req, res) => {
             .maybeSingle();
 
         if (error || !user || !verifyPassword(user.password, password)) {
+            const fails = recordLoginFailure(username);
             await logAudit(username || 'UNKNOWN', 'LOGIN_FAILED', null, {
                 reason: '帳號或密碼錯誤',
-                ip: clientIp
+                ip: clientIp,
+                attempts: fails
             }, req.userAgent);
+
+            if (fails >= LOGIN_MAX_FAILURES) {
+                logErrorToDb(req, 'login_lockout', new Error(`帳號「${username}」連續登入失敗 ${fails} 次，已暫時鎖定 15 分鐘`), {
+                    severity: 'warn',
+                    context: { ip: clientIp }
+                }).catch(() => {});
+            }
 
             return res.status(401).json({ error: '帳號或密碼錯誤' });
         }
+
+        // v2.12.0：停用帳號不得登入（未執行 migration 時 is_active 為 undefined，視為啟用）
+        if (user.is_active === false) {
+            await logAudit(user.username, 'LOGIN_DENIED_INACTIVE', user.id, { ip: clientIp }, req.userAgent);
+            return res.status(403).json({ error: '此帳號已停用，請聯繫管理員' });
+        }
+
+        clearLoginFailures(username);
 
         const token = jwt.sign(
             { sub: user.id, username: user.username, role: user.role },
@@ -626,6 +1131,15 @@ const loginHandler = async (req, res) => {
 
         await logAudit(user.username, 'LOGIN_SUCCESS', user.id, { ip: clientIp }, req.userAgent);
 
+        // v2.12.0：記錄最後登入時間（未執行 migration 時自動略過，不影響登入）
+        if (await columnExists('admin_users', 'last_login_at')) {
+            supabase
+                .from('admin_users')
+                .update({ last_login_at: new Date().toISOString() })
+                .eq('id', user.id)
+                .then(() => {}, () => {});
+        }
+
         res.json({
             message: '登入成功',
             token,
@@ -633,7 +1147,7 @@ const loginHandler = async (req, res) => {
         });
     } catch (err) {
         await logErrorToDb(req, 'login_error', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: GENERIC_DB_ERROR });
     }
 };
 
@@ -671,7 +1185,7 @@ app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
         res.json({ message: '密碼修改成功' });
     } catch (err) {
         await logErrorToDb(req, 'change_password_error', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: GENERIC_DB_ERROR });
     }
 });
 
@@ -1006,6 +1520,8 @@ app.get('/api/registration-counts', async (req, res) => {
 
         res.json({ counts, total: (data || []).length });
     } catch (err) {
+        // 前端仍可優雅降級，但後台要看得到（原本完全靜默）
+        await logErrorToDb(req, 'registration_counts_error', err, { severity: 'warn' });
         res.json({ counts: {}, total: 0, unavailable: true });
     }
 });
@@ -1059,7 +1575,7 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(503).json({ error: '資料庫尚未允許「普通用戶」角色，請先執行 migrations/2026-09-24-v2.9.0-users-registration-teams.sql' });
         }
         await logErrorToDb(req, 'register_user_error', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: GENERIC_DB_ERROR });
     }
 });
 
@@ -1697,6 +2213,9 @@ app.post('/api/push/subscribe', optionalAuth, async (req, res) => {
 });
 
 app.post('/api/push/unsubscribe', async (req, res) => {
+    if (!allowPublicWrite(req.ip, 'push-unsub', 30, 60000)) {
+        return res.status(429).json({ error: '請求過於頻繁，請稍後再試' });
+    }
     const endpoint = req.body && req.body.endpoint;
     if (!endpoint) return res.status(400).json({ error: '缺少訂閱識別（endpoint）' });
     try {
@@ -1705,11 +2224,17 @@ app.post('/api/push/unsubscribe', async (req, res) => {
         res.json({ message: '已關閉此裝置的推播訂閱' });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: PUSH_HINT });
+        await logErrorToDb(req, 'push_unsubscribe_error', err);
         res.status(500).json({ error: err.message });
     }
 });
 
 app.post('/api/push/test', async (req, res) => {
+    // v2.12.0：送出推播的端點較敏感，限制每分鐘 10 次
+    if (!allowPublicWrite(req.ip, 'push-test', 10, 60000)) {
+        return res.status(429).json({ error: '測試推播過於頻繁，請稍後再試' });
+    }
+
     const endpoint = req.body && req.body.endpoint;
     if (!endpoint) return res.status(400).json({ error: '缺少訂閱識別（endpoint）' });
     if (!webpush) return res.status(503).json({ error: '伺服器未啟用推播（缺少 web-push 套件）' });
@@ -1730,6 +2255,7 @@ app.post('/api/push/test', async (req, res) => {
         res.json({ ok: result.ok, message: result.ok ? '測試通知已送出（請看系統通知）' : `送出失敗：${result.error}` });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: PUSH_HINT });
+        await logErrorToDb(req, 'push_test_error', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -2067,5 +2593,21 @@ app.__test__ = {
     PASSWORD_RE,
     // v2.11.1：cron 端點授權（未設定 CRON_SECRET 時 production 必須拒絕）
     cronAuthorization,
-    safeStringEqual
+    safeStringEqual,
+    // v2.12.0：角色階梯、帳號管理與錯誤日誌強化
+    ROLE_LEVELS,
+    ROLE_LABELS,
+    MANAGED_ROLES,
+    roleLevel,
+    canCreateRole,
+    canManageUser,
+    assertRoleAssignable,
+    loginLockRemaining,
+    recordLoginFailure,
+    clearLoginFailures,
+    shouldLogAuthFailure,
+    LOGIN_MAX_FAILURES,
+    LOGIN_LOCK_MS,
+    ERROR_LOG_FAILURES,
+    noteErrorLogFailure
 };

@@ -148,3 +148,45 @@ test('匯出後再匯入可還原（round-trip）', () => {
         time: '13:30', end_date: '2026-10-06', end_time: '17:00', description: '含,逗號與"引號"', is_registration_open: true
     });
 });
+
+test('v2.12.0 安全性：CSV 公式注入防護（Excel / Google Sheets 不會把內容當公式執行）', () => {
+    const csv = CMCSV.stringify([
+        ['名稱', '備註'],
+        ['=1+1', '=HYPERLINK("http://evil.example")'],
+        ['+SUM(A1:A9)', '@cmd'],
+        ['-2+3', '-12.5'],
+        ['正常賽事名稱', '說明文字']
+    ]);
+
+    const lines = csv.split('\r\n').filter((l) => l !== '');
+    // 危險前綴一律加上單引號 → 試算表視為文字
+    assert.ok(lines[1].startsWith("'=1+1,"), `= 開頭應被消歧：${lines[1]}`);
+    assert.ok(lines[2].startsWith("'+SUM"), `+ 開頭應被消歧：${lines[2]}`);
+    assert.ok(lines[3].startsWith("'-2+3"), `-算式應被消歧：${lines[3]}`);
+    assert.ok(lines[2].includes("'@cmd"), `@ 開頭應被消歧：${lines[2]}`);
+
+    // 純負數維持原樣（避免破壞數字資料）
+    assert.ok(lines[3].includes('-12.5'), '純負數不應被加上單引號');
+    assert.ok(lines[3].includes("'-12.5") === false);
+
+    // 一般資料不受影響
+    assert.ok(lines[4].includes('正常賽事名稱'));
+});
+
+test('v2.12.0 安全性：正常資料匯出→匯入仍可往返', () => {
+    const source = [{
+        name: '2026 全國羽球公開賽', category: 'racket', tags: ['國中組', '團體賽'],
+        location: '台北體育館', date: '2026-09-25', time: '09:00',
+        end_date: '2026-09-25', end_time: '17:00', description: '報名請洽主辦單位', is_registration_open: true
+    }];
+
+    const csv = CMCSV.stringify(CMCSV.toExportRows(source, CATEGORIES).rows);
+    const { records } = CMCSV.recordsFromParsed(CMCSV.parse(csv));
+    const result = CMCSV.normalizeRecord(records[0], { categories: CATEGORIES });
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.value.name, '2026 全國羽球公開賽');
+    assert.strictEqual(result.value.date, '2026-09-25');
+    assert.strictEqual(result.value.time, '09:00');
+    assert.deepStrictEqual(result.value.tags, ['國中組', '團體賽']);
+});

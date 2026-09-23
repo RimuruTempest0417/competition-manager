@@ -134,6 +134,20 @@ function getRoleLabel(role, username = '') {
     }
 }
 
+// v2.12.0：把後端回傳的錯誤訊息取出來（原本前端只顯示「操作失敗」，看不到原因）
+async function apiResult(res) {
+    let data = null;
+    try {
+        data = await res.json();
+    } catch (e) {
+        data = null;
+    }
+    if (!res.ok) {
+        throw new Error((data && (data.error || data.message)) || `請求失敗（HTTP ${res.status}）`);
+    }
+    return data || {};
+}
+
 function getRoleBadge(role, username = '') {
     const badgeClass = role === 'web_owner' ? 'bg-amber-100 text-amber-800 font-bold' :
         role === 'super_admin' ? 'bg-indigo-100 text-indigo-700 font-medium' :
@@ -534,11 +548,21 @@ async function customFetch(url, options = {}) {
         if (token) headers.set('Authorization', `Bearer ${token}`);
 
         const response = await fetch(url, { ...options, headers });
-        if ((response.status === 401 || response.status === 403) && token) {
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('competition_user');
-            alert('登入狀態已失效，請重新登入');
-            window.location.reload();
+
+        // v2.12.0：401（或訊息明講登入逾期）才視為登入失效；
+        // 403 只是「權限不足」，不該把使用者踢下線（原本任何 403 都會清 token 並重新載入）
+        if (response.status === 401 || response.status === 403) {
+            let payload = null;
+            try { payload = await response.clone().json(); } catch (e) { payload = null; }
+            const message = (payload && (payload.error || payload.message)) || '';
+            const sessionExpired = response.status === 401 || /Token 無效|已過期|重新登入/.test(message);
+
+            if (token && sessionExpired) {
+                localStorage.removeItem('auth_token');
+                localStorage.removeItem('competition_user');
+                alert('登入狀態已失效，請重新登入');
+                window.location.reload();
+            }
         }
         return response;
     } catch (networkError) {
@@ -619,6 +643,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('auditLogBtn')?.addEventListener('click', () => { openAuditLogModal(); closeNavDropdown(); });
     document.getElementById('btn-error-logs')?.addEventListener('click', () => { openErrorLogsModal(); closeNavDropdown(); });
     document.getElementById('adminMgmtBtn')?.addEventListener('click', () => { openAdminModal(); closeNavDropdown(); });
+    document.getElementById('pushLogsBtn')?.addEventListener('click', () => { openPushLogsModal(); closeNavDropdown(); });
     document.getElementById('changePwdBtn')?.addEventListener('click', () => { openChangePasswordModal(); closeNavDropdown(); });
     document.getElementById('authBtn')?.addEventListener('click', () => { toggleAuth(); closeNavDropdown(); });
     document.getElementById('logoutBtn')?.addEventListener('click', () => { handleLogout(); closeNavDropdown(); });
@@ -718,6 +743,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('closeErrorModalBtn')?.addEventListener('click', closeErrorLogsModal);
     document.getElementById('closeErrorModalBtn2')?.addEventListener('click', closeErrorLogsModal);
+    document.getElementById('closePushLogsBtn')?.addEventListener('click', closePushLogsModal);
+    document.getElementById('closePushLogsBtn2')?.addEventListener('click', closePushLogsModal);
 
     document.getElementById('closeAdminModalBtn')?.addEventListener('click', closeAdminModal);
     document.getElementById('closeAdminModalBtn2')?.addEventListener('click', closeAdminModal);
@@ -883,12 +910,12 @@ function focusCompetitionCard(compId) {
 // 為什麼要這樣寫：過去每個角色分支各自列 classList.add('hidden')，
 // 只要有分支漏寫（例如訪客分支忘了隱藏 CSV 按鈕），登出後就會殘留管理員功能。
 const CM_MENU_PERMISSIONS = {
-    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, create: false, myRegs: false, changePwd: false },
-    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, create: false, myRegs: true,  changePwd: true },
-    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, create: true,  myRegs: true,  changePwd: true },
-    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: false, create: true,  myRegs: true,  changePwd: true },
-    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  create: true,  myRegs: true,  changePwd: true },
-    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  create: true,  myRegs: true,  changePwd: true }
+    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: false, changePwd: false },
+    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: true,  changePwd: true },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: true,  myRegs: true,  changePwd: true },
+    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true },
+    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true },
+    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true }
 };
 
 function applyMenuVisibility(role) {
@@ -899,6 +926,7 @@ function applyMenuVisibility(role) {
         ['auditLogBtn', perm.audit],
         ['btn-error-logs', perm.errorLogs],
         ['adminMgmtBtn', perm.adminMgmt],
+        ['pushLogsBtn', perm.pushLogs],
         ['createSection', perm.create],
         ['myRegsBtn', perm.myRegs],
         ['changePwdBtn', perm.changePwd]
@@ -991,6 +1019,15 @@ function updateUIByRole() {
             adminMgmtBtn?.classList.add('hidden');
             mainTrashBtn?.classList.add('hidden');
             csvToolBtn?.classList.add('hidden');
+        } else if (currentUser.role === 'admin') {
+            // 管理員：可發佈、管理賽事、檢視與建立帳號（v2.12.0 起可管理使用者）
+            authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
+            authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
+            auditLogBtn?.classList.add('hidden');
+            btnErrorLogs?.classList.add('hidden');
+            adminMgmtBtn?.classList.remove('hidden');
+            mainTrashBtn?.classList.remove('hidden');
+            csvToolBtn?.classList.remove('hidden');
         } else {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
             authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
@@ -1002,6 +1039,8 @@ function updateUIByRole() {
         }
         // className 會被上面的分支整串覆蓋，這裡補回手機版排版用的標記 class
         authStatus.classList.add('cm-auth-pill');
+        // 最後再以權限表為準覆蓋一次：任何角色分支漏寫都不會讓功能殘留
+        applyMenuVisibility(currentUser.role);
     }
     renderCurrentView(allCompetitions);
 }
@@ -2874,32 +2913,129 @@ function closeAuditLogModal() {
     document.getElementById('auditLogModal').classList.add('hidden');
 }
 
+/* ==========================================
+   錯誤日誌後台（v2.12.0）
+   - 篩選：搜尋 / 等級 / 只看未處理
+   - 標記已處理、匯出 CSV、清理舊日誌
+   - 上方顯示「日誌系統本身」的寫入失敗狀態（原本只有 console 看不到）
+   ========================================== */
+let errorLogsCache = [];
+let errorLogFilters = { q: '', severity: '', unresolved: false };
+
+const ERROR_LOG_SEVERITY_STYLE = {
+    error: { badge: 'bg-red-200 text-red-800', card: 'bg-red-50 border-red-200' },
+    warn: { badge: 'bg-amber-200 text-amber-900', card: 'bg-amber-50 border-amber-200' },
+    info: { badge: 'bg-slate-200 text-slate-700', card: 'bg-slate-50 border-slate-200' }
+};
+
+function errorLogQueryString() {
+    const params = new URLSearchParams();
+    if (errorLogFilters.q) params.set('q', errorLogFilters.q);
+    if (errorLogFilters.severity) params.set('severity', errorLogFilters.severity);
+    if (errorLogFilters.unresolved) params.set('resolved', 'false');
+    params.set('limit', '200');
+    return params.toString();
+}
+
 async function openErrorLogsModal() {
     document.getElementById('errorLogsModal').classList.remove('hidden');
+    bindErrorLogControls();
+    await fetchErrorLogs();
+    loadErrorLogHealth();
+}
+
+function bindErrorLogControls() {
+    const modal = document.getElementById('errorLogsModal');
+    if (!modal || modal.dataset.bound === '1') return;
+    modal.dataset.bound = '1';
+
+    document.getElementById('errorLogRefreshBtn')?.addEventListener('click', () => fetchErrorLogs());
+    document.getElementById('errorLogExportBtn')?.addEventListener('click', exportErrorLogsCsv);
+    document.getElementById('errorLogCleanupBtn')?.addEventListener('click', cleanupErrorLogs);
+    document.getElementById('errorLogSeverity')?.addEventListener('change', (e) => {
+        errorLogFilters.severity = e.target.value;
+        fetchErrorLogs();
+    });
+    document.getElementById('errorLogUnresolved')?.addEventListener('change', (e) => {
+        errorLogFilters.unresolved = e.target.checked;
+        fetchErrorLogs();
+    });
+
+    let searchTimer = null;
+    document.getElementById('errorLogSearch')?.addEventListener('input', (e) => {
+        errorLogFilters.q = e.target.value.trim();
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => fetchErrorLogs(), 350);
+    });
+
+    document.getElementById('errorLogList')?.addEventListener('click', handleErrorLogAction);
+}
+
+async function loadErrorLogHealth() {
+    const box = document.getElementById('errorLogHealth');
+    if (!box) return;
+    try {
+        const res = await customFetch('/api/admin/error-logs/health');
+        const data = await apiResult(res);
+        const failures = data.recent_write_failures || [];
+
+        if (!data.supabase_configured || failures.length) {
+            box.innerHTML = `⚠️ <b>錯誤日誌系統本身有問題</b>：` +
+                (data.supabase_configured ? '' : '資料庫未設定；') +
+                (failures.length ? `最近有 ${failures.length} 筆「寫入日誌失敗」：<span class="font-mono">${escapeHtml(failures[0].error || '')}</span>` : '') +
+                `<br>請先修好日誌寫入，否則新的錯誤不會被記錄。`;
+            box.classList.remove('hidden');
+        } else {
+            box.classList.add('hidden');
+        }
+    } catch (err) {
+        box.classList.add('hidden');
+    }
+}
+
+async function fetchErrorLogs() {
     const listEl = document.getElementById('errorLogList');
+    if (!listEl) return;
     listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入錯誤日誌中...</p>';
 
     try {
-        const res = await customFetch('/api/admin/error-logs');
-        if (!res.ok) throw new Error('無法讀取錯誤日誌');
-        const result = await res.json();
+        const res = await customFetch('/api/admin/error-logs?' + errorLogQueryString());
+        const result = await apiResult(res);
         const logs = result.logs || [];
+        errorLogsCache = logs;
+
+        const summaryEl = document.getElementById('errorLogSummary');
+        if (summaryEl) {
+            const unresolved = logs.filter(l => !l.resolved).length;
+            summaryEl.textContent = `顯示 ${logs.length} / 共 ${result.total || logs.length} 筆，其中未處理 ${unresolved} 筆` +
+                (result.schema && result.schema.resolved === false ? '（資料庫尚未執行 v2.12.0 migration，無法標記處理狀態）' : '');
+        }
 
         if (logs.length === 0) {
-            listEl.innerHTML = '<p class="text-center text-emerald-600 py-4 font-sans font-medium">🎉 目前沒有任何異常錯誤紀錄！</p>';
+            listEl.innerHTML = '<p class="text-center text-emerald-600 py-4 font-sans font-medium">🎉 沒有符合條件的錯誤紀錄！</p>';
             return;
         }
 
         listEl.innerHTML = logs.map(l => {
             const hasScreenshot = l.screenshot && typeof l.screenshot === 'string' && l.screenshot.startsWith('data:image/');
+            const sev = ERROR_LOG_SEVERITY_STYLE[l.severity] || ERROR_LOG_SEVERITY_STYLE.error;
+            const sevLabel = l.severity === 'warn' ? '警告' : (l.severity === 'info' ? '資訊' : '錯誤');
             return `
-            <div class="p-3 bg-red-50 border border-red-200 rounded-lg space-y-1">
+            <div class="p-3 ${sev.card} border rounded-lg space-y-1 ${l.resolved ? 'opacity-60' : ''}">
                 <div class="flex justify-between items-center flex-wrap gap-1">
-                    <div class="flex items-center gap-1.5">
-                        <span class="bg-red-200 text-red-800 text-[10px] px-2 py-0.5 rounded font-bold">${escapeHtml(l.error_type)}</span>
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <span class="${sev.badge} text-[10px] px-2 py-0.5 rounded font-bold">${escapeHtml(sevLabel)}</span>
+                        <span class="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded font-bold">${escapeHtml(l.error_type)}</span>
+                        ${l.resolved ? `<span class="bg-emerald-100 text-emerald-700 text-[10px] px-2 py-0.5 rounded font-bold">✓ 已處理${l.resolved_by ? '：' + escapeHtml(String(l.resolved_by)) : ''}</span>` : ''}
                         ${parseUserAgentBadge(l.user_agent)}
                     </div>
-                    <span class="text-slate-400 text-[10px]">${new Date(l.created_at).toLocaleString()}</span>
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-slate-400 text-[10px]">${new Date(l.created_at).toLocaleString()}</span>
+                        <button data-action="${l.resolved ? 'reopen-log' : 'resolve-log'}" data-id="${l.id}"
+                            class="text-[10px] px-1.5 py-0.5 rounded ${l.resolved ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800'} transition font-sans">
+                            ${l.resolved ? '標記未處理' : '標記已處理'}
+                        </button>
+                    </div>
                 </div>
                 <p class="text-red-700 font-semibold text-xs">${escapeHtml(l.message)}</p>
                 ${l.path ? `<p class="text-slate-500 text-[11px]">路徑: ${escapeHtml(l.path)}</p>` : ''}
@@ -2917,7 +3053,76 @@ async function openErrorLogsModal() {
             </div>
         `}).join('');
     } catch (err) {
-        listEl.innerHTML = '<p class="text-red-500 text-center py-4 font-sans">無法載入錯誤日誌</p>';
+        listEl.innerHTML = `<p class="text-red-500 text-center py-4 font-sans">無法載入錯誤日誌：${escapeHtml(err.message)}</p>`;
+    }
+}
+
+async function handleErrorLogAction(ev) {
+    const el = ev.target.closest('[data-action="resolve-log"], [data-action="reopen-log"]');
+    if (!el) return;
+
+    const resolved = el.dataset.action === 'resolve-log';
+    try {
+        const res = await customFetch(`/api/admin/error-logs/${encodeURIComponent(el.dataset.id)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resolved })
+        });
+        await apiResult(res);
+        await fetchErrorLogs();
+    } catch (err) {
+        alert('❌ 更新失敗：' + err.message);
+    }
+}
+
+async function exportErrorLogsCsv() {
+    if (!errorLogsCache.length) {
+        alert('目前沒有可匯出的日誌（請先載入）');
+        return;
+    }
+
+    const rows = [['時間', '等級', '類型', '訊息', '路徑', '已處理', '裝置', '詳細內容']];
+    errorLogsCache.forEach(l => {
+        rows.push([
+            new Date(l.created_at).toLocaleString(),
+            l.severity === 'warn' ? '警告' : (l.severity === 'info' ? '資訊' : '錯誤'),
+            l.error_type,
+            l.message,
+            l.path || '',
+            l.resolved ? '是' : '否',
+            l.user_agent || '',
+            (l.stack_trace || '').slice(0, 2000)
+        ]);
+    });
+
+    const csv = window.CMCSV
+        ? CMCSV.stringify(rows, { bom: true })
+        : rows.map(r => r.map(v => `"${String(v === undefined || v === null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+
+    downloadCsvBlob(`error-logs-${todayString()}.csv`, new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+}
+
+async function cleanupErrorLogs() {
+    const days = prompt('要刪除幾天的「舊」錯誤日誌？（例如 30 表示只保留最近 30 天）', '30');
+    if (days === null) return;
+    const n = parseInt(days, 10);
+    if (!n || n < 1) {
+        alert('請輸入大於 0 的天數');
+        return;
+    }
+    if (!confirm(`確定要刪除 ${n} 天以前的所有錯誤日誌嗎？此動作無法復原。`)) return;
+
+    try {
+        const res = await customFetch('/api/admin/error-logs/cleanup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ days: n })
+        });
+        const data = await apiResult(res);
+        alert('✅ ' + (data.message || `已清理 ${data.removed} 筆`));
+        await fetchErrorLogs();
+    } catch (err) {
+        alert('❌ 清理失敗：' + err.message);
     }
 }
 
@@ -2925,8 +3130,48 @@ function closeErrorLogsModal() {
     document.getElementById('errorLogsModal').classList.add('hidden');
 }
 
+/* ==========================================
+   推播發送紀錄（v2.12.0，管理員以上）
+   ========================================== */
+async function openPushLogsModal() {
+    document.getElementById('pushLogsModal').classList.remove('hidden');
+    const listEl = document.getElementById('pushLogsList');
+    listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入推播紀錄中...</p>';
+
+    try {
+        const res = await customFetch('/api/admin/push-logs');
+        const data = await apiResult(res);
+        const logs = data.logs || [];
+
+        if (!logs.length) {
+            listEl.innerHTML = '<p class="text-center text-slate-400 py-4">目前還沒有推播發送紀錄（每日排程發送後會出現在這裡）</p>';
+            return;
+        }
+
+        const kindLabel = (k) => k === 'reminder' ? '開賽前提醒' : (k === 'new' ? '新賽事通知' : k);
+
+        listEl.innerHTML = logs.map(l => `
+            <div class="p-2.5 bg-slate-50 border border-slate-200 rounded space-y-1">
+                <div class="flex justify-between items-center gap-2 flex-wrap">
+                    <span class="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold">${escapeHtml(kindLabel(l.kind))}</span>
+                    <span class="text-slate-400 text-[10px]">${l.sent_at ? new Date(l.sent_at).toLocaleString() : '—'}</span>
+                </div>
+                <p class="text-slate-600 text-[11px]">賽事 #${escapeHtml(String(l.competition_id))}　成功發送 <b>${escapeHtml(String(l.sent_count === undefined || l.sent_count === null ? 0 : l.sent_count))}</b> 則</p>
+            </div>
+        `).join('');
+    } catch (err) {
+        listEl.innerHTML = `<p class="text-red-500 text-center py-4">載入失敗：${escapeHtml(err.message)}</p>`;
+    }
+}
+
+function closePushLogsModal() {
+    document.getElementById('pushLogsModal').classList.add('hidden');
+}
+
 async function openAdminModal() {
     document.getElementById('adminModal').classList.remove('hidden');
+    bindAdminListEvents();
+    document.getElementById('refreshAdminListBtn')?.addEventListener('click', () => fetchAdminList());
     renderRoleSelectOptions();
     fetchAdminList();
 }
@@ -2935,36 +3180,132 @@ function closeAdminModal() {
     document.getElementById('adminModal').classList.add('hidden');
 }
 
+/* ==========================================
+   使用者管理（v2.12.0）
+   - 管理員以上可檢視與建立帳號（只能建立「權限低於自己」的角色）
+   - 只有網站擁有者可調整他人角色
+   - 可管理（改密碼／改帳號名／停用／刪除）的對象一律須為「權限低於自己」
+   ========================================== */
+let adminMgmtState = { users: [], can_create: [], can_edit_roles: false, my_role: null, schema_ready: true };
+
+function renderRoleSelectOptions() {
+    const selectEl = document.getElementById('newAdminRole');
+    const hint = document.getElementById('adminRoleHint');
+    const warn = document.getElementById('adminSchemaWarn');
+    const options = adminMgmtState.can_create || [];
+
+    if (selectEl) {
+        if (!options.length) {
+            selectEl.innerHTML = '<option value="">（無可建立的角色）</option>';
+            selectEl.disabled = true;
+        } else {
+            selectEl.disabled = false;
+            const prev = selectEl.value;
+            selectEl.innerHTML = options
+                .map(r => `<option value="${r}">${getRoleLabel(r)}（${r}）</option>`)
+                .join('');
+            if (options.includes(prev)) selectEl.value = prev;
+        }
+    }
+
+    if (hint) {
+        const myRole = adminMgmtState.my_role || (currentUser && currentUser.role) || 'guest';
+        const list = options.length ? options.map(r => `<b>${escapeHtml(getRoleLabel(r))}</b>`).join('、') : '（無）';
+        hint.innerHTML = `你目前是 <b>${escapeHtml(getRoleLabel(myRole))}</b>，可建立：${list}。` +
+            (adminMgmtState.can_edit_roles
+                ? '你是網站擁有者，可調整任何人的角色。'
+                : '角色調整僅限網站擁有者。');
+    }
+
+    if (warn) {
+        if (adminMgmtState.schema_ready === false) {
+            warn.textContent = '⚠️ 資料庫尚未執行 v2.12.0 migration，「停用帳號／最後登入時間／日誌標記」暫不可用；請通知網站擁有者執行 migrations/2026-09-25-v2.12.0-user-management.sql。';
+            warn.classList.remove('hidden');
+        } else {
+            warn.classList.add('hidden');
+        }
+    }
+}
+
 async function fetchAdminList() {
     const listEl = document.getElementById('adminList');
+    if (!listEl) return;
     listEl.innerHTML = '<p class="text-slate-400 text-xs py-2">載入帳號清單中...</p>';
 
     try {
         const res = await customFetch('/api/admin/users');
-        if (!res.ok) throw new Error('無法取得帳號資料');
-        const users = await res.json();
+        const data = await apiResult(res);
 
-        if (!users || users.length === 0) {
-            listEl.innerHTML = '<p class="text-slate-400 text-xs py-2">目前沒有其他帳號</p>';
-            return;
-        }
+        adminMgmtState = {
+            users: data.users || [],
+            can_create: data.can_create || [],
+            can_edit_roles: !!data.can_edit_roles,
+            my_role: data.my_role || null,
+            schema_ready: data.schema_ready !== false
+        };
 
-        listEl.innerHTML = users.map(u => `
-            <div class="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded text-xs">
-                <div class="flex items-center gap-2">
-                    <span class="font-bold text-slate-700">${escapeHtml(u.username)}</span>
-                    ${getRoleBadge(u.role, u.username)}
-                </div>
-                ${canDeleteAdmin(u) ? `
-                    <button data-action="delete-admin" data-username="${escapeHtml(u.username)}" class="text-red-600 hover:text-red-800 text-[11px] font-medium transition px-1.5 py-0.5 rounded hover:bg-red-50">
-                        刪除
-                    </button>
-                ` : ''}
-            </div>
-        `).join('');
+        renderRoleSelectOptions();
+        renderAdminList();
     } catch (err) {
         listEl.innerHTML = `<p class="text-red-500 text-xs py-2">載入失敗：${escapeHtml(err.message)}</p>`;
     }
+}
+
+function renderAdminList() {
+    const listEl = document.getElementById('adminList');
+    if (!listEl) return;
+    const users = adminMgmtState.users;
+
+    if (!users || users.length === 0) {
+        listEl.innerHTML = '<p class="text-slate-400 text-xs py-2">目前沒有帳號</p>';
+        return;
+    }
+
+    const allRoles = ['user', 'test', 'admin', 'super_admin', 'web_owner'];
+
+    listEl.innerHTML = users.map(u => {
+        const roleSelect = u.can_change_role
+            ? `<select data-action="change-role" data-id="${u.id}" data-username="${escapeHtml(u.username)}"
+                    title="調整角色（僅網站擁有者）"
+                    class="text-[11px] px-1.5 py-1 border border-slate-300 rounded bg-white">
+                    ${allRoles.map(r => `<option value="${r}" ${r === u.role ? 'selected' : ''}>${getRoleLabel(r)}</option>`).join('')}
+               </select>`
+            : '';
+
+        const buttons = u.can_manage
+            ? `
+                <button data-action="reset-password" data-id="${u.id}" data-username="${escapeHtml(u.username)}"
+                    class="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 transition">重設密碼</button>
+                <button data-action="rename-user" data-id="${u.id}" data-username="${escapeHtml(u.username)}"
+                    class="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 transition">改帳號名</button>
+                <button data-action="toggle-active" data-id="${u.id}" data-username="${escapeHtml(u.username)}" data-active="${u.is_active}"
+                    class="text-[11px] px-1.5 py-0.5 rounded ${u.is_active ? 'bg-amber-100 hover:bg-amber-200 text-amber-800' : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800'} transition">
+                    ${u.is_active ? '停用' : '啟用'}
+                </button>
+                <button data-action="delete-admin" data-id="${u.id}" data-username="${escapeHtml(u.username)}"
+                    class="text-[11px] px-1.5 py-0.5 rounded bg-red-100 hover:bg-red-200 text-red-700 transition">刪除</button>
+              `
+            : '';
+
+        const lastLogin = u.last_login_at
+            ? `最後登入 ${new Date(u.last_login_at).toLocaleDateString()}`
+            : '尚未登入紀錄';
+
+        return `
+            <div class="p-2.5 bg-slate-50 border border-slate-200 rounded text-xs space-y-1.5">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <div class="flex items-center gap-1.5 flex-wrap min-w-0">
+                        <span class="font-bold text-slate-700 break-all">${escapeHtml(u.username)}</span>
+                        ${getRoleBadge(u.role, u.username)}
+                        ${u.is_active ? '' : '<span class="bg-red-100 text-red-700 text-[10px] px-1.5 py-0.5 rounded">已停用</span>'}
+                        ${u.is_self ? '<span class="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0.5 rounded">你自己</span>' : ''}
+                    </div>
+                    <span class="text-[10px] text-slate-400">${escapeHtml(lastLogin)}</span>
+                </div>
+                ${(roleSelect || buttons) ? `<div class="flex items-center gap-1.5 flex-wrap">${roleSelect}${buttons}</div>` : ''}
+            </div>
+        `;
+    }).join('');
 }
 
 async function handleAddAdmin(e) {
@@ -2979,28 +3320,105 @@ async function handleAddAdmin(e) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password, role })
         });
+        const data = await apiResult(res);
 
-        if (!res.ok) throw new Error('新增失敗');
-        alert('✅ 新增管理員成功！');
+        alert('✅ ' + (data.message || '帳號建立成功！'));
         document.getElementById('newAdminUser').value = '';
         document.getElementById('newAdminPass').value = '';
-        fetchAdminList();
+        await fetchAdminList();
     } catch (err) {
-        alert('新增失敗：' + err.message);
+        alert('❌ 建立失敗：' + err.message);
     }
 }
 
-async function deleteAdmin(username) {
-    if (!confirm(`確定要刪除管理員帳號「${username}」嗎？`)) return;
+async function patchAdminUser(id, body) {
+    const res = await customFetch(`/api/admin/users/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    return apiResult(res);
+}
+
+async function deleteAdmin(idOrName, label) {
+    const name = label || idOrName;
+    if (!confirm(`確定要刪除帳號「${name}」嗎？此動作無法復原。`)) return;
 
     try {
-        const res = await customFetch(`/api/admin/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error('刪除失敗');
-        alert('✅ 已成功刪除該帳號！');
-        fetchAdminList();
+        const res = await customFetch(`/api/admin/users/${encodeURIComponent(idOrName)}`, { method: 'DELETE' });
+        const data = await apiResult(res);
+        alert('✅ ' + (data.message || '帳號已刪除'));
+        await fetchAdminList();
     } catch (err) {
-        alert('刪除失敗：' + err.message);
+        alert('❌ 刪除失敗：' + err.message);
     }
+}
+
+async function handleAdminListAction(ev) {
+    const el = ev.target.closest('[data-action]');
+    if (!el) return;
+
+    const action = el.dataset.action;
+    const id = el.dataset.id;
+    const username = el.dataset.username || '';
+
+    try {
+        if (action === 'change-role') {
+            const role = el.value;
+            if (!confirm(`確定要把「${username}」的角色改為 ${getRoleLabel(role)}？`)) {
+                await fetchAdminList();
+                return;
+            }
+            const data = await patchAdminUser(id, { role });
+            alert('✅ ' + (data.message || '角色已更新'));
+            await fetchAdminList();
+            return;
+        }
+
+        if (action === 'reset-password') {
+            const pw = prompt(`為「${username}」設定新密碼（6～64 個英文字母或數字）：`);
+            if (pw === null || pw === '') return;
+            const data = await patchAdminUser(id, { password: pw });
+            alert('✅ ' + (data.message || '密碼已重設'));
+            return;
+        }
+
+        if (action === 'rename-user') {
+            const nu = prompt(`「${username}」的新帳號名稱（3～20 個英文字母、數字或底線）：`, username);
+            if (nu === null || nu.trim() === '' || nu.trim() === username) return;
+            const data = await patchAdminUser(id, { username: nu.trim() });
+            alert('✅ ' + (data.message || '帳號名稱已更新'));
+            await fetchAdminList();
+            return;
+        }
+
+        if (action === 'toggle-active') {
+            const wantActive = el.dataset.active !== 'true';
+            if (!confirm(`確定要${wantActive ? '啟用' : '停用'}「${username}」嗎？`)) return;
+            const data = await patchAdminUser(id, { is_active: wantActive });
+            alert('✅ ' + (data.message || '已更新帳號狀態'));
+            await fetchAdminList();
+            return;
+        }
+
+        if (action === 'delete-admin') {
+            await deleteAdmin(id, username);
+        }
+    } catch (err) {
+        alert('❌ 操作失敗：' + err.message);
+        await fetchAdminList();
+    }
+}
+
+function bindAdminListEvents() {
+    const listEl = document.getElementById('adminList');
+    if (!listEl || listEl.dataset.bound === '1') return;
+    listEl.dataset.bound = '1';
+    listEl.addEventListener('click', handleAdminListAction);
+    listEl.addEventListener('change', (ev) => {
+        const el = ev.target.closest('[data-action="change-role"]');
+        if (el) handleAdminListAction(ev);
+    });
 }
 
 async function openTrashModal() {

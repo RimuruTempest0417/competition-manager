@@ -115,8 +115,21 @@
         return { rows: cleaned, delimiter };
     }
 
+    // v2.12.0 安全性：避免 CSV 公式注入（試算表會把 =、+、-、@ 開頭的內容當成公式執行）
+    // 純負數（-12、-3.5）維持原樣，其餘一律加上單引號，讓試算表視為文字。
+    const FORMULA_RISK = /^[=+@\t\r]/;
+    const PURE_NEGATIVE_NUMBER = /^-\d+(\.\d+)?$/;
+
+    function sanitizeCell(raw) {
+        const s = raw === undefined || raw === null ? '' : String(raw);
+        if (!s) return s;
+        if (PURE_NEGATIVE_NUMBER.test(s)) return s;
+        if (FORMULA_RISK.test(s) || s.startsWith('-')) return "'" + s;
+        return s;
+    }
+
     function escapeCell(value) {
-        const s = value === undefined || value === null ? '' : String(value);
+        const s = sanitizeCell(value);
         return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     }
 

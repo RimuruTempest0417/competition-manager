@@ -24,6 +24,10 @@ function matches(row, params) {
             if (row[key] !== true) return false;
         } else if (rawValue === 'is.false') {
             if (row[key] !== false) return false;
+        } else if (rawValue.startsWith('lt.')) {
+            if (!(String(row[key]) < rawValue.slice(3))) return false;
+        } else if (rawValue.startsWith('gt.')) {
+            if (!(String(row[key]) > rawValue.slice(3))) return false;
         }
     }
     return true;
@@ -147,11 +151,16 @@ function startFakeSupabase(state, options = {}) {
 
                 if (req.method === 'DELETE') {
                     const targets = rows.filter((r) => matches(r, params));
+                    const removed = [];
                     targets.forEach((r) => {
                         const i = rows.indexOf(r);
-                        if (i >= 0) rows.splice(i, 1);
+                        if (i >= 0) {
+                            rows.splice(i, 1);
+                            removed.push(r);
+                        }
                     });
-                    return send(200, []);
+                    // 有要求 representation 時回傳被刪除的列（PostgREST delete().select() 的行為）
+                    return send(200, wantsRepresentation ? removed : []);
                 }
 
                 send(405, { message: 'method not allowed' });

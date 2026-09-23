@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.11.1</title>
+    <title>比賽管理系統 v2.12.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -35,7 +35,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2 cm-app-title">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.11.1)</p>
+                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.12.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
@@ -97,10 +97,16 @@
                             📥 匯入 / 匯出 CSV
                         </button>
 
-                        <!-- 超級管理員/Web Owner 專屬：帳號管理 -->
+                        <!-- 管理員以上：使用者管理（v2.12.0） -->
                         <button id="adminMgmtBtn"
                             class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
-                            ⚙️ 帳號管理
+                            👥 使用者管理
+                        </button>
+
+                        <!-- 管理員以上：推播發送紀錄（v2.12.0） -->
+                        <button id="pushLogsBtn"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                            📤 推播紀錄
                         </button>
 
                         <div id="menuDivider" class="hidden border-t border-slate-100 my-1"></div>
@@ -591,6 +597,31 @@
                 </h3>
                 <button id="closeErrorModalBtn" class="text-slate-400 hover:text-slate-600">✕</button>
             </div>
+
+            <div id="errorLogHealth"
+                class="hidden text-[11px] text-red-800 bg-red-50 border border-red-200 rounded-lg p-2.5"></div>
+
+            <div class="flex flex-wrap items-center gap-2 text-[11px]">
+                <input type="search" id="errorLogSearch" placeholder="搜尋訊息／類型／路徑…"
+                    class="flex-1 min-w-[10rem] px-2.5 py-1.5 border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500">
+                <select id="errorLogSeverity" class="px-2 py-1.5 border border-slate-300 rounded focus:outline-none">
+                    <option value="">全部等級</option>
+                    <option value="error">錯誤</option>
+                    <option value="warn">警告</option>
+                    <option value="info">資訊</option>
+                </select>
+                <label class="flex items-center gap-1 text-slate-600 select-none">
+                    <input type="checkbox" id="errorLogUnresolved" class="rounded border-slate-300"> 只看未處理
+                </label>
+                <button id="errorLogRefreshBtn"
+                    class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition">↻ 重新整理</button>
+                <button id="errorLogExportBtn"
+                    class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition">⬇ 匯出 CSV</button>
+                <button id="errorLogCleanupBtn"
+                    class="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded transition">🧹 清理 30 天前</button>
+            </div>
+
+            <div id="errorLogSummary" class="text-[11px] text-slate-500"></div>
             <div id="errorLogList" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs font-mono"></div>
             <div class="flex justify-end pt-3 border-t">
                 <button id="closeErrorModalBtn2"
@@ -600,38 +631,60 @@
     </div>
 
     <!-- 彈出視窗 4：帳號管理 Modal (超級管理員專屬) -->
+    <!-- 彈出視窗：推播發送紀錄（v2.12.0） -->
+    <div id="pushLogsModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800">📤 推播發送紀錄</h3>
+                <button id="closePushLogsBtn" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <p class="text-[11px] text-slate-500">系統每次自動發送的推播都會留下紀錄（同一賽事同一類型只送一次）。</p>
+            <div id="pushLogsList" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs"></div>
+            <div class="flex justify-end pt-3 border-t">
+                <button id="closePushLogsBtn2"
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition">關閉</button>
+            </div>
+        </div>
+    </div>
+
     <div id="adminModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-6 max-h-90vh modal-scroll">
             <div class="flex justify-between items-center border-b pb-3">
-                <h3 class="text-lg font-bold text-slate-800">⚙️ 管理員帳號維護</h3>
+                <h3 class="text-lg font-bold text-slate-800">👥 使用者管理</h3>
                 <button id="closeAdminModalBtn" class="text-slate-400 hover:text-slate-600">✕</button>
             </div>
 
-            <!-- 新增管理員 -->
+            <div id="adminRoleHint" class="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2.5"></div>
+            <div id="adminSchemaWarn"
+                class="hidden text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5"></div>
+
+            <!-- 建立帳號 -->
             <form id="addAdminForm" class="space-y-3 bg-slate-50 p-4 rounded-lg border border-slate-200">
-                <h4 class="text-xs font-bold text-slate-700 uppercase">新增管理員帳號</h4>
-                <div class="grid grid-cols-2 gap-2">
-                    <input type="text" id="newAdminUser" placeholder="帳號" required
+                <h4 class="text-xs font-bold text-slate-700 uppercase">建立新帳號</h4>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input type="text" id="newAdminUser" placeholder="帳號（3～20 英數）" required
                         class="px-3 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
-                    <input type="password" id="newAdminPass" placeholder="密碼" required
+                    <input type="password" id="newAdminPass" placeholder="密碼（6～64 英數）" required
                         class="px-3 py-1.5 border border-slate-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
-                </div>
-                <div class="flex justify-between items-center pt-1">
                     <select id="newAdminRole"
-                        class="px-2 py-1.5 border border-slate-300 rounded text-xs focus:outline-none">
-                        <option value="admin">一般管理員 (admin)</option>
-                        <option value="super_admin">超級管理員 (super_admin)</option>
-                    </select>
+                        class="px-2 py-1.5 border border-slate-300 rounded text-xs focus:outline-none"></select>
+                </div>
+                <div class="flex justify-end pt-1">
                     <button type="submit"
-                        class="bg-emerald-600 text-white text-xs font-medium px-3 py-1.5 rounded hover:bg-emerald-700 transition">新增帳號</button>
+                        class="bg-emerald-600 text-white text-xs font-medium px-3 py-1.5 rounded hover:bg-emerald-700 transition">＋ 建立帳號</button>
                 </div>
             </form>
 
             <!-- 帳號清單 -->
             <div>
-                <h4 class="text-xs font-bold text-slate-700 uppercase mb-2">現有帳號列表</h4>
-                <div id="adminList" class="space-y-2 max-h-48 overflow-y-auto pr-1"></div>
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="text-xs font-bold text-slate-700 uppercase">現有帳號</h4>
+                    <button id="refreshAdminListBtn"
+                        class="text-[11px] text-slate-500 hover:text-slate-700 transition">↻ 重新整理</button>
+                </div>
+                <div id="adminList" class="space-y-2 max-h-72 overflow-y-auto pr-1"></div>
             </div>
 
             <div class="flex justify-end pt-2 border-t">
