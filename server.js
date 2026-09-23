@@ -1803,14 +1803,45 @@ async function runPushDigest(now) {
 // 未設定 CRON_SECRET 時，為避免被有心人反覆觸發，限制每 10 分鐘一次。
 let lastCronRun = 0;
 
-app.get('/api/cron/reminders', async (req, res) => {
-    const secret = process.env.CRON_SECRET;
-    if (secret) {
-        const provided = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-        if (provided !== secret) return res.status(401).json({ error: '未授權' });
-    } else if (Date.now() - lastCronRun < 10 * 60 * 1000) {
-        return res.status(429).json({ error: '呼叫過於頻繁（未設定 CRON_SECRET 時每 10 分鐘一次）' });
+// 固定時間比較，避免以回應時間推測密鑰
+function safeStringEqual(a, b) {
+    const A = Buffer.from(String(a));
+    const B = Buffer.from(String(b));
+    if (A.length !== B.length) return false;
+    return crypto.timingSafeEqual(A, B);
+}
+
+// cron 端點授權判斷（純函式，方便單元測試）
+// 重要：未設定 CRON_SECRET 時在 production 必須「拒絕」而不是放行，
+// 否則任何人只要對 /api/cron/reminders 發一個請求就能觸發推播工作。
+function cronAuthorization({ secret, providedHeader, isProductionEnv, lastRunMs, nowMs }) {
+    const provided = String(providedHeader || '').replace(/^Bearer\s+/i, '');
+    if (!secret) {
+        if (isProductionEnv) {
+            return {
+                ok: false,
+                status: 503,
+                error: '未設定 CRON_SECRET，已停用自動推播端點。請在部署環境（Vercel → Settings → Environment Variables）加入 CRON_SECRET 後重新部署。'
+            };
+        }
+        if (lastRunMs && nowMs - lastRunMs < 10 * 60 * 1000) {
+            return { ok: false, status: 429, error: '呼叫過於頻繁（未設定 CRON_SECRET 時每 10 分鐘一次）' };
+        }
+        return { ok: true };
     }
+    if (!safeStringEqual(provided, secret)) return { ok: false, status: 401, error: '未授權' };
+    return { ok: true };
+}
+
+app.get('/api/cron/reminders', async (req, res) => {
+    const auth = cronAuthorization({
+        secret: process.env.CRON_SECRET,
+        providedHeader: req.headers.authorization,
+        isProductionEnv: isProduction,
+        lastRunMs: lastCronRun,
+        nowMs: Date.now()
+    });
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
     lastCronRun = Date.now();
 
     try {
@@ -2033,5 +2064,8 @@ app.__test__ = {
     verifyPassword,
     allowRegisterAttempt,
     USERNAME_RE,
-    PASSWORD_RE
+    PASSWORD_RE,
+    // v2.11.1：cron 端點授權（未設定 CRON_SECRET 時 production 必須拒絕）
+    cronAuthorization,
+    safeStringEqual
 };

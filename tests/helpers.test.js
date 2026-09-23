@@ -116,3 +116,37 @@ test('isMissingColumnError：辨識尚未執行 migration 的資料庫錯誤', (
     assert.strictEqual(isMissingColumnError(new Error('network timeout')), false);
     assert.strictEqual(isMissingColumnError(null), false);
 });
+
+/* ---------- v2.11.1：cron 端點授權（正式站對任意請求都不得放行） ---------- */
+
+const { cronAuthorization } = app.__test__;
+
+test('cronAuthorization：production 未設定 CRON_SECRET 時必須拒絕（503，不可放行）', () => {
+    const res = cronAuthorization({
+        secret: undefined,
+        providedHeader: undefined,
+        isProductionEnv: true,
+        lastRunMs: 0,
+        nowMs: Date.now()
+    });
+    assert.strictEqual(res.ok, false, '未設定密鑰時正式站絕不能放行');
+    assert.strictEqual(res.status, 503);
+    assert.match(res.error, /CRON_SECRET/);
+});
+
+test('cronAuthorization：設定 CRON_SECRET 後需帶正確權杖，錯誤權杖 401', () => {
+    const base = { secret: 's3cret-value', isProductionEnv: true, lastRunMs: 0, nowMs: Date.now() };
+    assert.strictEqual(cronAuthorization({ ...base, providedHeader: 'Bearer s3cret-value' }).ok, true);
+    assert.strictEqual(cronAuthorization({ ...base, providedHeader: 'Bearer s3cret-value'.toUpperCase() }).ok, false, '大小寫不同即視為不同權杖');
+    assert.strictEqual(cronAuthorization({ ...base, providedHeader: 'Bearer wrong' }).status, 401);
+    assert.strictEqual(cronAuthorization({ ...base, providedHeader: undefined }).status, 401);
+});
+
+test('cronAuthorization：開發環境未設定密鑰時放行，但 10 分鐘內只允許一次', () => {
+    const now = Date.now();
+    assert.strictEqual(cronAuthorization({ isProductionEnv: false, lastRunMs: 0, nowMs: now }).ok, true);
+    const second = cronAuthorization({ isProductionEnv: false, lastRunMs: now, nowMs: now + 1000 });
+    assert.strictEqual(second.ok, false);
+    assert.strictEqual(second.status, 429);
+    assert.strictEqual(cronAuthorization({ isProductionEnv: false, lastRunMs: now, nowMs: now + 11 * 60 * 1000 }).ok, true);
+});

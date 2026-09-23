@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.11.0
+# 🏆 比賽管理系統 (Competition Manager) v2.11.1
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -159,6 +159,12 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.11.1 (2026-09-24) - 安全性修正：自動推播端點未設定密鑰時必須拒絕
+
+- **修正 — `/api/cron/reminders` 在未設定 `CRON_SECRET` 時會直接放行**：原本的邏輯是「有設密鑰才驗證，沒設就只做 10 分鐘節流」，於是**任何人都能用一個請求觸發推播工作**。現在抽出純函式 `cronAuthorization()` 並改為：**未設定 `CRON_SECRET` 時，production 一律回 503 並提示去設定環境變數**（開發環境仍允許，但保留 10 分鐘節流）；有設定時以 `crypto.timingSafeEqual` 固定時間比較，錯的權杖回 401。
+- **需要動作**：在 Vercel → Settings → Environment Variables 加入 `CRON_SECRET`（可用 `openssl rand -hex 32` 產生或 Vercel 的 Generate），Vercel Cron 會自動以 `Authorization: Bearer $CRON_SECRET` 呼叫，設定後推播排程即可正常運作。
+- **Testing**：`npm test` 共 **80 項**全綠（新增 3 項 `cronAuthorization` 單元測試：production 未設定密鑰必須拒絕、錯誤權杖 401、開發環境 10 分鐘節流）。
 
 ### v2.11.0 (2026-09-24) - 手機介面優化、PWA 與 iOS 推播、權限修復
 
