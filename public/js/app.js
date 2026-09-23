@@ -260,6 +260,28 @@ function openPosterModal(id) {
 
     document.getElementById('posterModal').classList.remove('hidden');
     renderPosterCanvas(item);
+    syncPosterSource(item);
+}
+
+// v2.10.0：若管理員手動上傳過海報，分享視窗改顯示該海報（取代自動生成款式）
+function syncPosterSource(item) {
+    const image = document.getElementById('posterImage');
+    const canvas = document.getElementById('posterCanvas');
+    const hint = document.getElementById('posterSourceHint');
+    if (!image || !canvas) return;
+
+    const hasCustom = !!(item && item.poster_updated_at);
+    if (hasCustom) {
+        image.src = `/api/competitions/${item.id}/poster?v=${Date.parse(item.poster_updated_at) || Date.now()}`;
+        image.classList.remove('hidden');
+        canvas.classList.add('hidden');
+        if (hint) hint.innerText = '🖼️ 此海報由發佈者手動上傳';
+    } else {
+        image.removeAttribute('src');
+        image.classList.add('hidden');
+        canvas.classList.remove('hidden');
+        if (hint) hint.innerText = '自動生成海報（發佈者未上傳自訂海報）';
+    }
 }
 
 function closePosterModal() {
@@ -658,6 +680,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     document.getElementById('cancelEditBtn')?.addEventListener('click', clearTeamFormFields);
+    document.getElementById('cancelEditBtn')?.addEventListener('click', clearPendingPoster);
+
+    // v2.10.0：海報上傳與推播訂閱
+    document.getElementById('posterFile')?.addEventListener('change', handlePosterFileChange);
+    document.getElementById('posterRemoveBtn')?.addEventListener('click', handlePosterRemove);
+    document.getElementById('pushSubscribeBtn')?.addEventListener('click', handlePushSubscribe);
+    document.getElementById('pushUnsubscribeBtn')?.addEventListener('click', handlePushUnsubscribe);
+    document.getElementById('pushTestBtn')?.addEventListener('click', handlePushTest);
+    document.getElementById('notifyBtn')?.addEventListener('click', () => { refreshPushStatus(); });
     document.getElementById('closeTeamModalBtn')?.addEventListener('click', closeTeamModal);
     document.getElementById('closeTeamModalBtn2')?.addEventListener('click', closeTeamModal);
     document.getElementById('createTeamBtn')?.addEventListener('click', createTeam);
@@ -1115,7 +1146,7 @@ async function fetchMyRegistrations() {
 }
 
 function openRegisterModal(id) {
-    const item = allCompetitions.find((c) => c.id === id);
+    const item = allCompetitions.find((c) => String(c.id) === String(id));
     if (!item) return;
 
     // 需求：訪客點「報名」必須先登入
@@ -1267,7 +1298,7 @@ function setTeamMsg(message, type) {
 }
 
 async function openTeamModal(id) {
-    const item = allCompetitions.find((c) => c.id === id);
+    const item = allCompetitions.find((c) => String(c.id) === String(id));
     if (!item) return;
     if (!currentUser) return openLoginModal('請先登入。');
     if (!isAdminUser()) {
@@ -1456,6 +1487,215 @@ let notifyWatcher = null;
 
 function isSubscribed(id) {
     return !!(window.CMNotify && CMNotify.isSubscribed(id));
+}
+
+async function refreshPushStatus() {
+    const el = document.getElementById('pushStatus');
+    if (!el) return;
+    const notes = window.CMNotify;
+    if (!notes || !notes.pushSupported || !notes.pushSupported()) {
+        el.className = 'text-xs p-2.5 rounded-lg border bg-slate-50 border-slate-200 text-slate-500';
+        el.innerText = '此瀏覽器不支援推播訂閱（需要 HTTPS 與支援 Push 的瀏覽器）。';
+        ['pushSubscribeBtn', 'pushTestBtn', 'pushUnsubscribeBtn'].forEach((id) => {
+            document.getElementById(id)?.setAttribute('disabled', 'disabled');
+        });
+        return;
+    }
+    ['pushSubscribeBtn', 'pushTestBtn', 'pushUnsubscribeBtn'].forEach((id) => {
+        document.getElementById(id)?.removeAttribute('disabled');
+    });
+    try {
+        const subscription = await notes.currentSubscription();
+        if (subscription) {
+            el.className = 'text-xs p-2.5 rounded-lg border bg-emerald-50 border-emerald-200 text-emerald-700';
+            el.innerText = '✅ 已開啟推播訂閱：即使完全關閉網頁，也能收到新賽事與開賽提醒。';
+        } else {
+            el.className = 'text-xs p-2.5 rounded-lg border bg-slate-50 border-slate-200 text-slate-600';
+            el.innerText = '尚未開啟推播訂閱（未開啟時，提醒只在網頁開啟時跳出）。';
+        }
+    } catch (err) {
+        el.className = 'text-xs p-2.5 rounded-lg border bg-amber-50 border-amber-200 text-amber-700';
+        el.innerText = '無法取得推播狀態：' + err.message;
+    }
+}
+
+async function handlePushSubscribe() {
+    const notes = window.CMNotify;
+    if (!notes) return;
+    try {
+        await notes.subscribe();
+        await refreshPushStatus();
+        notifyWatcher && notifyWatcher.tick();
+        alert('已開啟推播訂閱！之後即使關閉網頁，也能收到新賽事與開賽提醒。');
+    } catch (err) {
+        alert('訂閱失敗：' + err.message);
+    }
+}
+
+async function handlePushUnsubscribe() {
+    const notes = window.CMNotify;
+    if (!notes) return;
+    if (!confirm('確定要關閉這台裝置的推播訂閱嗎？')) return;
+    try {
+        const result = await notes.unsubscribe();
+        await refreshPushStatus();
+        alert(result.removed ? '已關閉推播訂閱' : '這台裝置目前沒有推播訂閱');
+    } catch (err) {
+        alert('關閉失敗：' + err.message);
+    }
+}
+
+async function handlePushTest() {
+    const notes = window.CMNotify;
+    if (!notes) return;
+    try {
+        const data = await notes.testPush();
+        alert(data.message || '測試推播已送出');
+    } catch (err) {
+        alert('測試失敗：' + err.message);
+    }
+}
+
+/* ==========================================
+   v2.10.0：海報上傳（發佈者手動上傳，取代自動生成）
+   ========================================== */
+let pendingPoster = null;
+
+// 前端先縮圖（最長邊 1600px、JPEG 0.85），避免上傳過大檔案
+function resizeImageFile(file) {
+    return new Promise((resolve, reject) => {
+        if (!file) return reject(new Error('沒有選擇檔案'));
+        if (!/^image\/(jpeg|png|webp)$/.test(file.type || '')) {
+            return reject(new Error('只支援 JPG、PNG 或 WebP 圖片'));
+        }
+        if (file.size > 8 * 1024 * 1024) return reject(new Error('原始圖片過大（上限 8MB）'));
+
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('讀取檔案失敗'));
+        reader.onload = () => {
+            const img = new Image();
+            img.onerror = () => reject(new Error('無法解讀圖片內容'));
+            img.onload = () => {
+                const limit = 1600;
+                const scale = Math.min(1, limit / Math.max(img.width, img.height));
+                const width = Math.max(1, Math.round(img.width * scale));
+                const height = Math.max(1, Math.round(img.height * scale));
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, width, height);
+                ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                resolve({ dataUrl, width, height, bytes: Math.round(((dataUrl.length - 22) * 3) / 4) });
+            };
+            img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+function setPosterHint(message, type) {
+    const el = document.getElementById('posterHint');
+    if (!el) return;
+    el.classList.remove('text-red-600', 'text-emerald-700');
+    if (!message) {
+        el.textContent = '支援 JPG／PNG／WebP，會自動縮圖後上傳（上限 3MB）。未上傳時，分享海報會用自動生成的款式。';
+        return;
+    }
+    el.textContent = message;
+    el.classList.add(type === 'error' ? 'text-red-600' : 'text-emerald-700');
+}
+
+function showCurrentPoster(item) {
+    const preview = document.getElementById('posterPreview');
+    const removeBtn = document.getElementById('posterRemoveBtn');
+    if (!preview) return;
+    const has = !!(item && item.poster_updated_at);
+    if (has) {
+        preview.src = `/api/competitions/${item.id}/poster?v=${Date.parse(item.poster_updated_at) || Date.now()}`;
+        preview.classList.remove('hidden');
+        removeBtn?.classList.remove('hidden');
+        setPosterHint('目前已使用手動上傳的海報，重新選擇檔案即可取代。', 'ok');
+    } else {
+        preview.removeAttribute('src');
+        preview.classList.add('hidden');
+        removeBtn?.classList.add('hidden');
+        setPosterHint(null);
+    }
+}
+
+function clearPendingPoster() {
+    pendingPoster = null;
+    const file = document.getElementById('posterFile');
+    if (file) file.value = '';
+    const preview = document.getElementById('posterPreview');
+    if (preview) {
+        preview.removeAttribute('src');
+        preview.classList.add('hidden');
+    }
+    document.getElementById('posterRemoveBtn')?.classList.add('hidden');
+    setPosterHint(null);
+}
+
+async function handlePosterFileChange(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    setPosterHint('圖片處理中…');
+    try {
+        const result = await resizeImageFile(file);
+        if (result.bytes > 3 * 1024 * 1024) throw new Error('縮圖後仍超過 3MB，請改用較小的圖片');
+        pendingPoster = result;
+        const preview = document.getElementById('posterPreview');
+        if (preview) {
+            preview.src = result.dataUrl;
+            preview.classList.remove('hidden');
+        }
+        document.getElementById('posterRemoveBtn')?.classList.remove('hidden');
+        setPosterHint(`已選擇 ${file.name}（縮圖後 ${result.width}×${result.height}，約 ${Math.round(result.bytes / 1024)}KB），儲存賽事時會一併上傳。`, 'ok');
+    } catch (err) {
+        pendingPoster = null;
+        setPosterHint(err.message, 'error');
+        event.target.value = '';
+    }
+}
+
+async function uploadPoster(competitionId, dataUrl) {
+    const res = await customFetch(`/api/competitions/${competitionId}/poster`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '海報上傳失敗');
+    return data;
+}
+
+async function handlePosterRemove() {
+    const editingId = document.getElementById('editingId').value;
+    const item = allCompetitions.find((c) => String(c.id) === String(editingId));
+
+    // 只是取消這次選擇（尚未儲存）
+    if (pendingPoster || !editingId || !(item && item.poster_updated_at)) {
+        clearPendingPoster();
+        if (item && item.poster_updated_at) showCurrentPoster(item);
+        else setPosterHint('已取消選擇的海報。');
+        return;
+    }
+
+    if (!confirm('確定要移除此賽事的手動海報嗎？（分享將改回自動生成海報）')) return;
+    try {
+        const res = await customFetch(`/api/competitions/${editingId}/poster`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '移除失敗');
+        if (item) delete item.poster_updated_at;
+        clearPendingPoster();
+        fetchCompetitions();
+        alert(data.message || '已移除手動海報');
+    } catch (err) {
+        setPosterHint(err.message, 'error');
+    }
 }
 
 function openNotifyModal() {
@@ -2034,6 +2274,7 @@ function competitionCardHtml(item) {
                     ${categoryBadgeHtml(item)}
                     ${regStatusBadgeHtml(item)}
                     ${item.is_team_event ? '<span class="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded-full font-medium">👥 組隊比賽</span>' : ''}
+                    ${item.poster_updated_at ? '<span class="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full font-medium">🖼️ 自訂海報</span>' : ''}
                     ${getBadgeStatus(item.date, item.end_date)}
                 </div>
                 
@@ -2124,10 +2365,27 @@ async function handleFormSubmit(e) {
             throw new Error(errJson.error || errJson.message || '儲存失敗');
         }
 
+        const saved = await res.json().catch(() => ({}));
+        const savedId = (saved && saved.id) || editingId;
+
         resetForm();
         clearTeamFormFields();
-        fetchCompetitions();
-        alert(editingId ? '比賽更新成功！' : '賽事發佈成功！');
+
+        // v2.10.0：有選海報就先上傳，再重新載入列表
+        let posterError = '';
+        if (pendingPoster && savedId) {
+            try {
+                await uploadPoster(savedId, pendingPoster.dataUrl);
+            } catch (err) {
+                posterError = err.message;
+            }
+        }
+        clearPendingPoster();
+
+        await fetchCompetitions();
+        alert(posterError
+            ? `賽事已儲存，但海報上傳失敗：${posterError}`
+            : (editingId ? '比賽更新成功！' : '賽事發佈成功！'));
     } catch (err) {
         alert('操作失敗：' + err.message);
     }
@@ -2136,6 +2394,9 @@ async function handleFormSubmit(e) {
 function startEdit(id) {
     const item = allCompetitions.find(c => c.id === id);
     if (!item) return;
+
+    pendingPoster = null;
+    showCurrentPoster(item);
 
     document.getElementById('editingId').value = item.id;
     document.getElementById('name').value = item.name || '';
@@ -2163,6 +2424,8 @@ function startEdit(id) {
 function copyCompetition(id) {
     const item = allCompetitions.find(c => c.id === id);
     if (!item) return;
+
+    clearPendingPoster();   // v2.10.0：海報不跟著複製
 
     document.getElementById('editingId').value = '';
     document.getElementById('name').value = `${item.name} (複製)`;

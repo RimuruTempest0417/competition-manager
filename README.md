@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.9.0
+# 🏆 比賽管理系統 (Competition Manager) v2.10.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -19,6 +19,8 @@
 - **日曆檢視模式 (v2.7.0)**：列表頁「📋 列表 / 📅 日曆」切換，月曆格線顯示每日賽事（依分類上色、跨日賽事展開到每一天、超過 3 場顯示「+N 更多」），點日期即看當天完整清單與操作按鈕。純手寫無外部套件（符合 CSP），手機版自動改為顏色圓點，檢視選擇會被記住。
 - **一鍵匯入 / 匯出 CSV (v2.8.0)**：管理員選單「📥 CSV 匯入 / 匯出」——可下載匯入範本、批次匯入（Excel 另存的 CSV 或從 Excel 複製的 Tab 分隔內容，欄位順序不拘、表頭中英文皆可），或將現有賽事一次匯出備份（UTF-8 含 BOM，Excel 直接開啟不亂碼）。匯入前先預覽，重複（同名同日）自動跳過並回報列號。
 - **訊息提醒 (v2.8.0)**：瀏覽器原生通知（Web Notification）。可開啟「新賽事發布通知」，並在任一張賽事卡片按「🔕 訂閱提醒」訂閱該場賽事，開賽前 24 小時內自動跳出提醒。設定與訂閱只存在該裝置的 `localStorage`，不上傳、不需登入；Android 透過 `public/sw.js`（極簡 Service Worker）顯示。
+- **手動上傳海報 (v2.10.0)**：管理員以上可在發佈／編輯表單直接上傳海報（JPG／PNG／WebP），**取代自動生成的海報**；前端會先縮圖（最長邊 1600px、JPEG）再上傳，卡片顯示「🖼️ 自訂海報」徽章，分享海報視窗改顯示上傳的圖。圖片以 base64 存於資料庫並由自家端點 `GET /api/competitions/:id/poster` 提供（**不需要 Supabase Storage，也不必放寬 CSP**），回應帶 `Cache-Control` 與 `nosniff`。移除海報即改回自動生成款式。
+- **推播訂閱服務 (v2.10.0)**：真正的 **Web Push**（VAPID + `web-push`）。在「🔔 通知設定」按「📲 開啟推播訂閱」後，**即使完全關閉網頁**也能收到「新賽事發布」與「開賽前 24 小時」提醒——由伺服器端 `GET /api/cron/reminders`（Vercel Cron 每日執行）推播。VAPID 金鑰由伺服器首次使用時自動產生並存於資料庫 `app_settings`，**私鑰不會出現在程式碼或前端**；同一賽事同一類型只推一次（`push_log` 去重），端點失效（404／410）自動停用該訂閱。未開啟推播時，仍保留原本的網頁開啟時本機提醒。
 - **普通用戶與線上報名 (v2.9.0)**：新增 `user`（普通用戶）角色，任何人可自行註冊帳號。點「📝 報名」時若未登入會先要求登入／註冊，登入後即可報名，並在「📝 我的報名」查看與取消自己的報名。報名開放與否由**後端權威判斷**（開放報名開關、報名截止日、賽事日期、名額上限、重複報名），前端僅同步顯示。
 - **組隊比賽與隊伍編排 (v2.9.0)**：發佈表單可勾選「👥 組隊比賽」並設定每隊人數上限；組隊比賽報名時必須填寫隊伍名稱。管理員以上可在卡片按「👥 報名／隊伍」開啟編排視窗：建立隊伍、把報名者編入或移動隊伍、檢視未編排名單；**刪除隊伍與移除隊員限超級管理員以上**（權限在後端驗證，前端也會依角色隱藏按鈕）。
 - **報名截止與名額上限 (v2.9.0)**：賽事新增「報名截止日」與「名額上限」欄位，額滿或截止後卡片按鈕自動變成「🔒 已額滿 / 🔒 報名已截止」並停用送出，卡片同時顯示「N 人已報名」。
@@ -41,7 +43,8 @@
 - **日曆檢視**：`public/js/calendar.js` 手寫月曆模組（無 FullCalendar 等外部套件，因 CSP 為 `script-src 'self'`），當天清單沿用列表卡片樣板。
 - **身分與權限 (v2.9.0)**：`admin_users.role` 分為 `user`（普通用戶，僅能報名與管理自己的報名）、`admin`（可發佈/編輯/刪除賽事、檢視報名名單、編排隊伍）、`super_admin`（可永久刪除、刪除隊伍與移除隊員）、`web_owner`（最高權限）。JWT 只帶 `sub / username / role`，實際角色一律以資料庫當下內容為準（`ADMIN_ROLES` / `SUPER_ADMIN_ROLES` 白名單），因此「前端的角色字串」不具任何授權效力。
 - **CSV 匯入 / 匯出 (v2.8.0)**：`public/js/csv.js` 為前後端共用的 UMD 模組，內含手寫 RFC4180 解析器（引號內逗號／換行、`""` 跳脫、CRLF、自動判斷逗號／Tab／分號）。前端負責解析上傳檔與預覽，後端負責匯出與匯入的**權威驗證**，兩邊共用同一份規則。
-- **訊息提醒 (v2.8.0)**：`public/js/notify.js` 負責權限、訂閱與提醒判斷（`dueNotifications` 為純函式，附單元測試）；`public/sw.js` 為極簡 Service Worker，只處理顯示通知與點擊聚焦，不做 Web Push 訂閱。
+- **訊息提醒 (v2.8.0) → 推播訂閱 (v2.10.0)**：`public/js/notify.js` 負責權限、訂閱與提醒判斷（`dueNotifications` 為純函式，附單元測試），並於 v2.10.0 加入 Web Push 訂閱（`subscribe` / `unsubscribe` / `testPush`，金鑰向 `GET /api/push/public-key` 取得）。`public/sw.js` 處理 `install` / `activate` / `push` / `notificationclick`：`push` 事件讓通知在網頁關閉時也能顯示。
+- **推播後端 (v2.10.0)**：`web-push`（僅伺服器端依賴，不影響 CSP `script-src 'self'`）；`pushCandidates()`、`pushPayloadFor()`、`competitionStartMs()` 皆為純函式並附單元測試；時區以 `SITE_UTC_OFFSET`（預設 `+08:00`）換算開賽時間。
 
 ### 部署與工具 (Deployment & Tools)
 - **Vercel Serverless Functions**：全站與 API 無伺服器託管部署。
@@ -94,8 +97,11 @@ node server.js
 | `migrations/2026-09-23-v2.7.0-competition-category-tags.sql` | 為 `competitions` 加入 `category`、`tags` 欄位與索引 | v2.7.0 起必須執行，否則無法儲存分類與標籤 |
 
 | `migrations/2026-09-24-v2.9.0-users-registration-teams.sql` | 新增 `registrations`（報名）、`competition_teams`（隊伍）與供 v2.10.0 推播使用的 `push_subscriptions`、`push_log`；為 `competitions` 加入 `is_team_event`、`team_size`、`registration_deadline`、`max_registrations`；放寬 `admin_users.role` 以允許普通用戶 | **v2.9.0 起必須執行**，否則無法註冊帳號／報名／編排隊伍 |
+| `migrations/2026-09-24-v2.10.0-poster-and-push.sql` | 新增 `competition_posters`（海報內容）與 `app_settings`（自動產生的 VAPID 金鑰）；為 `competitions` 加入 `poster_updated_at`；**並修正 v2.9.0 的 RLS 設定**（見下方說明） | **v2.10.0 起必須執行**，否則無法上傳海報與推播訂閱 |
 
-執行方式：Supabase Dashboard → **SQL Editor** → 貼上整份檔案 → **Run**。SQL 為 idempotent（可重複執行），不會刪除任何既有資料。未執行時網站不會壞掉：報名與隊伍端點會回 `503` 並附上「請先執行此 migration」的明確訊息，發佈／編輯賽事（未勾選組隊欄位時）照常運作。
+執行方式：Supabase Dashboard → **SQL Editor** → 貼上整份檔案 → **Run**。SQL 為 idempotent（可重複執行），不會刪除任何既有資料。未執行時網站不會壞掉：報名、隊伍與海報端點會回 `503` 並附上「請先執行此 migration」的明確訊息，發佈／編輯賽事（未勾選組隊／未選海報時）照常運作。
+
+⚠️ **關於 RLS**：本專案的 `SUPABASE_KEY` 是 **anon key**（只存在伺服器端環境變數，前端從不直接連 Supabase）。若對新資料表 `enable row level security` 卻沒有任何 policy，anon key 會**完全無法寫入**，報名與隊伍功能會失敗。因此 `2026-09-24-v2.10.0-poster-and-push.sql` 會把這些新資料表的 RLS 關閉，與既有 `competitions` / `admin_users` 的實際運作方式一致——**存取控制由後端 API 與 JWT 權限中間件負責**。若日後改用 Supabase **service_role key**（僅伺服器端），建議改為開啟 RLS 並搭配 policy，安全性更好。
 
 > 尚未執行時，程式不會壞掉：讀取與其他欄位照常運作，但儲存帶有分類／標籤的賽事時會回傳明確訊息「資料庫尚未加入 category / tags 欄位…」，前端會直接顯示該訊息。
 
@@ -141,6 +147,22 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.10.0 (2026-09-24) - 手動上傳海報、Web Push 推播訂閱
+
+- **Feature — 管理員手動上傳海報（取代自動生成）**：
+  - 發佈／編輯表單新增「🖼️ 手動上傳海報（選填）」：選圖後**前端先縮圖**（最長邊 1600px、轉 JPEG 0.85，實測 2400×1600 的圖縮成 1600×1067／約 29KB）再上傳，附即時預覽與「移除海報」。
+  - 卡片顯示「🖼️ 自訂海報」徽章；**分享海報視窗改為顯示上傳的圖**（沒有自訂海報時仍用原本的 Canvas 自動生成款式），標示「此海報由發佈者手動上傳／自動生成海報」。
+  - 圖片以 base64 存於 `competition_posters`，由同源端點 `GET /api/competitions/:id/poster` 提供（`Cache-Control: public, max-age=86400`、`X-Content-Type-Options: nosniff`）。**選擇資料庫而非 Supabase Storage 的原因**：現有金鑰是 anon key（無法建立 bucket），且同源提供可**維持嚴格 CSP `img-src 'self'`**，不必新增任何外部網域。
+  - 驗證：只接受 JPG／PNG／WebP（**明確拒絕 SVG**，避免腳本內容）、解碼後上限 3MB（超過回 `413`）、需管理員以上、寫入稽核日誌。
+- **Feature — Web Push 推播訂閱服務**：
+  - 「🔔 通知設定」新增「📲 推播訂閱」區塊：開啟訂閱／關閉訂閱／傳送推播測試，並即時顯示訂閱狀態；不支援 Push 的瀏覽器會停用按鈕並說明原因。
+  - 開啟後**即使完全關閉網頁**也能收到通知：`public/sw.js` 新增 `push` 事件處理，伺服器端 `GET /api/cron/reminders` 由 **Vercel Cron 每日執行**（`vercel.json` 已設定），發送「🆕 新賽事」與「⏰ 即將開賽（24 小時內）」推播。
+  - **VAPID 金鑰自動管理**：優先讀環境變數，否則首次使用時由伺服器產生並存進 `app_settings`——私鑰不寫進程式碼、不進 Git、也不需要手動設定環境變數。
+  - 防擾與清理：`push_log` 對「同一賽事×同一類型」去重；端點失效（HTTP 404／410）自動標記 `is_active=false`；未設定 `CRON_SECRET` 時 cron 端點限制每 10 分鐘一次（Vercel 會自動帶上 `CRON_SECRET`）。
+- **修正 — v2.9.0 migration 的 RLS**：`enable row level security` 對 anon key 會造成新資料表完全無法寫入。v2.10.0 的 migration 會關閉這些資料表的 RLS（可安全地對已執行過 v2.9.0 的資料庫重複執行）。
+- **依賴**：新增 `web-push`（僅伺服器端）。
+- **Testing**：`npm test` 共 **74 項**全綠（新增海報／推播單元測試與 API 端到端測試，含授權、格式、大小、訂閱、去重與 cron 驗證）；headless Chrome 實測 v2.10.0 **29 項**全綠，並通過 v2.9.0（50）、v2.8.0（47）、v2.7.0（48）回歸。
 
 ### v2.9.0 (2026-09-24) - 普通用戶報名、組隊比賽與隊伍編排
 

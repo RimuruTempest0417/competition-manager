@@ -1405,6 +1405,426 @@ app.delete('/api/teams/:id/members/:registrationId', requireSuperAdmin, async (r
     }
 });
 
+// ==========================================
+// v2.10.0：賽事海報（手動上傳，取代自動生成）與 Web Push 推播訂閱
+// ==========================================
+const POSTER_MAX_BYTES = 3 * 1024 * 1024;             // 3MB（前端會先縮圖，通常僅數百 KB）
+const POSTER_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const POSTER_HINT = '資料庫尚未加入海報欄位，請先在 Supabase SQL Editor 執行 migrations/2026-09-24-v2.10.0-poster-and-push.sql';
+const PUSH_HINT = '資料庫尚未加入推播資料表（app_settings / push_subscriptions / push_log），請先執行 migrations/2026-09-24-v2.10.0-poster-and-push.sql';
+// 站台時區偏移：用於判斷「開賽前 24 小時」。可用 SITE_UTC_OFFSET 覆寫（例如 +08:00）。
+const SITE_UTC_OFFSET = process.env.SITE_UTC_OFFSET || '+08:00';
+
+// ---------- 小工具（純函式，可單元測試）----------
+
+// 解析 data URL → { mime, buffer }；格式不符或非允許的圖片類型回 null
+function parseImageDataUrl(dataUrl) {
+    if (typeof dataUrl !== 'string') return null;
+    const match = dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/i);
+    if (!match) return null;
+    const mime = match[1].toLowerCase();
+    if (!POSTER_MIME.has(mime)) return null;
+    const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64');
+    if (!buffer.length) return null;
+    return { mime: mime, buffer: buffer };
+}
+
+// 賽事開賽時間（毫秒）。日期缺失回 null；時間缺失以 00:00 計。
+function competitionStartMs(item, offset) {
+    if (!item || !item.date) return null;
+    const date = String(item.date).slice(0, 10);
+    const rawTime = item.time ? String(item.time).slice(0, 5) : '00:00';
+    const time = /^\d{2}:\d{2}$/.test(rawTime) ? rawTime : '00:00';
+    const ms = Date.parse(`${date}T${time}:00${offset || SITE_UTC_OFFSET}`);
+    return Number.isNaN(ms) ? null : ms;
+}
+
+// 需要推播的項目（純函式）：開賽前 24 小時內＝reminder；上次執行後新發布＝new
+function pushCandidates(competitions, options) {
+    const opts = options || {};
+    const nowMs = opts.now instanceof Date ? opts.now.getTime() : Number(opts.now) || Date.now();
+    const windowMs = opts.windowMs || 24 * 3600 * 1000;
+    const lastRunMs = opts.lastRunMs || 0;
+    const done = opts.done || new Set();
+    const out = [];
+
+    (competitions || []).forEach((item) => {
+        if (!item || item.is_deleted) return;
+        const key = (kind) => `${item.id}:${kind}`;
+
+        const start = competitionStartMs(item, opts.offset);
+        if (start !== null && start >= nowMs && start - nowMs <= windowMs && !done.has(key('reminder'))) {
+            out.push({ kind: 'reminder', competition: item, startMs: start });
+        }
+        const createdMs = item.created_at ? Date.parse(item.created_at) : null;
+        if (createdMs && lastRunMs && createdMs > lastRunMs && !done.has(key('new'))) {
+            out.push({ kind: 'new', competition: item, startMs: start });
+        }
+    });
+
+    return out;
+}
+
+function pushPayloadFor(candidate, nowMs) {
+    const item = candidate.competition || {};
+    const when = [item.date, item.time].filter(Boolean).join(' ');
+    const where = item.location ? `（${item.location}）` : '';
+    if (candidate.kind === 'reminder') {
+        const hours = Math.max(0, Math.round(((candidate.startMs || nowMs) - nowMs) / 3600000));
+        return {
+            title: `⏰ 即將開賽：${item.name || '賽事'}`,
+            body: `${when}${where} — 約 ${hours} 小時後開始`,
+            url: '/?comp=' + item.id,
+            tag: `cm-reminder-${item.id}`
+        };
+    }
+    return {
+        title: `🆕 新賽事：${item.name || '賽事'}`,
+        body: `${when}${where}${item.is_team_event ? ' — 👥 組隊比賽' : ''}`,
+        url: '/?comp=' + item.id,
+        tag: `cm-new-${item.id}`
+    };
+}
+
+// ---------- 資料庫小工具（fetchCompetition 已於 v2.9.0 區塊定義）----------
+async function getSetting(key) {
+    const { data, error } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+    if (error) throw error;
+    return data ? data.value : null;
+}
+
+async function setSetting(key, value) {
+    const { error } = await supabase.from('app_settings').upsert(
+        [{ key: key, value: String(value), updated_at: new Date().toISOString() }],
+        { onConflict: 'key' }
+    );
+    if (error) throw error;
+}
+
+// ---------- 賽事海報 ----------
+
+// 上傳／更新海報（管理員以上）。圖片以 base64 存於資料庫，由自家端點提供，
+// 因此不需要 Supabase Storage，也不必放寬 CSP 的 img-src。
+app.post('/api/competitions/:id/poster', requireAdmin, async (req, res) => {
+    const parsed = parseImageDataUrl(req.body && req.body.dataUrl);
+    if (!parsed) return res.status(400).json({ error: '海報格式錯誤：請上傳 JPG、PNG 或 WebP 圖片' });
+    if (parsed.buffer.length > POSTER_MAX_BYTES) {
+        const mb = Math.round((parsed.buffer.length / 1024 / 1024) * 10) / 10;
+        return res.status(413).json({ error: `海報檔案過大（${mb}MB），上限 3MB` });
+    }
+
+    try {
+        const comp = await fetchCompetition(req.params.id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const now = new Date().toISOString();
+        const { error: upErr } = await supabase.from('competition_posters').upsert([{
+            competition_id: comp.id,
+            mime: parsed.mime,
+            bytes: parsed.buffer.length,
+            data: parsed.buffer.toString('base64'),
+            uploaded_by: req.currentUser ? req.currentUser.username : null,
+            updated_at: now
+        }], { onConflict: 'competition_id' });
+        if (upErr) throw upErr;
+
+        const { error: colErr } = await supabase.from('competitions').update({ poster_updated_at: now }).eq('id', comp.id);
+        if (colErr) throw colErr;
+
+        await logAudit(req.user.username, 'UPLOAD_POSTER', comp.id, `上傳自訂海報（${Math.round(parsed.buffer.length / 1024)}KB）`, req.userAgent);
+        res.json({
+            message: '海報已更新，分享與卡片都會改用手動上傳的海報',
+            posterUrl: `/api/competitions/${comp.id}/poster?v=${Date.parse(now)}`,
+            bytes: parsed.buffer.length
+        });
+    } catch (err) {
+        if (isMissingTableError(err) || isMissingColumnError(err, ['poster_updated_at'])) {
+            return res.status(503).json({ error: POSTER_HINT });
+        }
+        await logErrorToDb(req, 'poster_upload_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 移除海報（管理員以上）→ 回到自動生成海報
+app.delete('/api/competitions/:id/poster', requireAdmin, async (req, res) => {
+    try {
+        const comp = await fetchCompetition(req.params.id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const { error: delErr } = await supabase.from('competition_posters').delete().eq('competition_id', comp.id);
+        if (delErr) throw delErr;
+        const { error: colErr } = await supabase.from('competitions').update({ poster_updated_at: null }).eq('id', comp.id);
+        if (colErr) throw colErr;
+
+        await logAudit(req.user.username, 'DELETE_POSTER', comp.id, '移除自訂海報（改回自動生成）', req.userAgent);
+        res.json({ message: '已移除自訂海報，分享將改回自動生成的海報' });
+    } catch (err) {
+        if (isMissingTableError(err) || isMissingColumnError(err, ['poster_updated_at'])) {
+            return res.status(503).json({ error: POSTER_HINT });
+        }
+        await logErrorToDb(req, 'poster_delete_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 取得海報（公開）：同源提供，維持 CSP img-src 'self'，完全不需外部網域
+app.get('/api/competitions/:id/poster', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('competition_posters')
+            .select('mime,data')
+            .eq('competition_id', req.params.id)
+            .maybeSingle();
+        if (error) throw error;
+        if (!data || !data.data) return res.status(404).json({ error: '此賽事沒有自訂海報' });
+
+        const buffer = Buffer.from(data.data, 'base64');
+        res.set('Content-Type', data.mime || 'image/jpeg');
+        res.set('Content-Length', String(buffer.length));
+        res.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+        res.set('X-Content-Type-Options', 'nosniff');
+        res.send(buffer);
+    } catch (err) {
+        res.status(404).json({ error: '此賽事沒有自訂海報' });
+    }
+});
+
+// ---------- Web Push（推播訂閱服務）----------
+// 伺服器端使用 web-push 套件（僅後端，不影響 CSP script-src 'self'）。
+// VAPID 金鑰：優先讀環境變數；否則首次使用時自動產生並存進 app_settings，
+// 因此私鑰不會出現在程式碼或對話中，也不需要手動設定環境變數。
+let webpush = null;
+try {
+    webpush = require('web-push');
+} catch (e) {
+    console.warn('⚠️ 未安裝 web-push，推播功能停用（npm install web-push 即可啟用）');
+}
+
+let cachedVapid = null;
+
+async function getVapidKeys() {
+    if (cachedVapid) return cachedVapid;
+    if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+        cachedVapid = { publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY };
+        return cachedVapid;
+    }
+    if (!webpush) return null;
+
+    try {
+        const stored = await getSetting('push_vapid_keys');
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed && parsed.publicKey && parsed.privateKey) {
+                cachedVapid = parsed;
+                return cachedVapid;
+            }
+        }
+        const generated = webpush.generateVAPIDKeys();
+        await setSetting('push_vapid_keys', JSON.stringify(generated));
+        // 競態：若同時有另一個實例寫入，以資料庫內容為準
+        const after = await getSetting('push_vapid_keys');
+        cachedVapid = after ? JSON.parse(after) : generated;
+        return cachedVapid;
+    } catch (err) {
+        return null;
+    }
+}
+
+// 有帶 token 就解析（不強制登入）：訪客也能訂閱推播
+function optionalAuth(req, res, next) {
+    const header = req.headers.authorization;
+    if (header && header.startsWith('Bearer ')) {
+        try {
+            req.user = jwt.verify(header.slice(7), JWT_SECRET);
+        } catch (e) { /* 訪客身份繼續 */ }
+    }
+    next();
+}
+
+async function sendPushTo(subscription, payload) {
+    const keys = await getVapidKeys();
+    if (!webpush || !keys) return { ok: false, error: '伺服器未啟用推播' };
+    webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@example.com', keys.publicKey, keys.privateKey);
+    try {
+        await webpush.sendNotification(
+            { endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } },
+            JSON.stringify(payload),
+            { TTL: 86400 }
+        );
+        return { ok: true };
+    } catch (err) {
+        const status = err && err.statusCode;
+        return {
+            ok: false,
+            gone: status === 404 || status === 410,
+            error: `HTTP ${status || '?'}${err && err.body ? ' ' + String(err.body).slice(0, 100) : ''}`
+        };
+    }
+}
+
+app.get('/api/push/public-key', async (req, res) => {
+    if (!webpush) return res.status(503).json({ error: '伺服器未啟用推播（缺少 web-push 套件）' });
+    const keys = await getVapidKeys();
+    if (!keys) return res.status(503).json({ error: PUSH_HINT });
+    res.json({ publicKey: keys.publicKey });
+});
+
+app.post('/api/push/subscribe', optionalAuth, async (req, res) => {
+    const sub = (req.body && req.body.subscription) || {};
+    const keys = sub.keys || {};
+    if (!sub.endpoint || !keys.p256dh || !keys.auth) {
+        return res.status(400).json({ error: '訂閱資料不完整' });
+    }
+    try {
+        const { error } = await supabase.from('push_subscriptions').upsert([{
+            endpoint: sub.endpoint,
+            p256dh: keys.p256dh,
+            auth: keys.auth,
+            user_id: req.user ? req.user.sub : null,
+            username: req.user ? req.user.username : null,
+            user_agent: (req.headers['user-agent'] || '').slice(0, 300),
+            is_active: true,
+            last_seen_at: new Date().toISOString()
+        }], { onConflict: 'endpoint' });
+        if (error) throw error;
+        res.json({ message: '已開啟瀏覽器推播訂閱' });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: PUSH_HINT });
+        await logErrorToDb(req, 'push_subscribe_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/push/unsubscribe', async (req, res) => {
+    const endpoint = req.body && req.body.endpoint;
+    if (!endpoint) return res.status(400).json({ error: '缺少訂閱識別（endpoint）' });
+    try {
+        const { error } = await supabase.from('push_subscriptions').update({ is_active: false }).eq('endpoint', endpoint);
+        if (error) throw error;
+        res.json({ message: '已關閉此裝置的推播訂閱' });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: PUSH_HINT });
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/push/test', async (req, res) => {
+    const endpoint = req.body && req.body.endpoint;
+    if (!endpoint) return res.status(400).json({ error: '缺少訂閱識別（endpoint）' });
+    if (!webpush) return res.status(503).json({ error: '伺服器未啟用推播（缺少 web-push 套件）' });
+    try {
+        const { data, error } = await supabase.from('push_subscriptions').select('*').eq('endpoint', endpoint).maybeSingle();
+        if (error) throw error;
+        if (!data || !data.is_active) return res.status(404).json({ error: '找不到有效的訂閱紀錄' });
+
+        const result = await sendPushTo(data, {
+            title: '🔔 測試通知',
+            body: '推播訂閱成功！之後即使關閉網頁，也能收到新賽事與開賽提醒。',
+            url: '/',
+            tag: 'cm-push-test'
+        });
+        if (result.gone) {
+            await supabase.from('push_subscriptions').update({ is_active: false }).eq('id', data.id);
+        }
+        res.json({ ok: result.ok, message: result.ok ? '測試通知已送出（請看系統通知）' : `送出失敗：${result.error}` });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: PUSH_HINT });
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 定時推播核心：找出「即將開賽（24 小時內）」與「上次執行後新發布」的賽事，
+// 對所有有效訂閱發送，並以 push_log 去重（同一賽事同一類型只送一次）。
+async function runPushDigest(now) {
+    const nowDate = now instanceof Date ? now : new Date();
+    const keys = await getVapidKeys();
+    if (!keys) throw new Error(PUSH_HINT);
+
+    const { data: subs, error: subErr } = await supabase.from('push_subscriptions').select('*').eq('is_active', true);
+    if (subErr) throw subErr;
+    if (!subs || subs.length === 0) return { sent: 0, subscriptions: 0, reason: '目前沒有任何有效訂閱' };
+
+    const { data: comps, error: compErr } = await supabase
+        .from('competitions')
+        .select('*')
+        .or('is_deleted.is.null,is_deleted.eq.false');
+    if (compErr) throw compErr;
+
+    const { data: logs, error: logErr } = await supabase.from('push_log').select('competition_id,kind');
+    if (logErr) throw logErr;
+    const done = new Set((logs || []).map((l) => `${l.competition_id}:${l.kind}`));
+
+    const lastRunRaw = await getSetting('push_last_run');
+    const lastRunMs = lastRunRaw ? Date.parse(lastRunRaw) : 0;
+
+    const candidates = pushCandidates(comps || [], {
+        now: nowDate,
+        done: done,
+        lastRunMs: Number.isNaN(lastRunMs) ? 0 : lastRunMs,
+        offset: SITE_UTC_OFFSET
+    });
+
+    const result = { candidates: candidates.length, sent: 0, failed: 0, deactivated: 0, subscriptions: subs.length, details: [] };
+
+    for (const candidate of candidates) {
+        const payload = pushPayloadFor(candidate, nowDate.getTime());
+        let sentCount = 0;
+
+        for (const sub of subs) {
+            if (!sub.is_active) continue;
+            const sent = await sendPushTo(sub, payload);
+            if (sent.ok) sentCount += 1;
+            else if (sent.gone) {
+                await supabase.from('push_subscriptions').update({ is_active: false }).eq('id', sub.id);
+                sub.is_active = false;
+                result.deactivated += 1;
+            } else {
+                result.failed += 1;
+            }
+        }
+
+        await supabase.from('push_log').insert([{
+            competition_id: candidate.competition.id,
+            kind: candidate.kind,
+            sent_count: sentCount,
+            sent_at: nowDate.toISOString()
+        }]);
+
+        result.sent += sentCount;
+        result.details.push({ id: candidate.competition.id, kind: candidate.kind, sent: sentCount });
+    }
+
+    await setSetting('push_last_run', nowDate.toISOString());
+    return result;
+}
+
+// Vercel Cron 會以 CRON_SECRET 作為 Bearer 權杖呼叫此端點（vercel.json 已設定每日一次）。
+// 未設定 CRON_SECRET 時，為避免被有心人反覆觸發，限制每 10 分鐘一次。
+let lastCronRun = 0;
+
+app.get('/api/cron/reminders', async (req, res) => {
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+        const provided = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+        if (provided !== secret) return res.status(401).json({ error: '未授權' });
+    } else if (Date.now() - lastCronRun < 10 * 60 * 1000) {
+        return res.status(429).json({ error: '呼叫過於頻繁（未設定 CRON_SECRET 時每 10 分鐘一次）' });
+    }
+    lastCronRun = Date.now();
+
+    try {
+        const result = await runPushDigest(new Date());
+        res.json(Object.assign({ ok: true, ranAt: new Date().toISOString() }, result));
+    } catch (err) {
+        if (isMissingTableError(err) || /migration/.test(err.message || '')) {
+            return res.status(503).json({ error: err.message });
+        }
+        await logErrorToDb(req, 'push_cron_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 const CMCSV = require('./public/js/csv.js');
 
 // 純函式：以「名稱 + 開始日期」判斷重複，回傳要新增與要跳過的清單（方便單元測試）
@@ -1602,6 +2022,11 @@ app.__test__ = {
     hasTeamFieldsContent,
     shouldIncludeTeamFields,
     registrationState,
+    parseImageDataUrl,
+    competitionStartMs,
+    pushCandidates,
+    pushPayloadFor,
+    POSTER_MAX_BYTES,
     isMissingTableError,
     toDateString,
     hashPassword,

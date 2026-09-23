@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.9.0</title>
+    <title>比賽管理系統 v2.10.0</title>
     <!-- Tailwind CSS 2.2.19 (本地靜態檔，符合 CSP style-src 'self') -->
     <link href="/css/tailwind.min.css" rel="stylesheet">
     <!-- 自訂補強樣式 (Modal 高度、滾動、背景模糊、色系補強、檔案按鈕、深淺色模式) -->
@@ -27,7 +27,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.9.0)</p>
+                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.10.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
@@ -256,6 +256,25 @@
                 </div>
 
                 <div class="flex gap-2">
+                    <div class="border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <label for="posterFile" class="text-xs font-semibold text-slate-700">
+                                🖼️ 手動上傳海報（選填，取代自動生成海報）
+                            </label>
+                            <button type="button" id="posterRemoveBtn"
+                                class="hidden text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition">
+                                移除海報
+                            </button>
+                        </div>
+                        <input type="file" id="posterFile" accept="image/png,image/jpeg,image/webp"
+                            class="w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                        <p id="posterHint" class="text-xs text-slate-500 leading-relaxed">
+                            支援 JPG／PNG／WebP，會自動縮圖後上傳（上限 3MB）。未上傳時，分享海報會用自動生成的款式。
+                        </p>
+                        <img id="posterPreview" alt="海報預覽"
+                            class="hidden max-w-full max-h-56 rounded-lg border border-slate-200 shadow-sm">
+                    </div>
+
                     <button type="submit" id="submitBtn"
                         class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm transition">
                         發佈比賽
@@ -410,7 +429,10 @@
                 <button id="closePosterModalBtn" class="text-slate-400 hover:text-slate-600">✕</button>
             </div>
 
+            <p id="posterSourceHint" class="text-xs text-slate-500 text-center -mt-1"></p>
+
             <div class="w-full flex justify-center bg-slate-100 p-3 rounded-xl border border-slate-200">
+                <img id="posterImage" alt="賽事海報" class="hidden max-w-full rounded-lg shadow-md">
                 <canvas id="posterCanvas" class="max-w-full rounded-lg shadow-md"></canvas>
             </div>
 
@@ -785,10 +807,31 @@
                 <div id="notifySubList" class="space-y-2 max-h-52 pr-1"></div>
             </div>
 
+            <div class="border-t pt-3 space-y-2">
+                <p class="text-xs font-bold text-slate-700 uppercase">📲 推播訂閱（關閉網頁也能收到）</p>
+                <div id="pushStatus" class="text-xs p-2.5 rounded-lg border bg-slate-50 border-slate-200 text-slate-600">
+                    尚未開啟推播訂閱
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button id="pushSubscribeBtn"
+                        class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-3 py-2 rounded-lg transition">
+                        📲 開啟推播訂閱
+                    </button>
+                    <button id="pushTestBtn"
+                        class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium px-3 py-2 rounded-lg border border-slate-300 transition">
+                        ✉️ 傳送推播測試
+                    </button>
+                    <button id="pushUnsubscribeBtn"
+                        class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 font-medium px-3 py-2 rounded-lg border border-slate-300 transition">
+                        關閉推播訂閱
+                    </button>
+                </div>
+            </div>
+
             <p class="text-xs text-slate-500 border-t pt-3 leading-relaxed">
-                💡 提醒會在<strong>網頁開啟時</strong>檢查（開啟頁面、切回分頁，以及每 5 分鐘一次）。
-                因為本專案未使用推播訂閱服務，<strong>完全關閉網頁時不會收到通知</strong>。
-                訂閱與設定只存在這台裝置的瀏覽器，不會上傳。
+                💡 開啟推播訂閱後<strong>即使完全關閉網頁</strong>也能收到（伺服器每天檢查即將開賽與新發布的賽事並發送推播）。
+                未開啟推播時，提醒只在<strong>網頁開啟時</strong>檢查（開啟頁面、切回分頁，以及每 5 分鐘一次）。
+                本機訂閱清單只存在這台裝置的瀏覽器；推播訂閱僅記錄瀏覽器端點，不含個人資料。
             </p>
 
             <div class="flex justify-end pt-1">

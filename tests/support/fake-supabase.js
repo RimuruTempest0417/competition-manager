@@ -104,7 +104,21 @@ function startFakeSupabase(state, options = {}) {
                     const incoming = Array.isArray(payload) ? payload : [payload];
                     const created = [];
 
+                    // upsert 支援：on_conflict 指定欄位已有資料時合併更新（模擬 PostgREST merge-duplicates）
+                    const conflictCols = String(params.get('on_conflict') || '').split(',').map((s) => s.trim()).filter(Boolean);
+                    const mergeMode = /merge-duplicates/.test(String(req.headers.prefer || ''));
+
                     for (const item of incoming) {
+                        if (conflictCols.length && mergeMode) {
+                            const existingIndex = rows.findIndex((r) => conflictCols.every((c) => String(r[c]) === String(item[c])));
+                            if (existingIndex >= 0) {
+                                const merged = Object.assign({}, rows[existingIndex], item);
+                                rows[existingIndex] = merged;
+                                created.push(merged);
+                                continue;
+                            }
+                        }
+
                         // 唯一鍵檢查
                         for (const uk of uniqueKeys) {
                             if (uk.table !== table) continue;

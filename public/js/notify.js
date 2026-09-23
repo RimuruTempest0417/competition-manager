@@ -310,6 +310,103 @@
         return { tick, stop: () => clearInterval(timer) };
     }
 
+    /* ==========================================
+       Web Push 推播訂閱（v2.10.0）
+       - 需要 Service Worker 與 PushManager；金鑰由後端 /api/push/public-key 提供
+         （伺服器首次使用時自動產生 VAPID 金鑰並存於資料庫，私鑰不出現在前端）。
+       - 訂閱後即使完全關閉網頁，伺服器仍可推播新賽事與開賽提醒。
+       ========================================== */
+
+    function pushSupported() {
+        return !!(root && root.navigator && 'serviceWorker' in root.navigator && root.PushManager && root.Notification);
+    }
+
+    function authHeaders(extra) {
+        const headers = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+        try {
+            const token = root.localStorage && root.localStorage.getItem('auth_token');
+            if (token) headers.Authorization = 'Bearer ' + token;
+        } catch (e) { /* 無痕模式等情況忽略 */ }
+        return headers;
+    }
+
+    // VAPID 公鑰（base64url）→ Uint8Array
+    function urlBase64ToUint8Array(base64String) {
+        const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+        const base64 = String(base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const raw = root.atob(base64);
+        const out = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
+        return out;
+    }
+
+    async function getPublicKey() {
+        const res = await root.fetch('/api/push/public-key');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '伺服器未啟用推播');
+        if (!data.publicKey) throw new Error('伺服器未提供推播金鑰');
+        return data.publicKey;
+    }
+
+    async function currentSubscription() {
+        const registration = await ensureServiceWorker();
+        if (!registration || !registration.pushManager) return null;
+        return registration.pushManager.getSubscription();
+    }
+
+    async function subscribe() {
+        if (!pushSupported()) throw new Error('此瀏覽器不支援推播訂閱（需要 HTTPS 與支援 Push 的瀏覽器）');
+        const permission = await requestPermission();
+        if (permission !== 'granted') throw new Error('需要先允許通知權限才能訂閱推播');
+
+        const registration = await ensureServiceWorker();
+        if (!registration || !registration.pushManager) throw new Error('Service Worker 尚未就緒，請稍後再試');
+
+        const publicKey = await getPublicKey();
+        let subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+            subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(publicKey)
+            });
+        }
+
+        const res = await root.fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ subscription: subscription.toJSON() })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '訂閱失敗');
+        return subscription.toJSON();
+    }
+
+    async function unsubscribe() {
+        const subscription = await currentSubscription();
+        if (!subscription) return { removed: false };
+        const endpoint = subscription.endpoint;
+        try { await subscription.unsubscribe(); } catch (e) { /* 已失效 */ }
+        await root.fetch('/api/push/unsubscribe', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ endpoint: endpoint })
+        }).catch(() => null);
+        return { removed: true, endpoint: endpoint };
+    }
+
+    async function testPush() {
+        const subscription = await currentSubscription();
+        if (!subscription) throw new Error('尚未開啟推播訂閱');
+        const res = await root.fetch('/api/push/test', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ endpoint: subscription.endpoint })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '測試推播失敗');
+        return data;
+    }
+
     return {
         STORAGE_KEY,
         REMIND_WINDOW_HOURS,
@@ -328,6 +425,13 @@
         ensureServiceWorker,
         show,
         runCheck,
-        startWatcher
+        startWatcher,
+        pushSupported,
+        getPublicKey,
+        urlBase64ToUint8Array,
+        currentSubscription,
+        subscribe,
+        unsubscribe,
+        testPush
     };
 });
