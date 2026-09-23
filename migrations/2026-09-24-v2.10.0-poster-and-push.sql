@@ -52,6 +52,8 @@ comment on table app_settings is
 
 -- ------------------------------------------------------------
 -- 4) 修正 v2.9.0：關閉新資料表的 RLS（anon key 在 RLS 且無 policy 下無法寫入）
+--    實測：RLS 開啟且無 policy 時，寫入會回 42501
+--    「new row violates row-level security policy」，註冊／報名／隊伍全部失敗。
 -- ------------------------------------------------------------
 alter table if exists registrations         disable row level security;
 alter table if exists competition_teams     disable row level security;
@@ -59,6 +61,24 @@ alter table if exists push_subscriptions    disable row level security;
 alter table if exists push_log              disable row level security;
 alter table if exists competition_posters   disable row level security;
 alter table if exists app_settings          disable row level security;
+
+-- ------------------------------------------------------------
+-- 5) 明確授權（雙重保險：即使資料表的預設權限不同，anon 也能讀寫）
+--    本專案的 anon key 只存在伺服器端環境變數，前端從不直接連 Supabase；
+--    存取控制由後端 API（JWT + 權限中間件）負責。
+-- ------------------------------------------------------------
+grant usage on schema public to anon;
+grant select, insert, update, delete on registrations        to anon, service_role;
+grant select, insert, update, delete on competition_teams    to anon, service_role;
+grant select, insert, update, delete on push_subscriptions   to anon, service_role;
+grant select, insert, update, delete on push_log             to anon, service_role;
+grant select, insert, update, delete on competition_posters  to anon, service_role;
+grant select, insert, update, delete on app_settings         to anon, service_role;
+grant usage, select on all sequences in schema public to anon, service_role;
+
+-- ------------------------------------------------------------
+-- 6) 檢查（可選）：執行後應看到 6 張新表與 rowsecurity = false
+-- ------------------------------------------------------------
 
 -- ------------------------------------------------------------
 -- 5) 檢查（可選）：執行後應看到 6 張新表存在
