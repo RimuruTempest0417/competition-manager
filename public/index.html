@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.8.0</title>
+    <title>比賽管理系統 v2.9.0</title>
     <!-- Tailwind CSS 2.2.19 (本地靜態檔，符合 CSP style-src 'self') -->
     <link href="/css/tailwind.min.css" rel="stylesheet">
     <!-- 自訂補強樣式 (Modal 高度、滾動、背景模糊、色系補強、檔案按鈕、深淺色模式) -->
@@ -27,7 +27,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.8.0)</p>
+                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.9.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
@@ -104,6 +104,12 @@
                         </button>
 
                         <div class="border-t border-slate-100 my-1"></div>
+
+                        <!-- 登入後專屬：我的報名 -->
+                        <button id="myRegsBtn"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                            📝 我的報名
+                        </button>
 
                         <!-- 登入後專屬：修改密碼 -->
                         <button id="changePwdBtn"
@@ -213,6 +219,34 @@
                         class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
                     <label for="is_registration_open" class="text-xs font-semibold text-slate-700 cursor-pointer">開放報名中
                         (勾選後顯示「報名中」標籤)</label>
+                </div>
+
+                <!-- v2.9.0：組隊比賽與報名設定 -->
+                <div class="bg-slate-50 rounded-lg p-3 space-y-3 border border-slate-200">
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" id="is_team_event"
+                            class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+                        <label for="is_team_event" class="text-xs font-semibold text-slate-700 cursor-pointer">
+                            👥 組隊比賽（報名時需填隊伍名稱，並可由管理員編排隊伍）</label>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label for="team_size" class="block text-xs font-semibold text-slate-600 mb-1">每隊人數上限</label>
+                            <input type="number" id="team_size" min="0" max="99" placeholder="0 = 不限"
+                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                        </div>
+                        <div>
+                            <label for="max_registrations" class="block text-xs font-semibold text-slate-600 mb-1">報名人數上限</label>
+                            <input type="number" id="max_registrations" min="0" max="9999" placeholder="0 = 不限"
+                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                        </div>
+                    </div>
+                    <div>
+                        <label for="registration_deadline" class="block text-xs font-semibold text-slate-600 mb-1">
+                            報名截止日（選填，逾期自動顯示「報名已截止」）</label>
+                        <input type="date" id="registration_deadline"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                    </div>
                 </div>
 
                 <div>
@@ -455,7 +489,7 @@
     <div id="loginModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
-            <h3 class="text-lg font-bold text-slate-800">登入 Login</h3>
+            <h3 id="loginModalTitle" class="text-lg font-bold text-slate-800">登入 Login</h3>
             <div class="space-y-3">
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">帳號</label>
@@ -468,6 +502,28 @@
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
                 </div>
             </div>
+            <!-- v2.9.0：普通用戶註冊（同一視窗切換） -->
+            <div id="registerFields" class="hidden space-y-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">確認密碼</label>
+                    <input type="password" id="registerPassword2" placeholder="再次輸入密碼"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                </div>
+                <div id="registerCodeWrap" class="hidden">
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">註冊邀請碼</label>
+                    <input type="text" id="registerCode" placeholder="請輸入站方提供的邀請碼"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                </div>
+                <p class="text-xs text-slate-500 leading-relaxed">
+                    帳號 3~20 個英文字母、數字或底線；密碼 6 個字元以上（僅英文字母與數字）。
+                    註冊後即可報名參加比賽，並在「我的報名」查看狀態。
+                </p>
+            </div>
+            <p id="loginNotice" class="hidden text-xs p-2.5 rounded-lg border"></p>
+            <p class="text-xs text-slate-500 text-center">
+                <span id="loginModeHint">還沒有帳號？</span>
+                <button id="toggleRegisterBtn" type="button" class="text-blue-600 hover:underline font-medium">註冊新帳號</button>
+            </p>
             <div class="flex justify-end gap-2 pt-2">
                 <button id="cancelLoginBtn"
                     class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
@@ -581,6 +637,111 @@
     <script src="/js/notify.js"></script>
     <!-- 日曆檢視 (純前端月曆，無外部套件) -->
     <script src="/js/calendar.js"></script>
+
+    <!-- 彈出視窗 8：報名參加比賽（v2.9.0） -->
+    <div id="registerModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800">📝 報名參加比賽</h3>
+                <button id="closeRegisterModalBtn" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <div id="registerCompInfo" class="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-700 leading-relaxed"></div>
+
+            <div id="registerTeamWrap" class="hidden">
+                <label for="registerTeamName" class="block text-xs font-semibold text-slate-600 mb-1">
+                    隊伍名稱 <span class="text-red-500">*</span>
+                    <span class="font-normal text-slate-500">（組隊比賽必填，管理員會依此編排）</span>
+                </label>
+                <input type="text" id="registerTeamName" maxlength="40" placeholder="例如：台北猛虎隊"
+                    class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+            </div>
+
+            <div>
+                <label for="registerNote" class="block text-xs font-semibold text-slate-600 mb-1">
+                    備註 / 想同隊的人（選填）</label>
+                <textarea id="registerNote" rows="2" maxlength="200" placeholder="例如：想和 abc 同隊"
+                    class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"></textarea>
+            </div>
+
+            <p id="registerMsg" class="hidden text-xs p-2.5 rounded-lg border"></p>
+
+            <div class="flex justify-end gap-2 pt-1">
+                <button id="closeRegisterModalBtn2"
+                    class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
+                <button id="confirmRegisterBtn"
+                    class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">確認報名</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈出視窗 9：我的報名（v2.9.0） -->
+    <div id="myRegsModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-85vh flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800">📝 我的報名</h3>
+                <button id="closeMyRegsModalBtn" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <p class="text-xs text-slate-500">報名紀錄需要資料庫已執行 v2.9.0 migration；若顯示提示訊息，請通知站方管理員。</p>
+            <div id="myRegsList" class="flex-1 overflow-y-auto space-y-2"></div>
+            <div class="flex justify-end pt-1 border-t">
+                <button id="closeMyRegsModalBtn2"
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈出視窗 10：報名名單與隊伍編排（管理員以上，v2.9.0） -->
+    <div id="teamModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-85vh flex flex-col">
+            <div class="flex justify-between items-start border-b pb-3">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800">👥 報名名單與隊伍編排</h3>
+                    <p id="teamModalComp" class="text-xs text-slate-500 mt-0.5"></p>
+                </div>
+                <button id="closeTeamModalBtn" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <div id="teamRoleHint" class="text-xs p-2.5 rounded-lg border"></div>
+
+            <div class="flex flex-wrap items-center gap-2">
+                <input type="text" id="newTeamName" maxlength="40" placeholder="新隊伍名稱"
+                    class="px-3 py-2 border border-slate-300 rounded-lg text-sm flex-1 min-w-40">
+                <input type="text" id="newTeamNote" maxlength="200" placeholder="備註（選填）"
+                    class="px-3 py-2 border border-slate-300 rounded-lg text-sm flex-1 min-w-40">
+                <button id="createTeamBtn"
+                    class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-2 rounded-lg transition">
+                    ➕ 建立隊伍
+                </button>
+            </div>
+
+            <div id="teamMsg" class="hidden text-xs p-2.5 rounded-lg border"></div>
+
+            <div class="flex-1 overflow-y-auto space-y-3">
+                <div>
+                    <p class="text-xs font-bold text-slate-700 uppercase mb-2">
+                        未編排報名者 (<span id="unassignedCount">0</span>)
+                    </p>
+                    <div id="unassignedList" class="space-y-1.5"></div>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-slate-700 uppercase mb-2">
+                        已編排隊伍 (<span id="teamCount">0</span>)
+                    </p>
+                    <div id="teamList" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <div class="flex justify-end pt-1 border-t">
+                <button id="closeTeamModalBtn2"
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 彈出視窗 7：通知設定 (所有人皆可用) -->
     <div id="notifyModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">

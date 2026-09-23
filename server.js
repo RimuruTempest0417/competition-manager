@@ -1,4 +1,5 @@
 require('dotenv').config();
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const express = require('express');
 const cors = require('cors');
@@ -62,6 +63,14 @@ function sanitizeInput(val) {
     if (val === undefined || val === null) return null;
     const str = String(val).trim();
     return str === '' ? null : str;
+}
+
+// 與 sanitizeInput 相同，但保證回傳字串（長度限制用）：
+// sanitizeInput 對空值回 null，直接 .slice() 會拋 TypeError。
+function cleanText(val, maxLength) {
+    const str = sanitizeInput(val);
+    if (str === null) return '';
+    return maxLength ? str.slice(0, maxLength) : str;
 }
 
 // ==========================================
@@ -158,15 +167,150 @@ function shouldIncludeTaxonomy(taxonomy, schemaState) {
     return hasTaxonomyContent(taxonomy) || schemaState === true;
 }
 
-function isMissingColumnError(err) {
+function isMissingColumnError(err, columns) {
     const code = (err && err.code) || '';
     const msg = (err && err.message) || '';
-    return (
-        code === 'PGRST204' ||
-        code === '42703' ||
-        /column .*\.(category|tags).* does not exist/i.test(msg) ||
-        /Could not find the '(category|tags)' column/i.test(msg)
-    );
+    const cols = (columns && columns.length ? columns : ['category', 'tags']);
+
+    // 訊息有明確指出欄位名稱時以欄位為準，
+    // 這樣才能分辨是 v2.7.0 還是 v2.9.0 的 migration 沒跑（兩者提示訊息不同）。
+    const named = msg.match(/column [\w.]*?\.?(\w+) does not exist/i) || msg.match(/Could not find the '(\w+)' column/i);
+    if (named) return cols.includes(named[1]);
+
+    // 只有錯誤碼（無法判斷欄位）時：PGRST204 / 42703 都代表欄位不存在
+    return code === 'PGRST204' || code === '42703';
+}
+
+/* ==========================================================
+   v2.9.0：普通用戶、報名與組隊比賽
+   ========================================================== */
+
+const TEAM_HINT =
+    '資料庫尚未加入組隊／報名欄位，請先在 Supabase SQL Editor 執行 migrations/2026-09-24-v2.9.0-users-registration-teams.sql';
+const REGISTRATION_HINT =
+    '資料庫尚未建立報名資料表（registrations），請先在 Supabase SQL Editor 執行 migrations/2026-09-24-v2.9.0-users-registration-teams.sql';
+
+// 快取「資料庫是否已有 v2.9.0 的組隊欄位」
+let schemaHasTeamFields = null;
+
+async function teamSchemaReady() {
+    if (schemaHasTeamFields !== null) return schemaHasTeamFields;
+
+    try {
+        const { error } = await supabase
+            .from('competitions')
+            .select('id,is_team_event,team_size,registration_deadline,max_registrations')
+            .limit(1);
+        schemaHasTeamFields = !isMissingColumnError(error, ['is_team_event', 'team_size', 'registration_deadline', 'max_registrations']);
+        if (!schemaHasTeamFields) {
+            console.warn('⚠️ competitions 表缺少組隊／報名欄位，組隊比賽與報名截止將無法儲存（請執行 migrations/ 內的 SQL）');
+        }
+    } catch (e) {
+        return true;
+    }
+    return schemaHasTeamFields;
+}
+
+function normalizeTeamFields(body) {
+    const toInt = (v, max) => {
+        const n = parseInt(v, 10);
+        if (!Number.isFinite(n) || n < 0) return 0;
+        return Math.min(n, max);
+    };
+    const deadline = typeof body.registration_deadline === 'string' ? body.registration_deadline.trim().slice(0, 10) : '';
+    return {
+        is_team_event: !!body.is_team_event,
+        team_size: toInt(body.team_size, 99),
+        max_registrations: toInt(body.max_registrations, 9999),
+        registration_deadline: /^\d{4}-\d{2}-\d{2}$/.test(deadline) ? deadline : null
+    };
+}
+
+function hasTeamFieldsContent(fields) {
+    return !!(fields.is_team_event || fields.team_size > 0 || fields.max_registrations > 0 || fields.registration_deadline);
+}
+
+// 與 category/tags 相同策略：沒有內容且欄位未知 → 不帶，維持舊版行為
+function shouldIncludeTeamFields(fields, schemaState) {
+    return hasTeamFieldsContent(fields) || schemaState === true;
+}
+
+function isMissingTableError(err) {
+    const code = (err && err.code) || '';
+    const msg = (err && err.message) || '';
+    return code === '42P01' || /relation .* does not exist/i.test(msg) || /Could not find the table/i.test(msg);
+}
+
+// 本地時區的 YYYY-MM-DD
+function toDateString(input) {
+    const d = input instanceof Date ? input : new Date(input);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/* 報名是否開放（純函式，方便單元測試）
+   回傳 { open, reason }；reason 直接顯示給使用者。 */
+function registrationState(comp, now, registeredCount) {
+    if (!comp) return { open: false, reason: '找不到該賽事' };
+    if (comp.is_deleted) return { open: false, reason: '此賽事已下架' };
+    if (!comp.is_registration_open) return { open: false, reason: '此賽事目前未開放報名' };
+
+    const today = toDateString(now || new Date());
+
+    if (comp.registration_deadline && today > String(comp.registration_deadline).slice(0, 10)) {
+        return { open: false, reason: `報名已於 ${String(comp.registration_deadline).slice(0, 10)} 截止` };
+    }
+    if (comp.date && today > String(comp.date).slice(0, 10)) {
+        return { open: false, reason: '此賽事已結束' };
+    }
+    const max = parseInt(comp.max_registrations, 10) || 0;
+    if (max > 0 && (parseInt(registeredCount, 10) || 0) >= max) {
+        return { open: false, reason: `報名人數已達上限（${max} 人）` };
+    }
+    return { open: true, reason: '' };
+}
+
+/* ---------- 密碼雜湊 ----------
+   既有帳號的密碼是明碼儲存（歷史因素），這裡不強制改寫；
+   新註冊／新設定的密碼一律用 scrypt 雜湊，登入時兩種格式都能驗證。 */
+function hashPassword(plain) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(String(plain), salt, 64).toString('hex');
+    return `scrypt$${salt}$${hash}`;
+}
+
+function verifyPassword(stored, input) {
+    if (typeof stored !== 'string' || stored === '') return false;
+    if (!stored.startsWith('scrypt$')) {
+        // 舊資料：明碼比對（長度不同時避免 timingSafeEqual 拋錯）
+        const a = Buffer.from(stored);
+        const b = Buffer.from(String(input));
+        return a.length === b.length && crypto.timingSafeEqual(a, b);
+    }
+    const parts = stored.split('$');
+    if (parts.length !== 3) return false;
+    const expected = Buffer.from(parts[2], 'hex');
+    const candidate = crypto.scryptSync(String(input), parts[1], 64);
+    return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+}
+
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
+const PASSWORD_RE = /^[a-zA-Z0-9]{6,64}$/;
+
+// 註冊節流：同一 IP 每小時最多 5 次（記憶體計數，重啟即歸零，足以擋掉腳本濫用）
+const registerAttempts = new Map();
+
+function allowRegisterAttempt(ip, now = Date.now(), limit = 5, windowMs = 3600000) {
+    const key = String(ip || 'unknown');
+    const hits = (registerAttempts.get(key) || []).filter((t) => now - t < windowMs);
+    if (hits.length >= limit) {
+        registerAttempts.set(key, hits);
+        return false;
+    }
+    hits.push(now);
+    registerAttempts.set(key, hits);
+    return true;
 }
 
 // 📜 統一 Supabase 審計日誌 (audit_logs 表格) 寫入輔助函式
@@ -390,7 +534,7 @@ app.post('/api/admin/users', requireSuperAdmin, async (req, res) => {
 
         const { data, error } = await supabase
             .from('admin_users')
-            .insert([{ username, password, role: targetRole }])
+            .insert([{ username, password: hashPassword(password), role: targetRole }])
             .select();
 
         if (error) throw error;
@@ -465,7 +609,7 @@ const loginHandler = async (req, res) => {
             .eq('username', username)
             .maybeSingle();
 
-        if (error || !user || user.password !== password) {
+        if (error || !user || !verifyPassword(user.password, password)) {
             await logAudit(username || 'UNKNOWN', 'LOGIN_FAILED', null, {
                 reason: '帳號或密碼錯誤',
                 ip: clientIp
@@ -511,13 +655,13 @@ app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
             .eq('id', userId)
             .single();
 
-        if (findErr || !user || user.password !== oldPassword) {
+        if (findErr || !user || !verifyPassword(user.password, oldPassword)) {
             return res.status(400).json({ error: '舊密碼不正確' });
         }
 
         const { error: updateErr } = await supabase
             .from('admin_users')
-            .update({ password: newPassword })
+            .update({ password: hashPassword(newPassword) })
             .eq('id', userId);
 
         if (updateErr) throw updateErr;
@@ -644,6 +788,12 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
     }
     const includeTaxonomy = shouldIncludeTaxonomy(taxonomy, schemaHasTaxonomy);
 
+    const teamFields = normalizeTeamFields(req.body);
+    if (hasTeamFieldsContent(teamFields) && !(await teamSchemaReady())) {
+        return res.status(503).json({ error: TEAM_HINT });
+    }
+    const includeTeamFields = shouldIncludeTeamFields(teamFields, schemaHasTeamFields);
+
     try {
         const payload = {
             name: name.trim(),
@@ -655,6 +805,7 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
             description: sanitizeInput(description),
             is_registration_open: !!is_registration_open,
             ...(includeTaxonomy ? taxonomy : {}),
+            ...(includeTeamFields ? teamFields : {}),
             is_deleted: false,
             created_at: new Date().toISOString()
         };
@@ -671,9 +822,13 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
 
         res.json(newComp);
     } catch (err) {
-        if (isMissingColumnError(err)) {
+        if (isMissingColumnError(err, ['category', 'tags'])) {
             schemaHasTaxonomy = false;
             return res.status(503).json({ error: MIGRATION_HINT });
+        }
+        if (isMissingColumnError(err, ['is_team_event', 'team_size', 'registration_deadline', 'max_registrations'])) {
+            schemaHasTeamFields = false;
+            return res.status(503).json({ error: TEAM_HINT });
         }
         await logErrorToDb(req, 'create_competition_error', err);
         res.status(500).json({ error: err.message });
@@ -698,6 +853,12 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
     }
     const includeTaxonomy = shouldIncludeTaxonomy(taxonomy, schemaHasTaxonomy);
 
+    const teamFields = normalizeTeamFields(req.body);
+    if (hasTeamFieldsContent(teamFields) && !(await teamSchemaReady())) {
+        return res.status(503).json({ error: TEAM_HINT });
+    }
+    const includeTeamFields = shouldIncludeTeamFields(teamFields, schemaHasTeamFields);
+
     try {
         const payload = {
             name: name.trim(),
@@ -708,7 +869,8 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
             end_time: sanitizeInput(end_time),
             description: sanitizeInput(description),
             is_registration_open: !!is_registration_open,
-            ...(includeTaxonomy ? taxonomy : {})
+            ...(includeTaxonomy ? taxonomy : {}),
+            ...(includeTeamFields ? teamFields : {})
         };
 
         const { data, error } = await supabase
@@ -724,9 +886,13 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
 
         res.json(data[0]);
     } catch (err) {
-        if (isMissingColumnError(err)) {
+        if (isMissingColumnError(err, ['category', 'tags'])) {
             schemaHasTaxonomy = false;
             return res.status(503).json({ error: MIGRATION_HINT });
+        }
+        if (isMissingColumnError(err, ['is_team_event', 'team_size', 'registration_deadline', 'max_registrations'])) {
+            schemaHasTeamFields = false;
+            return res.status(503).json({ error: TEAM_HINT });
         }
         await logErrorToDb(req, 'update_competition_error', err);
         res.status(500).json({ error: err.message });
@@ -805,6 +971,440 @@ app.delete('/api/competitions/:id/hard-delete', requireSuperAdmin, async (req, r
 // 📥 CSV 匯入 / 匯出 API (v2.8.0)
 // 前端負責解析使用者上傳的檔案，這裡做權威驗證後才寫入資料庫。
 // ==========================================
+
+// ==========================================
+// v2.9.0：普通用戶報名與隊伍編排 API
+// ==========================================
+
+async function fetchCompetition(id) {
+    const { data, error } = await supabase.from('competitions').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+}
+
+async function countRegistrations(competitionId) {
+    const { data, error } = await supabase
+        .from('registrations')
+        .select('id')
+        .eq('competition_id', competitionId)
+        .eq('is_deleted', false);
+    if (error) throw error;
+    return (data || []).length;
+}
+
+// 各賽事報名人數（公開的彙總資訊，未執行 migration 時回空物件）
+app.get('/api/registration-counts', async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('registrations').select('competition_id').eq('is_deleted', false);
+        if (error) throw error;
+
+        const counts = {};
+        (data || []).forEach((r) => {
+            const key = String(r.competition_id);
+            counts[key] = (counts[key] || 0) + 1;
+        });
+
+        res.json({ counts, total: (data || []).length });
+    } catch (err) {
+        res.json({ counts: {}, total: 0, unavailable: true });
+    }
+});
+
+// 公開設定（前端據此決定是否顯示註冊邀請碼欄位）
+app.get('/api/public-config', (req, res) => {
+    res.json({ requireRegistrationCode: !!process.env.REGISTRATION_CODE });
+});
+
+// 註冊普通用戶（註冊後直接登入）
+app.post('/api/auth/register', async (req, res) => {
+    const { username, password, registration_code } = req.body || {};
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+    if (!USERNAME_RE.test(String(username || ''))) {
+        return res.status(400).json({ error: '帳號格式錯誤：請用 3~20 個英文字母、數字或底線' });
+    }
+    if (!PASSWORD_RE.test(String(password || ''))) {
+        return res.status(400).json({ error: '密碼格式錯誤：請用 6~64 個英文字母或數字' });
+    }
+    if (process.env.REGISTRATION_CODE && String(registration_code || '') !== process.env.REGISTRATION_CODE) {
+        return res.status(400).json({ error: '註冊邀請碼錯誤' });
+    }
+    if (!allowRegisterAttempt(clientIp)) {
+        return res.status(429).json({ error: '註冊嘗試過於頻繁，請稍後再試（同一網路每小時最多 5 次）' });
+    }
+
+    try {
+        const { data: existed, error: findErr } = await supabase
+            .from('admin_users')
+            .select('id')
+            .eq('username', username)
+            .maybeSingle();
+        if (findErr) throw findErr;
+        if (existed) return res.status(409).json({ error: '此帳號已被使用' });
+
+        const { data, error } = await supabase
+            .from('admin_users')
+            .insert([{ username, password: hashPassword(password), role: 'user' }])
+            .select();
+        if (error) throw error;
+
+        const user = data[0];
+        const token = jwt.sign({ sub: user.id, username: user.username, role: 'user' }, JWT_SECRET, { expiresIn: '12h' });
+
+        await logAudit(user.username, 'REGISTER_USER', user.id, '註冊普通用戶帳號', req.userAgent);
+
+        res.json({ message: '註冊成功', token, user: { id: user.id, username: user.username, role: 'user' } });
+    } catch (err) {
+        if ((err && err.code) === '23514') {
+            return res.status(503).json({ error: '資料庫尚未允許「普通用戶」角色，請先執行 migrations/2026-09-24-v2.9.0-users-registration-teams.sql' });
+        }
+        await logErrorToDb(req, 'register_user_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 目前登入者
+app.get('/api/auth/me', authenticateToken, (req, res) => {
+    res.json({ user: { id: req.user.sub, username: req.user.username, role: req.user.role } });
+});
+
+// 我的報名（含賽事資訊）
+app.get('/api/my/registrations', authenticateToken, async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('registrations')
+            .select('*, competitions(id,name,date,time,location,category,is_team_event,is_deleted)')
+            .eq('user_id', req.user.sub)
+            .eq('is_deleted', false)
+            .order('id', { ascending: false });
+        if (error) throw error;
+
+        res.json((data || []).filter((r) => r.competitions && !r.competitions.is_deleted));
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'my_registrations_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 報名參加比賽（任何已登入帳號，包含普通用戶）
+app.post('/api/competitions/:id/register', authenticateToken, async (req, res) => {
+    const competitionId = req.params.id;
+    const body = req.body || {};
+    const operator = req.user;
+
+    try {
+        const comp = await fetchCompetition(competitionId);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const count = await countRegistrations(competitionId);
+        const state = registrationState(comp, new Date(), count);
+        if (!state.open) return res.status(400).json({ error: state.reason });
+
+        const { data: existing, error: exErr } = await supabase
+            .from('registrations')
+            .select('id')
+            .eq('competition_id', competitionId)
+            .eq('user_id', operator.sub)
+            .eq('is_deleted', false)
+            .maybeSingle();
+        if (exErr) throw exErr;
+        if (existing) return res.status(409).json({ error: '你已經報名過此賽事了' });
+
+        const teamName = cleanText(body.team_name, 40);
+        if (comp.is_team_event && !teamName) {
+            return res.status(400).json({ error: '此為組隊比賽，請填寫隊伍名稱' });
+        }
+
+        const { data, error } = await supabase
+            .from('registrations')
+            .insert([{
+                competition_id: comp.id,
+                user_id: operator.sub,
+                username: operator.username,
+                team_name: teamName || null,
+                note: cleanText(body.note, 200) || null,
+                status: 'confirmed',
+                is_deleted: false,
+                created_at: new Date().toISOString()
+            }])
+            .select();
+        if (error) throw error;
+
+        await logAudit(operator.username, 'REGISTER_COMPETITION', comp.id,
+            `報名賽事: ${comp.name}${teamName ? '（隊伍：' + teamName + '）' : ''}`, req.userAgent);
+
+        res.json({ message: '報名成功', registration: data[0], registrations: count + 1 });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        if ((err && err.code) === '23505') return res.status(409).json({ error: '你已經報名過此賽事了' });
+        await logErrorToDb(req, 'register_competition_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 取消報名（本人或管理員以上）
+app.delete('/api/registrations/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const { data: reg, error } = await supabase.from('registrations').select('*').eq('id', id).maybeSingle();
+        if (error) throw error;
+        if (!reg || reg.is_deleted) return res.status(404).json({ error: '找不到此報名紀錄' });
+
+        const isOwner = String(reg.user_id) === String(req.user.sub) || reg.username === req.user.username;
+        if (!isOwner && !ADMIN_ROLES.has(req.user.role)) {
+            return res.status(403).json({ error: '權限不足：只能取消自己的報名' });
+        }
+
+        const { error: updErr } = await supabase
+            .from('registrations')
+            .update({ is_deleted: true, team_id: null })
+            .eq('id', id);
+        if (updErr) throw updErr;
+
+        await logAudit(req.user.username, 'CANCEL_REGISTRATION', reg.competition_id,
+            `取消報名: ${reg.username}（${isOwner ? '本人' : '管理員代為取消'}）`, req.userAgent);
+
+        res.json({ message: '已取消報名' });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'cancel_registration_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 報名名單：管理員以上看全部（含隊伍），一般用戶只看自己的
+app.get('/api/competitions/:id/registrations', authenticateToken, async (req, res) => {
+    const competitionId = req.params.id;
+
+    try {
+        let query = supabase
+            .from('registrations')
+            .select('id,competition_id,user_id,username,team_id,team_name,note,status,created_at')
+            .eq('competition_id', competitionId)
+            .eq('is_deleted', false)
+            .order('id', { ascending: true });
+
+        if (!ADMIN_ROLES.has(req.user.role)) query = query.eq('user_id', req.user.sub);
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        res.json({ registrations: data || [], total: (data || []).length });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'list_registrations_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 隊伍一覽（登入即可檢視，方便參賽者確認自己的隊伍）
+app.get('/api/competitions/:id/teams', authenticateToken, async (req, res) => {
+    const competitionId = req.params.id;
+
+    try {
+        const [teamsRes, regsRes] = await Promise.all([
+            supabase.from('competition_teams').select('*').eq('competition_id', competitionId).eq('is_deleted', false).order('id', { ascending: true }),
+            supabase.from('registrations').select('id,username,user_id,team_id,team_name').eq('competition_id', competitionId).eq('is_deleted', false).order('id', { ascending: true })
+        ]);
+        if (teamsRes.error) throw teamsRes.error;
+        if (regsRes.error) throw regsRes.error;
+
+        const regs = regsRes.data || [];
+        const teams = (teamsRes.data || []).map((t) => Object.assign({}, t, {
+            members: regs.filter((r) => String(r.team_id) === String(t.id))
+        }));
+
+        res.json({
+            teams,
+            unassigned: regs.filter((r) => !r.team_id),
+            totalRegistrations: regs.length,
+            canArrange: ADMIN_ROLES.has(req.user.role),
+            canDelete: SUPER_ADMIN_ROLES.has(req.user.role)
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'list_teams_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 建立隊伍（管理員以上）
+app.post('/api/competitions/:id/teams', requireAdmin, async (req, res) => {
+    const competitionId = req.params.id;
+    const body = req.body || {};
+    const name = cleanText(body.name, 40);
+    const operator = req.currentUser;
+
+    if (!name) return res.status(400).json({ error: '請輸入隊伍名稱' });
+
+    try {
+        const comp = await fetchCompetition(competitionId);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const { data: dup, error: dupErr } = await supabase
+            .from('competition_teams')
+            .select('id')
+            .eq('competition_id', competitionId)
+            .eq('name', name)
+            .eq('is_deleted', false)
+            .maybeSingle();
+        if (dupErr) throw dupErr;
+        if (dup) return res.status(409).json({ error: '此賽事已有同名隊伍' });
+
+        const { data, error } = await supabase
+            .from('competition_teams')
+            .insert([{
+                competition_id: comp.id,
+                name,
+                note: cleanText(body.note, 200) || null,
+                created_by: operator.username,
+                is_deleted: false,
+                created_at: new Date().toISOString()
+            }])
+            .select();
+        if (error) throw error;
+
+        await logAudit(operator.username, 'CREATE_TEAM', comp.id, `建立隊伍: ${name}`, req.userAgent);
+        res.json({ message: '隊伍已建立', team: data[0] });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'create_team_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 修改隊伍名稱／備註（管理員以上）
+app.put('/api/teams/:id', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const body = req.body || {};
+    const operator = req.currentUser;
+
+    try {
+        const payload = {};
+        if (body.name !== undefined) {
+            const name = cleanText(body.name, 40);
+            if (!name) return res.status(400).json({ error: '隊伍名稱不可為空' });
+            payload.name = name;
+        }
+        if (body.note !== undefined) payload.note = cleanText(body.note, 200) || null;
+        if (Object.keys(payload).length === 0) return res.status(400).json({ error: '沒有要更新的欄位' });
+
+        const { data, error } = await supabase.from('competition_teams').update(payload).eq('id', id).select();
+        if (error) throw error;
+        if (!data || data.length === 0) return res.status(404).json({ error: '找不到該隊伍' });
+
+        await logAudit(operator.username, 'UPDATE_TEAM', id, `更新隊伍: ${data[0].name}`, req.userAgent);
+        res.json({ message: '隊伍已更新', team: data[0] });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'update_team_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 刪除隊伍（超級管理員以上）：隊員會自動移出隊伍、報名紀錄保留
+app.delete('/api/teams/:id', requireSuperAdmin, async (req, res) => {
+    const { id } = req.params;
+    const operator = req.currentUser;
+
+    try {
+        const { data: team, error } = await supabase.from('competition_teams').select('*').eq('id', id).maybeSingle();
+        if (error) throw error;
+        if (!team || team.is_deleted) return res.status(404).json({ error: '找不到該隊伍' });
+
+        const { error: detachErr } = await supabase.from('registrations').update({ team_id: null }).eq('team_id', id);
+        if (detachErr) throw detachErr;
+
+        const { error: delErr } = await supabase.from('competition_teams').update({ is_deleted: true }).eq('id', id);
+        if (delErr) throw delErr;
+
+        await logAudit(operator.username, 'DELETE_TEAM', team.competition_id, `刪除隊伍: ${team.name}`, req.userAgent);
+        res.json({ message: '隊伍已刪除' });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'delete_team_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 編排：把報名者加入隊伍（管理員以上）
+app.post('/api/teams/:id/members', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const registrationId = req.body && req.body.registrationId;
+    const operator = req.currentUser;
+
+    if (!registrationId) return res.status(400).json({ error: '缺少 registrationId' });
+
+    try {
+        const [teamRes, regRes] = await Promise.all([
+            supabase.from('competition_teams').select('*').eq('id', id).maybeSingle(),
+            supabase.from('registrations').select('*').eq('id', registrationId).maybeSingle()
+        ]);
+        if (teamRes.error) throw teamRes.error;
+        if (regRes.error) throw regRes.error;
+
+        const team = teamRes.data;
+        const reg = regRes.data;
+        if (!team || team.is_deleted) return res.status(404).json({ error: '找不到該隊伍' });
+        if (!reg || reg.is_deleted) return res.status(404).json({ error: '找不到該報名紀錄' });
+        if (String(reg.competition_id) !== String(team.competition_id)) {
+            return res.status(400).json({ error: '報名紀錄與隊伍不屬於同一場賽事' });
+        }
+
+        const comp = await fetchCompetition(team.competition_id);
+        const teamSize = parseInt(comp && comp.team_size, 10) || 0;
+        if (teamSize > 0) {
+            const { data: current, error: cntErr } = await supabase
+                .from('registrations')
+                .select('id')
+                .eq('team_id', team.id)
+                .eq('is_deleted', false);
+            if (cntErr) throw cntErr;
+            const others = (current || []).filter((r) => String(r.id) !== String(reg.id)).length;
+            if (others >= teamSize) return res.status(400).json({ error: `此隊伍已達人數上限（${teamSize} 人）` });
+        }
+
+        const { error: updErr } = await supabase.from('registrations').update({ team_id: team.id }).eq('id', reg.id);
+        if (updErr) throw updErr;
+
+        await logAudit(operator.username, 'ASSIGN_TEAM_MEMBER', team.competition_id,
+            `編排 ${reg.username} 至隊伍「${team.name}」`, req.userAgent);
+
+        res.json({ message: `已將 ${reg.username} 編入「${team.name}」` });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'assign_team_member_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 移除隊員（超級管理員以上）
+app.delete('/api/teams/:id/members/:registrationId', requireSuperAdmin, async (req, res) => {
+    const { id, registrationId } = req.params;
+    const operator = req.currentUser;
+
+    try {
+        const { data: reg, error } = await supabase.from('registrations').select('*').eq('id', registrationId).maybeSingle();
+        if (error) throw error;
+        if (!reg || reg.is_deleted) return res.status(404).json({ error: '找不到該報名紀錄' });
+        if (String(reg.team_id) !== String(id)) return res.status(400).json({ error: '此報名者不在該隊伍中' });
+
+        const { error: updErr } = await supabase.from('registrations').update({ team_id: null }).eq('id', registrationId);
+        if (updErr) throw updErr;
+
+        await logAudit(operator.username, 'REMOVE_TEAM_MEMBER', reg.competition_id,
+            `將 ${reg.username} 移出隊伍`, req.userAgent);
+
+        res.json({ message: `已將 ${reg.username} 移出隊伍` });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'remove_team_member_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 const CMCSV = require('./public/js/csv.js');
 
 // 純函式：以「名稱 + 開始日期」判斷重複，回傳要新增與要跳過的清單（方便單元測試）
@@ -996,5 +1596,17 @@ app.__test__ = {
     isMissingColumnError,
     hasTaxonomyContent,
     shouldIncludeTaxonomy,
-    planImport
+    planImport,
+    // v2.9.0
+    normalizeTeamFields,
+    hasTeamFieldsContent,
+    shouldIncludeTeamFields,
+    registrationState,
+    isMissingTableError,
+    toDateString,
+    hashPassword,
+    verifyPassword,
+    allowRegisterAttempt,
+    USERNAME_RE,
+    PASSWORD_RE
 };

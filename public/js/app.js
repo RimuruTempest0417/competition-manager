@@ -3,6 +3,11 @@ let currentUser = null;
 let currentBase64Screenshot = '';
 let currentPosterItem = null;
 let currentView = 'list';                                        // 'list' | 'calendar'
+let regCounts = {};                                             // 各賽事報名人數（v2.9.0）
+let myRegistrations = [];                                       // 我的報名（v2.9.0）
+let currentRegisterItem = null;                                 // 正在報名的賽事
+let currentTeamComp = null;                                     // 隊伍編排視窗對應的賽事
+let loginMode = 'login';                                        // 'login' | 'register'
 let CM_META = { categories: [], maxTags: 10, maxTagLength: 24 }; // 由 GET /api/meta 取得
 
 // 下拉選單開關邏輯
@@ -111,6 +116,7 @@ function getRoleEmoji(role, username = '') {
         case 'super_admin': return '🧑🏻‍💼';
         case 'admin': return '💼';
         case 'test': return '🧪';
+        case 'user': return '🙋';
         default: return '👤';
     }
 }
@@ -123,6 +129,7 @@ function getRoleLabel(role, username = '') {
         case 'super_admin': return '超級管理員';
         case 'admin': return '一般管理員';
         case 'test': return '測試帳號';
+        case 'user': return '普通用戶';
         default: return '一般使用者';
     }
 }
@@ -130,7 +137,8 @@ function getRoleLabel(role, username = '') {
 function getRoleBadge(role, username = '') {
     const badgeClass = role === 'web_owner' ? 'bg-amber-100 text-amber-800 font-bold' :
         role === 'super_admin' ? 'bg-indigo-100 text-indigo-700 font-medium' :
-            'bg-slate-100 text-slate-600';
+            role === 'user' ? 'bg-emerald-100 text-emerald-700 font-medium' :
+                'bg-slate-100 text-slate-600';
     const roleLabel = getRoleLabel(role, username);
     return `<span class="${badgeClass} text-[10px] px-2 py-0.5 rounded">${getRoleEmoji(role, username)} ${roleLabel}</span>`;
 }
@@ -625,7 +633,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('bugScreenshot')?.addEventListener('change', previewScreenshot);
 
     document.getElementById('cancelLoginBtn')?.addEventListener('click', closeLoginModal);
-    document.getElementById('submitLoginBtn')?.addEventListener('click', performLogin);
+    // 同一個按鈕依模式執行「登入」或「註冊」
+    document.getElementById('submitLoginBtn')?.addEventListener('click', () => {
+        return loginMode === 'register' ? performRegister() : performLogin();
+    });
+    document.getElementById('toggleRegisterBtn')?.addEventListener('click', toggleLoginMode);
+    document.getElementById('authBtn')?.addEventListener('click', () => { setLoginMode('login'); setLoginNotice(''); });
+    document.getElementById('loginPassword')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') (loginMode === 'register' ? performRegister() : performLogin());
+    });
+
+    // 報名 / 我的報名 / 隊伍編排（v2.9.0）
+    document.getElementById('closeRegisterModalBtn')?.addEventListener('click', closeRegisterModal);
+    document.getElementById('closeRegisterModalBtn2')?.addEventListener('click', closeRegisterModal);
+    document.getElementById('confirmRegisterBtn')?.addEventListener('click', confirmRegister);
+
+    document.getElementById('myRegsBtn')?.addEventListener('click', openMyRegsModal);
+    document.getElementById('closeMyRegsModalBtn')?.addEventListener('click', closeMyRegsModal);
+    document.getElementById('closeMyRegsModalBtn2')?.addEventListener('click', closeMyRegsModal);
+    document.getElementById('myRegsList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn || btn.dataset.action !== 'cancel-reg') return;
+        cancelRegistration(Number(btn.dataset.id));
+    });
+
+    document.getElementById('cancelEditBtn')?.addEventListener('click', clearTeamFormFields);
+    document.getElementById('closeTeamModalBtn')?.addEventListener('click', closeTeamModal);
+    document.getElementById('closeTeamModalBtn2')?.addEventListener('click', closeTeamModal);
+    document.getElementById('createTeamBtn')?.addEventListener('click', createTeam);
+    document.getElementById('unassignedList')?.addEventListener('change', (e) => {
+        const sel = e.target.closest('select');
+        if (!sel || sel.dataset.action !== 'assign-select') return;
+        assignTeamMember(Number(sel.dataset.id), Number(sel.value));
+    });
+    document.getElementById('teamList')?.addEventListener('change', (e) => {
+        const sel = e.target.closest('select');
+        if (!sel || sel.dataset.action !== 'move-member') return;
+        assignTeamMember(Number(sel.dataset.id), Number(sel.value));
+    });
+    document.getElementById('teamList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        if (btn.dataset.action === 'delete-team') deleteTeam(Number(btn.dataset.id));
+        else if (btn.dataset.action === 'remove-member') removeTeamMember(Number(btn.dataset.id));
+    });
 
     document.getElementById('closeAuditModalBtn')?.addEventListener('click', closeAuditLogModal);
     document.getElementById('closeAuditModalBtn2')?.addEventListener('click', closeAuditLogModal);
@@ -683,6 +734,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             openPosterModal(id);
         } else if (action === 'toggle-subscribe') {
             toggleSubscription(id);
+        } else if (action === 'register-comp') {
+            openRegisterModal(id);
+        } else if (action === 'my-regs') {
+            openMyRegsModal();
+        } else if (action === 'manage-teams') {
+            openTeamModal(id);
         } else if (action === 'copy-comp') {
             copyCompetition(id);
         } else if (action === 'edit-comp') {
@@ -741,6 +798,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     updateUIByRole();
     await fetchMeta();          // 先取得分類清單，卡片才能顯示分類徽章
+    await fetchRegistrationCounts();              // v2.9.0：報名人數與公開設定
+    if (currentUser) await fetchMyRegistrations(); // v2.9.0：我的報名
     await fetchCompetitions();
 });
 
@@ -758,6 +817,7 @@ function updateUIByRole() {
     const authBtn = document.getElementById('authBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const menuDivider = document.getElementById('menuDivider');
+    const myRegsBtn = document.getElementById('myRegsBtn');
 
     if (!currentUser) {
         authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200";
@@ -771,6 +831,7 @@ function updateUIByRole() {
         mainTrashBtn?.classList.add('hidden');
         changePwdBtn?.classList.add('hidden');
         menuDivider?.classList.add('hidden');
+        myRegsBtn?.classList.add('hidden');
 
         authBtn?.classList.remove('hidden');
         logoutBtn?.classList.add('hidden');
@@ -780,8 +841,12 @@ function updateUIByRole() {
         createSection?.classList.remove('hidden');
         changePwdBtn?.classList.remove('hidden');
         menuDivider?.classList.remove('hidden');
+        myRegsBtn?.classList.remove('hidden');
         authBtn?.classList.add('hidden');
         logoutBtn?.classList.remove('hidden');
+
+        // 登入後補載「我的報名」（v2.9.0）
+        if (currentUser && !myRegistrations.length) fetchMyRegistrations();
 
         if (currentUser.role === 'web_owner') {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-bold";
@@ -807,6 +872,16 @@ function updateUIByRole() {
             adminMgmtBtn?.classList.add('hidden');
             mainTrashBtn?.classList.add('hidden');
             csvToolBtn?.classList.add('hidden');
+        } else if (currentUser.role === 'user') {
+            // 普通用戶：可瀏覽、報名、管理自己的報名與密碼；不可發佈或管理賽事
+            authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300";
+            authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
+            createSection?.classList.add('hidden');
+            auditLogBtn?.classList.add('hidden');
+            btnErrorLogs?.classList.add('hidden');
+            adminMgmtBtn?.classList.add('hidden');
+            mainTrashBtn?.classList.add('hidden');
+            csvToolBtn?.classList.add('hidden');
         } else {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
             authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
@@ -818,6 +893,557 @@ function updateUIByRole() {
         }
     }
     renderCurrentView(allCompetitions);
+}
+
+/* ==========================================
+   報名參加與隊伍編排（v2.9.0）
+   - 報名一律需要登入（普通用戶 user 角色即可）；訪客點「報名」會先開啟登入視窗。
+   - 組隊比賽需填隊伍名稱，管理員以上可再編排隊伍。
+   - 開放與否由後端 registrationState 權威判斷，前端僅同步顯示（多擋一次是為了體驗）。
+   ========================================== */
+
+function todayString(d) {
+    const now = d instanceof Date ? d : new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function clientRegistrationState(item) {
+    if (!item) return { open: false, reason: '找不到該賽事' };
+    if (!item.is_registration_open) return { open: false, reason: '未開放報名' };
+
+    const today = todayString();
+    if (item.registration_deadline && today > String(item.registration_deadline).slice(0, 10)) {
+        return { open: false, reason: '報名已截止' };
+    }
+    if (item.date && today > String(item.date).slice(0, 10)) {
+        return { open: false, reason: '已結束' };
+    }
+
+    const max = Number(item.max_registrations) || 0;
+    const count = Number(regCounts[String(item.id)]) || 0;
+    if (max > 0 && count >= max) return { open: false, reason: '已額滿' };
+
+    return { open: true, reason: '' };
+}
+
+// 是否為管理員以上（與後端 ADMIN_ROLES 一致：test 帳號不具管理權）
+function isAdminUser() {
+    return !!currentUser && ['admin', 'super_admin', 'web_owner'].includes(currentUser.role);
+}
+
+function isMyRegistration(id) {
+    return myRegistrations.some((r) => String(r.competition_id) === String(id));
+}
+
+function regStatusBadgeHtml(item) {
+    const state = clientRegistrationState(item);
+    if (state.open) {
+        return '<span class="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">🔥 報名中</span>';
+    }
+    return `<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium">${escapeHtml(state.reason)}</span>`;
+}
+
+function regMetaHtml(item) {
+    const parts = [];
+    const count = Number(regCounts[String(item.id)]) || 0;
+    if (count > 0) parts.push(`<span class="text-emerald-600 font-medium">👥 ${count} 人已報名</span>`);
+    if (Number(item.max_registrations) > 0) parts.push(`<span>名額 ${item.max_registrations} 人</span>`);
+    if (item.is_team_event && Number(item.team_size) > 0) parts.push(`<span>每隊上限 ${item.team_size} 人</span>`);
+    if (item.registration_deadline) {
+        const open = clientRegistrationState(item).open;
+        parts.push(`<span class="${open ? '' : 'text-red-500'}">⏰ 報名截止 ${escapeHtml(String(item.registration_deadline).slice(0, 10))}</span>`);
+    }
+    return parts.join('');
+}
+
+function registrationButtonHtml(item) {
+    if (isMyRegistration(item.id)) {
+        return '<button data-action="my-regs" class="text-xs text-emerald-700 bg-emerald-100 hover:bg-emerald-200 font-medium px-2.5 py-1 rounded transition">✅ 已報名</button>';
+    }
+    const state = clientRegistrationState(item);
+    if (state.open) {
+        return `<button data-action="register-comp" data-id="${item.id}" class="text-xs text-white bg-blue-600 hover:bg-blue-700 font-medium px-2.5 py-1 rounded transition">📝 報名</button>`;
+    }
+    return `<button data-action="register-comp" data-id="${item.id}" class="text-xs text-slate-500 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">🔒 ${escapeHtml(state.reason)}</button>`;
+}
+
+/* ---------- 登入 / 註冊視窗 ---------- */
+function setLoginNotice(message, type) {
+    const el = document.getElementById('loginNotice');
+    if (!el) return;
+    if (!message) { el.classList.add('hidden'); el.textContent = ''; return; }
+
+    const cls = type === 'error' ? 'bg-red-50 border-red-200 text-red-700'
+        : type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            : 'bg-blue-50 border-blue-200 text-blue-700';
+    el.className = 'text-xs p-2.5 rounded-lg border ' + cls;
+    el.textContent = message;
+    el.classList.remove('hidden');
+}
+
+function setLoginMode(mode) {
+    loginMode = mode === 'register' ? 'register' : 'login';
+    const isRegister = loginMode === 'register';
+
+    const title = document.getElementById('loginModalTitle');
+    if (title) title.innerText = isRegister ? '註冊新帳號 Register' : '登入 Login';
+    document.getElementById('registerFields')?.classList.toggle('hidden', !isRegister);
+    const submit = document.getElementById('submitLoginBtn');
+    if (submit) submit.innerText = isRegister ? '註冊並登入' : '登入';
+    const hint = document.getElementById('loginModeHint');
+    if (hint) hint.innerText = isRegister ? '已經有帳號？' : '還沒有帳號？';
+    const toggle = document.getElementById('toggleRegisterBtn');
+    if (toggle) toggle.innerText = isRegister ? '登入' : '註冊新帳號';
+
+    const needCode = !!(CM_META.registration && CM_META.registration.codeRequired);
+    document.getElementById('registerCodeWrap')?.classList.toggle('hidden', !isRegister || !needCode);
+
+    setLoginNotice('');
+}
+
+function toggleLoginMode() {
+    setLoginMode(loginMode === 'register' ? 'login' : 'register');
+}
+
+function openLoginModal(message) {
+    closeNavDropdown();
+    setLoginMode('login');
+    const userEl = document.getElementById('loginUsername');
+    const passEl = document.getElementById('loginPassword');
+    const pass2El = document.getElementById('registerPassword2');
+    if (userEl) userEl.value = '';
+    if (passEl) passEl.value = '';
+    if (pass2El) pass2El.value = '';
+    setLoginNotice(message || '', 'info');
+    document.getElementById('loginModal')?.classList.remove('hidden');
+    userEl?.focus();
+}
+
+async function performRegister() {
+    const username = (document.getElementById('loginUsername').value || '').trim();
+    const password = document.getElementById('loginPassword').value || '';
+    const password2 = document.getElementById('registerPassword2').value || '';
+    const codeEl = document.getElementById('registerCode');
+
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+        return setLoginNotice('帳號格式錯誤：請用 3~20 個英文字母、數字或底線', 'error');
+    }
+    if (!/^[a-zA-Z0-9]{6,64}$/.test(password)) {
+        return setLoginNotice('密碼格式錯誤：請用 6~64 個英文字母或數字', 'error');
+    }
+    if (password !== password2) return setLoginNotice('兩次輸入的密碼不一致', 'error');
+
+    const btn = document.getElementById('submitLoginBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+        const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password, registration_code: codeEl ? codeEl.value.trim() : '' })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '註冊失敗');
+
+        localStorage.setItem('auth_token', data.token);
+        localStorage.setItem('competition_user', JSON.stringify(data.user));
+        currentUser = data.user;
+
+        closeLoginModal();
+        await fetchMyRegistrations();
+        updateUIByRole();
+        alert(`註冊成功，歡迎 ${data.user.username}！你現在可以報名參加比賽了。`);
+    } catch (err) {
+        setLoginNotice(err.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+/* ---------- 報名 ---------- */
+function setRegisterMsg(message, type) {
+    const el = document.getElementById('registerMsg');
+    if (!el) return;
+    if (!message) { el.classList.add('hidden'); el.textContent = ''; return; }
+
+    el.className = 'text-xs p-2.5 rounded-lg border ' + (type === 'error'
+        ? 'bg-red-50 border-red-200 text-red-700'
+        : 'bg-emerald-50 border-emerald-200 text-emerald-700');
+    el.textContent = message;
+    el.classList.remove('hidden');
+}
+
+async function fetchRegistrationCounts() {
+    try {
+        const [countsRes, cfgRes] = await Promise.all([
+            fetch('/api/registration-counts'),
+            fetch('/api/public-config')
+        ]);
+
+        if (countsRes.ok) {
+            const data = await countsRes.json();
+            regCounts = data.counts || {};
+        }
+        if (cfgRes.ok) {
+            const cfg = await cfgRes.json();
+            CM_META.registration = { codeRequired: !!cfg.requireRegistrationCode };
+        }
+    } catch (e) {
+        regCounts = {};   // 未執行 migration 或離線時不影響瀏覽
+    }
+}
+
+function clearTeamFormFields() {
+    const setValue = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const setChecked = (id, v) => { const el = document.getElementById(id); if (el) el.checked = v; };
+
+    setChecked('is_team_event', false);
+    setValue('team_size', '');
+    setValue('max_registrations', '');
+    setValue('registration_deadline', '');
+}
+
+async function fetchMyRegistrations() {
+    if (!currentUser) { myRegistrations = []; return; }
+    try {
+        const res = await customFetch('/api/my/registrations');
+        myRegistrations = res.ok ? await res.json() : [];
+    } catch (e) {
+        myRegistrations = [];
+    }
+}
+
+function openRegisterModal(id) {
+    const item = allCompetitions.find((c) => c.id === id);
+    if (!item) return;
+
+    // 需求：訪客點「報名」必須先登入
+    if (!currentUser) {
+        openLoginModal('請先登入或註冊帳號，才能報名參加比賽。');
+        return;
+    }
+
+    currentRegisterItem = item;
+    const state = clientRegistrationState(item);
+    const count = Number(regCounts[String(item.id)]) || 0;
+
+    const info = document.getElementById('registerCompInfo');
+    if (info) {
+        info.innerHTML = `
+            <p class="font-bold text-slate-800">${escapeHtml(item.name)}</p>
+            <p class="mt-1">📅 ${escapeHtml(item.date || '')}${item.time ? ' ' + escapeHtml(item.time) : ''}${item.end_date ? ' ~ ' + escapeHtml(item.end_date) : ''}</p>
+            ${item.location ? `<p>📍 ${escapeHtml(item.location)}</p>` : ''}
+            <p>🙋 報名者：${escapeHtml(currentUser.username)}</p>
+            ${item.is_team_event ? '<p class="text-indigo-700 font-medium mt-1">👥 此為組隊比賽，請填寫隊伍名稱（管理員會再依此編排）</p>' : ''}
+            ${count > 0 ? `<p class="mt-1 text-emerald-600">目前已報名 ${count} 人</p>` : ''}
+            ${state.open ? '' : `<p class="text-red-600 font-medium mt-1">🔒 ${escapeHtml(state.reason)}</p>`}
+        `;
+    }
+
+    document.getElementById('registerTeamWrap')?.classList.toggle('hidden', !item.is_team_event);
+    const teamInput = document.getElementById('registerTeamName');
+    if (teamInput) teamInput.value = '';
+    const noteEl = document.getElementById('registerNote');
+    if (noteEl) noteEl.value = '';
+
+    setRegisterMsg('');
+    const confirmBtn = document.getElementById('confirmRegisterBtn');
+    if (confirmBtn) {
+        confirmBtn.disabled = !state.open;
+        confirmBtn.innerText = state.open ? '確認報名' : '無法報名';
+    }
+    document.getElementById('registerModal')?.classList.remove('hidden');
+}
+
+function closeRegisterModal() {
+    document.getElementById('registerModal')?.classList.add('hidden');
+    currentRegisterItem = null;
+}
+
+async function confirmRegister() {
+    const item = currentRegisterItem;
+    if (!item) return;
+
+    const teamName = (document.getElementById('registerTeamName').value || '').trim();
+    const note = (document.getElementById('registerNote').value || '').trim();
+
+    if (item.is_team_event && !teamName) return setRegisterMsg('此為組隊比賽，請填寫隊伍名稱', 'error');
+
+    const btn = document.getElementById('confirmRegisterBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+        const res = await customFetch(`/api/competitions/${item.id}/register`, {
+            method: 'POST',
+            body: JSON.stringify({ team_name: teamName, note })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '報名失敗');
+
+        closeRegisterModal();
+        await Promise.all([fetchRegistrationCounts(), fetchMyRegistrations()]);
+        updateUIByRole();
+        alert(data.message || '報名成功！');
+    } catch (err) {
+        setRegisterMsg(err.message, 'error');
+        if (btn) btn.disabled = false;
+    }
+}
+
+/* ---------- 我的報名 ---------- */
+function renderMyRegs() {
+    const list = document.getElementById('myRegsList');
+    if (!list) return;
+
+    if (!myRegistrations.length) {
+        list.innerHTML = '<p class="text-center text-slate-400 py-6 text-sm">目前沒有報名紀錄</p>';
+        return;
+    }
+
+    list.innerHTML = myRegistrations.map((r) => {
+        const comp = r.competitions || {};
+        return `
+        <div class="border border-slate-200 rounded-lg p-3 flex justify-between items-start gap-3">
+            <div class="min-w-0">
+                <p class="text-sm font-bold text-slate-800">${escapeHtml(comp.name || '(賽事已刪除)')}</p>
+                <p class="text-xs text-slate-500 mt-0.5">📅 ${escapeHtml(comp.date || '')}${comp.time ? ' ' + escapeHtml(comp.time) : ''}${comp.location ? ' ｜ 📍 ' + escapeHtml(comp.location) : ''}</p>
+                ${comp.is_team_event && r.team_name ? `<p class="text-xs text-indigo-600 mt-0.5">👥 隊伍：${escapeHtml(r.team_name)}</p>` : ''}
+                ${r.note ? `<p class="text-xs text-slate-500 mt-0.5">📝 ${escapeHtml(r.note)}</p>` : ''}
+                <p class="text-xs text-slate-400 mt-0.5">報名時間：${escapeHtml(String(r.created_at || '').slice(0, 16).replace('T', ' '))}</p>
+            </div>
+            <button data-action="cancel-reg" data-id="${r.id}"
+                class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition shrink-0">取消報名</button>
+        </div>`;
+    }).join('');
+}
+
+async function openMyRegsModal() {
+    if (!currentUser) return openLoginModal('請先登入才能查看你的報名紀錄。');
+
+    closeNavDropdown();
+    const list = document.getElementById('myRegsList');
+    if (list) list.innerHTML = '<p class="text-center text-slate-400 py-6 text-sm">載入中…</p>';
+    document.getElementById('myRegsModal')?.classList.remove('hidden');
+
+    await fetchMyRegistrations();
+    renderMyRegs();
+}
+
+function closeMyRegsModal() {
+    document.getElementById('myRegsModal')?.classList.add('hidden');
+}
+
+async function cancelRegistration(regId) {
+    if (!regId) return;
+    if (!confirm('確定要取消這筆報名嗎？取消後可重新報名（若仍開放）。')) return;
+
+    try {
+        const res = await customFetch(`/api/registrations/${regId}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '取消失敗');
+
+        await Promise.all([fetchRegistrationCounts(), fetchMyRegistrations()]);
+        renderMyRegs();
+        if (currentTeamComp) await loadTeams(currentTeamComp.id);
+        updateUIByRole();
+        alert(data.message || '已取消報名');
+    } catch (err) {
+        alert('操作失敗：' + err.message);
+    }
+}
+
+/* ---------- 報名名單與隊伍編排（管理員以上） ---------- */
+function setTeamMsg(message, type) {
+    const el = document.getElementById('teamMsg');
+    if (!el) return;
+    if (!message) { el.classList.add('hidden'); el.textContent = ''; return; }
+
+    el.className = 'text-xs p-2.5 rounded-lg border ' + (type === 'error'
+        ? 'bg-red-50 border-red-200 text-red-700'
+        : 'bg-emerald-50 border-emerald-200 text-emerald-700');
+    el.textContent = message;
+    el.classList.remove('hidden');
+}
+
+async function openTeamModal(id) {
+    const item = allCompetitions.find((c) => c.id === id);
+    if (!item) return;
+    if (!currentUser) return openLoginModal('請先登入。');
+    if (!isAdminUser()) {
+        return alert('權限不足：只有管理員以上可以檢視報名名單與編排隊伍');
+    }
+
+    currentTeamComp = item;
+    const title = document.getElementById('teamModalComp');
+    if (title) title.innerText = `${item.name}｜${item.date || '未定日期'}${item.is_team_event ? '｜👥 組隊比賽' : '｜個人賽'}`;
+
+    const canDelete = ['super_admin', 'web_owner'].includes(currentUser.role);
+    const hint = document.getElementById('teamRoleHint');
+    if (hint) {
+        hint.className = 'text-xs p-2.5 rounded-lg border ' + (canDelete
+            ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+            : 'bg-slate-50 border-slate-200 text-slate-600');
+        hint.innerText = canDelete
+            ? '你的權限：可建立隊伍、編排隊員，並可刪除隊伍與移除隊員（超級管理員以上）。'
+            : '你的權限：可建立隊伍與編排隊員；刪除隊伍與移除隊員需超級管理員以上。';
+    }
+
+    setTeamMsg('');
+    document.getElementById('teamModal')?.classList.remove('hidden');
+    await loadTeams(item.id);
+}
+
+function closeTeamModal() {
+    document.getElementById('teamModal')?.classList.add('hidden');
+    currentTeamComp = null;
+}
+
+async function loadTeams(compId) {
+    const unassignedEl = document.getElementById('unassignedList');
+    const teamEl = document.getElementById('teamList');
+    if (unassignedEl) unassignedEl.innerHTML = '<p class="text-xs text-slate-400">載入中…</p>';
+    if (teamEl) teamEl.innerHTML = '';
+
+    try {
+        const res = await customFetch(`/api/competitions/${compId}/teams`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '載入報名名單失敗');
+        renderTeams(data);
+    } catch (err) {
+        if (unassignedEl) unassignedEl.innerHTML = `<p class="text-xs text-red-600">${escapeHtml(err.message)}</p>`;
+    }
+}
+
+function renderTeams(data) {
+    const teams = data.teams || [];
+    const unassigned = data.unassigned || [];
+    const canDelete = !!data.canDelete;
+
+    const unassignedCountEl = document.getElementById('unassignedCount');
+    const teamCountEl = document.getElementById('teamCount');
+    if (unassignedCountEl) unassignedCountEl.innerText = String(unassigned.length);
+    if (teamCountEl) teamCountEl.innerText = String(teams.length);
+
+    const unassignedEl = document.getElementById('unassignedList');
+    if (unassignedEl) {
+        unassignedEl.innerHTML = unassigned.length === 0
+            ? '<p class="text-xs text-slate-400">所有報名者都已編排完成 🎉</p>'
+            : unassigned.map((r) => `
+                <div class="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <p class="text-xs text-slate-700 truncate">🙋 ${escapeHtml(r.username)}${r.team_name ? ` <span class="text-slate-400">（自填：${escapeHtml(r.team_name)}）</span>` : ''}</p>
+                    ${teams.length ? `<select data-action="assign-select" data-id="${r.id}"
+                        class="text-xs border border-slate-300 rounded px-2 py-1 shrink-0">
+                        <option value="">編入隊伍…</option>
+                        ${teams.map((t) => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('')}
+                    </select>` : ''}
+                </div>`).join('');
+    }
+
+    const teamEl = document.getElementById('teamList');
+    if (teamEl) {
+        teamEl.innerHTML = teams.length === 0
+            ? '<p class="text-xs text-slate-400">還沒有任何隊伍，請先建立隊伍。</p>'
+            : teams.map((t) => `
+                <div class="border border-slate-200 rounded-lg">
+                    <div class="flex items-center justify-between gap-2 bg-slate-50 px-3 py-2 rounded-t-lg">
+                        <p class="text-sm font-bold text-slate-800">👥 ${escapeHtml(t.name)}
+                            <span class="text-xs font-normal text-slate-500">（${t.members.length} 人）</span></p>
+                        ${canDelete ? `<button data-action="delete-team" data-id="${t.id}"
+                            class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition shrink-0">刪除隊伍</button>` : ''}
+                    </div>
+                    ${t.note ? `<p class="text-xs text-slate-500 px-3 pt-2">📝 ${escapeHtml(t.note)}</p>` : ''}
+                    <div class="p-3 space-y-1.5">
+                        ${t.members.length === 0 ? '<p class="text-xs text-slate-400">尚無隊員</p>' : t.members.map((m) => `
+                            <div class="flex items-center justify-between gap-2">
+                                <p class="text-xs text-slate-700 truncate">🙋 ${escapeHtml(m.username)}</p>
+                                <div class="flex items-center gap-1 shrink-0">
+                                    ${teams.length > 1 ? `<select data-action="move-member" data-id="${m.id}"
+                                        class="text-xs border border-slate-300 rounded px-1.5 py-0.5">
+                                        <option value="">移動至…</option>
+                                        ${teams.filter((x) => String(x.id) !== String(t.id)).map((x) => `<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('')}
+                                    </select>` : ''}
+                                    ${canDelete ? `<button data-action="remove-member" data-id="${m.id}"
+                                        class="text-xs text-red-600 hover:text-red-800 px-2 py-0.5 rounded hover:bg-red-50 transition">移出</button>` : ''}
+                                </div>
+                            </div>`).join('')}
+                    </div>
+                </div>`).join('');
+    }
+}
+
+async function createTeam() {
+    const comp = currentTeamComp;
+    if (!comp) return;
+
+    const name = (document.getElementById('newTeamName').value || '').trim();
+    const note = (document.getElementById('newTeamNote').value || '').trim();
+    if (!name) return setTeamMsg('請輸入隊伍名稱', 'error');
+
+    try {
+        const res = await customFetch(`/api/competitions/${comp.id}/teams`, {
+            method: 'POST',
+            body: JSON.stringify({ name, note })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '建立隊伍失敗');
+
+        document.getElementById('newTeamName').value = '';
+        document.getElementById('newTeamNote').value = '';
+        setTeamMsg(data.message || '隊伍已建立', 'success');
+        await loadTeams(comp.id);
+    } catch (err) {
+        setTeamMsg(err.message, 'error');
+    }
+}
+
+async function assignTeamMember(regId, teamId) {
+    if (!regId || !teamId) return;
+    try {
+        const res = await customFetch(`/api/teams/${teamId}/members`, {
+            method: 'POST',
+            body: JSON.stringify({ registrationId: regId })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '編排失敗');
+        setTeamMsg(data.message || '已編排', 'success');
+        if (currentTeamComp) await loadTeams(currentTeamComp.id);
+    } catch (err) {
+        setTeamMsg(err.message, 'error');
+        if (currentTeamComp) await loadTeams(currentTeamComp.id);
+    }
+}
+
+async function removeTeamMember(regId) {
+    const comp = currentTeamComp;
+    if (!comp || !regId) return;
+    if (!confirm('確定要將這位報名者移出隊伍嗎？')) return;
+
+    try {
+        const res = await customFetch(`/api/teams/${comp.id}/members/${regId}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '移除失敗');
+        setTeamMsg(data.message || '已移出隊伍', 'success');
+        await loadTeams(comp.id);
+    } catch (err) {
+        setTeamMsg(err.message, 'error');
+    }
+}
+
+async function deleteTeam(teamId) {
+    const comp = currentTeamComp;
+    if (!comp || !teamId) return;
+    if (!confirm('確定要刪除這個隊伍嗎？隊員會回到未編排狀態（報名紀錄保留）。')) return;
+
+    try {
+        const res = await customFetch(`/api/teams/${teamId}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '刪除失敗');
+        setTeamMsg(data.message || '隊伍已刪除', 'success');
+        await loadTeams(comp.id);
+    } catch (err) {
+        setTeamMsg(err.message, 'error');
+    }
 }
 
 /* ==========================================
@@ -1406,7 +2032,8 @@ function competitionCardHtml(item) {
                     <h3 class="text-base font-bold text-slate-800">${escapeHtml(item.name)}</h3>
                     ${item.publisher_name ? `<span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium" title="權限層級：${escapeHtml(getRoleLabel(item.publisher_role, item.publisher_name))}"><span>${getRoleEmoji(item.publisher_role, item.publisher_name)}</span> <span>${escapeHtml(item.publisher_name)}</span></span>` : ''}
                     ${categoryBadgeHtml(item)}
-                    ${item.is_registration_open ? '<span class="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">🔥 報名中</span>' : '<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium">已截止</span>'}
+                    ${regStatusBadgeHtml(item)}
+                    ${item.is_team_event ? '<span class="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded-full font-medium">👥 組隊比賽</span>' : ''}
                     ${getBadgeStatus(item.date, item.end_date)}
                 </div>
                 
@@ -1417,6 +2044,10 @@ function competitionCardHtml(item) {
                 </div>
 
                 ${(Array.isArray(item.tags) && item.tags.length) ? `<div class="flex flex-wrap gap-1">${tagsBadgeHtml(item)}</div>` : ''}
+
+                <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                    ${regMetaHtml(item)}
+                </div>
 
                 ${item.description ? `<p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg whitespace-pre-line border border-slate-100">${escapeHtml(item.description)}</p>` : ''}
             </div>
@@ -1436,14 +2067,17 @@ function competitionCardHtml(item) {
                     🖼️ 分享海報
                 </button>
 
+                ${registrationButtonHtml(item)}
+
                 <button data-action="toggle-subscribe" data-id="${item.id}"
                         class="text-xs ${isSubscribed(item.id) ? 'text-emerald-700 bg-emerald-100 hover:bg-emerald-200 font-medium' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'} px-2.5 py-1 rounded transition">
                     ${isSubscribed(item.id) ? '🔔 已訂閱' : '🔕 訂閱提醒'}
                 </button>
 
-                ${currentUser ? `
+                ${isAdminUser() ? `
                     <button data-action="copy-comp" data-id="${item.id}" class="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded transition">複製發佈</button>
                     <button data-action="edit-comp" data-id="${item.id}" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">編輯</button>
+                    <button data-action="manage-teams" data-id="${item.id}" class="text-xs text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded transition">👥 報名／隊伍</button>
                     <button data-action="delete-comp" data-id="${item.id}" class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition">刪除</button>
                 ` : ''}
             </div>
@@ -1466,7 +2100,12 @@ async function handleFormSubmit(e) {
         description: document.getElementById('description').value,
         is_registration_open: document.getElementById('is_registration_open').checked,
         category: document.getElementById('category').value,
-        tags: parseTagInput(document.getElementById('tags').value)
+        tags: parseTagInput(document.getElementById('tags').value),
+        // v2.9.0：組隊比賽與報名設定
+        is_team_event: document.getElementById('is_team_event').checked,
+        team_size: Number(document.getElementById('team_size').value) || 0,
+        max_registrations: Number(document.getElementById('max_registrations').value) || 0,
+        registration_deadline: document.getElementById('registration_deadline').value || null
     };
 
     const url = editingId ? `/api/competitions/${editingId}` : '/api/competitions';
@@ -1486,6 +2125,7 @@ async function handleFormSubmit(e) {
         }
 
         resetForm();
+        clearTeamFormFields();
         fetchCompetitions();
         alert(editingId ? '比賽更新成功！' : '賽事發佈成功！');
     } catch (err) {
@@ -1508,6 +2148,10 @@ function startEdit(id) {
     document.getElementById('is_registration_open').checked = !!item.is_registration_open;
     document.getElementById('category').value = item.category || '';
     document.getElementById('tags').value = (Array.isArray(item.tags) ? item.tags : []).join(', ');
+    document.getElementById('is_team_event').checked = !!item.is_team_event;
+    document.getElementById('team_size').value = Number(item.team_size) > 0 ? item.team_size : '';
+    document.getElementById('max_registrations').value = Number(item.max_registrations) > 0 ? item.max_registrations : '';
+    document.getElementById('registration_deadline').value = item.registration_deadline ? String(item.registration_deadline).slice(0, 10) : '';
     renderTagPreview();
 
     document.getElementById('formTitle').innerText = '✏️ 編輯比賽資料';
@@ -1531,6 +2175,10 @@ function copyCompetition(id) {
     document.getElementById('is_registration_open').checked = !!item.is_registration_open;
     document.getElementById('category').value = item.category || '';
     document.getElementById('tags').value = (Array.isArray(item.tags) ? item.tags : []).join(', ');
+    document.getElementById('is_team_event').checked = !!item.is_team_event;
+    document.getElementById('team_size').value = Number(item.team_size) > 0 ? item.team_size : '';
+    document.getElementById('max_registrations').value = Number(item.max_registrations) > 0 ? item.max_registrations : '';
+    document.getElementById('registration_deadline').value = item.registration_deadline ? String(item.registration_deadline).slice(0, 10) : '';
     renderTagPreview();
 
     document.getElementById('formTitle').innerText = '➕ 發佈新比賽 (複製內容)';

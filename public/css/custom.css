@@ -131,6 +131,7 @@
     --cm-emerald-bd-300: #6ee7b7;
     --cm-emerald-tx-600: #059669;
     --cm-emerald-tx-700: #047857;
+    --cm-emerald-tx-900: #064e3b;
 
     /* indigo */
     --cm-indigo-50: #eef2ff;
@@ -221,6 +222,7 @@ html[data-theme="dark"] {
     --cm-emerald-bd-300: #27876c;
     --cm-emerald-tx-600: #34d399;
     --cm-emerald-tx-700: #6ee7b7;
+    --cm-emerald-tx-900: #a7f3d0;
 
     --cm-indigo-50: #1e2547;
     --cm-indigo-100: #2a3160;
@@ -308,6 +310,7 @@ html[data-theme="dark"] {
         --cm-emerald-bd-300: #27876c;
         --cm-emerald-tx-600: #34d399;
         --cm-emerald-tx-700: #6ee7b7;
+        --cm-emerald-tx-900: #a7f3d0;
 
         --cm-indigo-50: #1e2547;
         --cm-indigo-100: #2a3160;
@@ -580,6 +583,14 @@ body.bg-slate-100 {
 
 .text-emerald-700 {
     color: var(--cm-emerald-tx-700);
+}
+
+.text-emerald-900 {
+    color: var(--cm-emerald-tx-900);
+}
+
+.hover\:text-emerald-900:hover {
+    color: var(--cm-emerald-tx-900);
 }
 
 /* ---------- indigo ---------- */
