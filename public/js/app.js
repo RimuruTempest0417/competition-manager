@@ -519,10 +519,68 @@ async function customFetch(url, options = {}) {
     }
 }
 
+/* ==========================================
+   主題切換（跟隨系統 / 淺色 / 深色）
+   - 三態循環：system → light → dark → system
+   - 偏好存於 localStorage 的 cm-theme（純 UI 設定，不參與任何授權判斷；
+     後端授權只認 JWT）。
+   - 實際套用與首次繪製由 /js/theme-init.js 於 <head> 完成，此處只負責
+     按鈕文字與切換行為。
+   ========================================== */
+const THEME_ORDER = ['system', 'light', 'dark'];
+const THEME_LABELS = { system: '跟隨系統', light: '淺色', dark: '深色' };
+const THEME_ICONS = { system: '🌗', light: '☀️', dark: '🌙' };
+
+function getStoredTheme() {
+    try {
+        const t = localStorage.getItem('cm-theme');
+        return (t === 'light' || t === 'dark') ? t : 'system';
+    } catch (e) {
+        return 'system';
+    }
+}
+
+function updateThemeButton(theme) {
+    const btn = document.getElementById('themeToggleBtn');
+    if (!btn) return;
+    btn.textContent = `${THEME_ICONS[theme]} 主題：${THEME_LABELS[theme]}`;
+    btn.title = '點一下切換：跟隨系統 → 淺色 → 深色';
+}
+
+function applyTheme(theme) {
+    try {
+        if (theme === 'system') {
+            document.documentElement.removeAttribute('data-theme');
+            localStorage.removeItem('cm-theme');
+        } else {
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('cm-theme', theme);
+        }
+    } catch (e) {
+        // localStorage 不可用時仍套用本次切換（只是不會記住）
+        if (theme === 'system') {
+            document.documentElement.removeAttribute('data-theme');
+        } else {
+            document.documentElement.setAttribute('data-theme', theme);
+        }
+    }
+    if (window.CMTheme && window.CMTheme.syncThemeColorMeta) {
+        window.CMTheme.syncThemeColorMeta(theme);
+    }
+    updateThemeButton(theme);
+}
+
+function cycleTheme() {
+    const next = THEME_ORDER[(THEME_ORDER.indexOf(getStoredTheme()) + 1) % THEME_ORDER.length];
+    applyTheme(next);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     initTimeSelects();
+    updateThemeButton(getStoredTheme());
 
     // 綁定靜態按鈕事件
+    document.getElementById('themeToggleBtn')?.addEventListener('click', cycleTheme);
     document.getElementById('navMenuBtn')?.addEventListener('click', toggleNavDropdown);
     document.getElementById('menuBugReport')?.addEventListener('click', () => { openBugReportModal(); closeNavDropdown(); });
     document.getElementById('auditLogBtn')?.addEventListener('click', () => { openAuditLogModal(); closeNavDropdown(); });

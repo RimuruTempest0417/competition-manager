@@ -1,6 +1,6 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.5.0
+# 🏆 比賽管理系統 (Competition Manager) v2.6.0
 
-輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，並自動適配裝置深淺色模式。
+輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
 ---
 
@@ -83,7 +83,8 @@ competition-manager/
 │   │   ├── custom.css        # 自訂補強樣式（slate/amber/rose/emerald 色系、file input、modal 高度、深淺色模式）
 │   │   └── tailwind.min.css  # Tailwind CSS 2.2.19 本地靜態檔
 │   ├── js/
-│   │   └── app.js            # 前端 DOM 邏輯、fetch 攔截器與全域錯誤監聽器
+│   │   ├── app.js            # 前端 DOM 邏輯、fetch 攔截器與全域錯誤監聽器
+│   │   └── theme-init.js     # 主題初始化（<head> 同步執行，防止強制深色時閃爍）
 │   └── index.html            # 前端頁面結構
 ├── .env                      # 環境變數 (不進 Git)
 ├── .gitignore                # 忽略 node_modules 與環境變數設定
@@ -94,6 +95,21 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.6.0 (2026-09-23) - 主題手動切換與色票架構重構
+
+- **Feature — 主題三態切換**：
+  - 選單新增「🌗 主題」按鈕，循環切換 **跟隨系統 → 淺色 → 深色 → 跟隨系統**，可覆寫裝置系統設定。
+  - 選擇存於 `localStorage` 的 `cm-theme`；該值為純 UI 偏好，**不參與任何授權判斷**（後端授權仍只認 JWT）。
+  - 新增 `public/js/theme-init.js`，於 `<head>` **同步**執行並在首次繪製前套用 `<html data-theme>`，避免強制深色時出現淺色閃爍 (FOUC)。因 CSP 為 `script-src 'self'`，不可使用 inline script，故獨立成檔。
+  - `theme-color` meta 同步：跟隨系統時由 HTML 的 media 版決定；手動強制時由 JS 動態建立無 media 的 meta（置於最後 → 優先權最高）。
+- **Refactor — 色票集中為 CSS 自訂變數**：
+  - `custom.css` 改為 CSS 變數架構（`--cm-*`），淺色與深色色票各一份（「用途 3」），顏色 class 覆寫只寫一次並引用變數。
+  - 此為支援手動切換的必要重構：否則深色規則需複製一份給 `html[data-theme="dark"]`，日後每次改色都得改兩處。
+  - ⚠ 深色色票同時存在於 `html[data-theme="dark"]` 與 media query 內的 `html:not([data-theme="light"])`，改色時兩處需同步。
+- **Fix — 補上 `text-[10px]` / `text-[11px]`**：2.2.19 不支援任意值語法，這兩個 class 原本完全無效（徽章文字並未縮小）。現已補上等價規則，徽章文字會由 12px 變為 10px / 11px（淺色模式下亦同，屬預期修正）。
+- **Fix — 修正原本遺漏的 hover 變體**：`hover:bg-amber-700`、`hover:bg-emerald-700`（實心按鈕的深色態）在 v2.5.0 重構時一併確認已定義。
+- **Docs**：README 補上 `theme-init.js` 說明與主題切換技術細節。
 
 ### v2.5.0 (2026-09-23) - 裝置深淺色模式自動適配與啟動階段安全性強化
 

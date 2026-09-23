@@ -2,9 +2,13 @@
    自訂補強樣式 (Custom Overrides)
    用途 1：Tailwind 2.2.19 不支援任意值語法 (max-h-[90vh] 等)，
           補上等價 class，並強化 backdrop-blur 在 Safari 的相容性。
-   用途 2：Tailwind 2.2.19 缺少 slate / amber / rose / emerald
-          四個色系，這裡手動補上專案實際用到的 class。
-   用途 3：檔案選擇按鈕 (file input) 樣式，補上原生 CSS 避免
+   用途 2：Tailwind 2.2.19 缺少的任意值 class（text-[10px] 等）。
+   用途 3：主題色票 (CSS 變數)，深淺色模式的唯一真實來源。
+   用途 4：顏色 class 覆寫。因本地 tailwind.min.css 建置時 darkMode
+          為 false（無任何 dark: variant 可用），且缺少 slate / amber /
+          rose / emerald 四個色系（含其 hover 變體）與斜線透明度語法，
+          故於此檔一併覆寫。
+   用途 5：檔案選擇按鈕 (file input) 樣式，補上原生 CSS 避免
           依賴 Tailwind `file:` variant 支援度。
    ============================================================ */
 
@@ -28,24 +32,332 @@
     backdrop-filter: blur(4px);
 }
 
-/* ---------- 用途 2：slate 色系 (2.2.19 缺) ---------- */
+/* ---------- 用途 2：任意值語法補完 (2.2.19 不支援) ---------- */
+
+.text-\[10px\] {
+    font-size: 10px;
+    line-height: 1.4;
+}
+
+.text-\[11px\] {
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+/* ============================================================
+   用途 3：主題色票 (CSS 變數)
+   ------------------------------------------------------------
+   三態切換（由 public/js/app.js 設定）：
+
+     <html> 無 data-theme        → 跟隨裝置系統 (prefers-color-scheme)
+     <html data-theme="light">   → 強制淺色（裝置為深色時仍為淺色）
+     <html data-theme="dark">    → 強制深色（裝置為淺色時仍為深色）
+
+   選擇儲存於 localStorage 的 cm-theme，屬純 UI 偏好，
+   不參與任何授權判斷（後端授權只看 JWT）。
+
+   ⚠ 深色色票必須在兩個地方保持一致：
+       html[data-theme="dark"] 與 media query 內的 html:not([data-theme="light"])
+     改色時兩處要一起改，否則手動切換與跟隨系統會不一致。
+   ============================================================ */
+
+:root {
+    color-scheme: light;
+
+    /* 中性色：頁面 → 卡片 → 內嵌面板 → chip，階層不可顛倒 */
+    --cm-page: #f1f5f9;
+    --cm-surface: #ffffff;
+    --cm-inset: #f8fafc;
+    --cm-cell: #f1f5f9;
+    --cm-cell-2: #e2e8f0;
+    --cm-cell-3: #cbd5e1;
+    --cm-hover-solid-700: #1e293b;
+
+    /* 邊框 */
+    --cm-bd-100: #f1f5f9;
+    --cm-bd-200: #e2e8f0;
+    --cm-bd-300: #cbd5e1;
+
+    /* 文字（slate-400 兩主題相同，不使用變數） */
+    --cm-tx-500: #64748b;
+    --cm-tx-600: #475569;
+    --cm-tx-700: #334155;
+    --cm-tx-800: #1e293b;
+    --cm-tx-900: #0f172a;
+
+    /* 遮罩與半透明 */
+    --cm-overlay: rgba(15, 23, 42, 0.5);
+    --cm-tint-5: rgba(15, 23, 42, 0.05);
+    --cm-tint-white60: rgba(255, 255, 255, 0.6);
+
+    /* 表單欄位底色 */
+    --cm-field: #ffffff;
+
+    /* blue */
+    --cm-blue-50: #eff6ff;
+    --cm-blue-100: #dbeafe;
+    --cm-blue-bd-200: #bfdbfe;
+    --cm-blue-bd-300: #93c5fd;
+    --cm-blue-tx-600: #2563eb;
+    --cm-blue-tx-700: #1d4ed8;
+    --cm-blue-tx-800: #1e40af;
+
+    /* red */
+    --cm-red-50: #fef2f2;
+    --cm-red-100: #fee2e2;
+    --cm-red-200: #fecaca;
+    --cm-red-bd-100: #fee2e2;
+    --cm-red-bd-200: #fecaca;
+    --cm-red-bd-300: #fca5a5;
+    --cm-red-tx-500: #ef4444;
+    --cm-red-tx-600: #dc2626;
+    --cm-red-tx-700: #b91c1c;
+    --cm-red-tx-800: #991b1b;
+
+    /* amber */
+    --cm-amber-50: #fffbeb;
+    --cm-amber-100: #fef3c7;
+    --cm-amber-bd-300: #fcd34d;
+    --cm-amber-tx-700: #b45309;
+    --cm-amber-tx-800: #92400e;
+
+    /* emerald */
+    --cm-emerald-50: #ecfdf5;
+    --cm-emerald-100: #d1fae5;
+    --cm-emerald-bd-200: #a7f3d0;
+    --cm-emerald-bd-300: #6ee7b7;
+    --cm-emerald-tx-600: #059669;
+    --cm-emerald-tx-700: #047857;
+
+    /* indigo */
+    --cm-indigo-50: #eef2ff;
+    --cm-indigo-100: #e0e7ff;
+    --cm-indigo-bd-300: #a5b4fc;
+    --cm-indigo-tx-600: #4f46e5;
+    --cm-indigo-tx-700: #4338ca;
+    --cm-indigo-tx-800: #3730a3;
+
+    /* purple */
+    --cm-purple-50: #f5f3ff;
+    --cm-purple-100: #ede9fe;
+    --cm-purple-bd-200: #ddd6fe;
+    --cm-purple-bd-300: #c4b5fd;
+    --cm-purple-tx-700: #6d28d9;
+    --cm-purple-tx-900: #4c1d95;
+
+    /* rose */
+    --cm-rose-100: #ffe4e6;
+    --cm-rose-bd-300: #fda4af;
+    --cm-rose-tx-700: #be123c;
+
+    /* file input */
+    --cm-file-bg: #eff6ff;
+    --cm-file-fg: #1d4ed8;
+    --cm-file-bg-hover: #dbeafe;
+}
+
+/* 深色票（手動強制深色） */
+html[data-theme="dark"] {
+    color-scheme: dark;
+
+    --cm-page: #0f172a;
+    --cm-surface: #1e293b;
+    --cm-inset: #223049;
+    --cm-cell: #2b3a52;
+    --cm-cell-2: #3d4d66;
+    --cm-cell-3: #64748b;
+    --cm-hover-solid-700: #475569;
+
+    --cm-bd-100: #2b3a52;
+    --cm-bd-200: #334155;
+    --cm-bd-300: #475569;
+
+    --cm-tx-500: #a3b1c2;
+    --cm-tx-600: #cbd5e1;
+    --cm-tx-700: #e2e8f0;
+    --cm-tx-800: #f1f5f9;
+    --cm-tx-900: #f8fafc;
+
+    --cm-overlay: rgba(2, 6, 23, 0.72);
+    --cm-tint-5: rgba(255, 255, 255, 0.05);
+    --cm-tint-white60: rgba(255, 255, 255, 0.06);
+
+    --cm-field: #16233a;
+
+    --cm-blue-50: #16283f;
+    --cm-blue-100: #1c3557;
+    --cm-blue-bd-200: #2b5680;
+    --cm-blue-bd-300: #3b74a8;
+    --cm-blue-tx-600: #7cb8f5;
+    --cm-blue-tx-700: #9cc9f8;
+    --cm-blue-tx-800: #c7e0fb;
+
+    --cm-red-50: #3a1a1f;
+    --cm-red-100: #4a2027;
+    --cm-red-200: #5c2731;
+    --cm-red-bd-100: #4a2027;
+    --cm-red-bd-200: #6b2b36;
+    --cm-red-bd-300: #8a3a47;
+    --cm-red-tx-500: #f87171;
+    --cm-red-tx-600: #fca5a5;
+    --cm-red-tx-700: #fecaca;
+    --cm-red-tx-800: #fee2e2;
+
+    --cm-amber-50: #3a2c10;
+    --cm-amber-100: #4a3a14;
+    --cm-amber-bd-300: #8a6a1f;
+    --cm-amber-tx-700: #fbbf24;
+    --cm-amber-tx-800: #fcd34d;
+
+    --cm-emerald-50: #10302a;
+    --cm-emerald-100: #14453a;
+    --cm-emerald-bd-200: #1d6b56;
+    --cm-emerald-bd-300: #27876c;
+    --cm-emerald-tx-600: #34d399;
+    --cm-emerald-tx-700: #6ee7b7;
+
+    --cm-indigo-50: #1e2547;
+    --cm-indigo-100: #2a3160;
+    --cm-indigo-bd-300: #4f5bb0;
+    --cm-indigo-tx-600: #a5b4fc;
+    --cm-indigo-tx-700: #c7d2fe;
+    --cm-indigo-tx-800: #e0e7ff;
+
+    --cm-purple-50: #2b1f47;
+    --cm-purple-100: #382a5e;
+    --cm-purple-bd-200: #5a43a8;
+    --cm-purple-bd-300: #6f55c4;
+    --cm-purple-tx-700: #d8b4fe;
+    --cm-purple-tx-900: #f3e8ff;
+
+    --cm-rose-100: #4a2028;
+    --cm-rose-bd-300: #9f4a5e;
+    --cm-rose-tx-700: #fda4af;
+
+    --cm-file-bg: #1c3557;
+    --cm-file-fg: #9cc9f8;
+    --cm-file-bg-hover: #24466f;
+}
+
+/* 深色票（跟隨裝置系統；data-theme="light" 時不套用） */
+@media (prefers-color-scheme: dark) {
+    html:not([data-theme="light"]) {
+        color-scheme: dark;
+
+        --cm-page: #0f172a;
+        --cm-surface: #1e293b;
+        --cm-inset: #223049;
+        --cm-cell: #2b3a52;
+        --cm-cell-2: #3d4d66;
+        --cm-cell-3: #64748b;
+        --cm-hover-solid-700: #475569;
+
+        --cm-bd-100: #2b3a52;
+        --cm-bd-200: #334155;
+        --cm-bd-300: #475569;
+
+        --cm-tx-500: #a3b1c2;
+        --cm-tx-600: #cbd5e1;
+        --cm-tx-700: #e2e8f0;
+        --cm-tx-800: #f1f5f9;
+        --cm-tx-900: #f8fafc;
+
+        --cm-overlay: rgba(2, 6, 23, 0.72);
+        --cm-tint-5: rgba(255, 255, 255, 0.05);
+        --cm-tint-white60: rgba(255, 255, 255, 0.06);
+
+        --cm-field: #16233a;
+
+        --cm-blue-50: #16283f;
+        --cm-blue-100: #1c3557;
+        --cm-blue-bd-200: #2b5680;
+        --cm-blue-bd-300: #3b74a8;
+        --cm-blue-tx-600: #7cb8f5;
+        --cm-blue-tx-700: #9cc9f8;
+        --cm-blue-tx-800: #c7e0fb;
+
+        --cm-red-50: #3a1a1f;
+        --cm-red-100: #4a2027;
+        --cm-red-200: #5c2731;
+        --cm-red-bd-100: #4a2027;
+        --cm-red-bd-200: #6b2b36;
+        --cm-red-bd-300: #8a3a47;
+        --cm-red-tx-500: #f87171;
+        --cm-red-tx-600: #fca5a5;
+        --cm-red-tx-700: #fecaca;
+        --cm-red-tx-800: #fee2e2;
+
+        --cm-amber-50: #3a2c10;
+        --cm-amber-100: #4a3a14;
+        --cm-amber-bd-300: #8a6a1f;
+        --cm-amber-tx-700: #fbbf24;
+        --cm-amber-tx-800: #fcd34d;
+
+        --cm-emerald-50: #10302a;
+        --cm-emerald-100: #14453a;
+        --cm-emerald-bd-200: #1d6b56;
+        --cm-emerald-bd-300: #27876c;
+        --cm-emerald-tx-600: #34d399;
+        --cm-emerald-tx-700: #6ee7b7;
+
+        --cm-indigo-50: #1e2547;
+        --cm-indigo-100: #2a3160;
+        --cm-indigo-bd-300: #4f5bb0;
+        --cm-indigo-tx-600: #a5b4fc;
+        --cm-indigo-tx-700: #c7d2fe;
+        --cm-indigo-tx-800: #e0e7ff;
+
+        --cm-purple-50: #2b1f47;
+        --cm-purple-100: #382a5e;
+        --cm-purple-bd-200: #5a43a8;
+        --cm-purple-bd-300: #6f55c4;
+        --cm-purple-tx-700: #d8b4fe;
+        --cm-purple-tx-900: #f3e8ff;
+
+        --cm-rose-100: #4a2028;
+        --cm-rose-bd-300: #9f4a5e;
+        --cm-rose-tx-700: #fda4af;
+
+        --cm-file-bg: #1c3557;
+        --cm-file-fg: #9cc9f8;
+        --cm-file-bg-hover: #24466f;
+    }
+}
+
+/* ============================================================
+   用途 4：顏色 class 覆寫（淺色與深色共用，值來自上方色票）
+   ------------------------------------------------------------
+   custom.css 於 tailwind.min.css 之後載入，同特異度時後者勝出。
+   ============================================================ */
+
+/* ---------- 頁面底層與各種表面 ---------- */
+
+/* body 同時帶有 .bg-slate-100，需提高特異度才不被下方的 chip 規則蓋掉 */
+body.bg-slate-100 {
+    background-color: var(--cm-page);
+}
+
+.bg-white {
+    background-color: var(--cm-surface);
+}
 
 .bg-slate-50 {
-    background-color: #f8fafc;
+    background-color: var(--cm-inset);
 }
 
 .bg-slate-100 {
-    background-color: #f1f5f9;
+    background-color: var(--cm-cell);
 }
 
 .bg-slate-200 {
-    background-color: #e2e8f0;
+    background-color: var(--cm-cell-2);
 }
 
 .bg-slate-300 {
-    background-color: #cbd5e1;
+    background-color: var(--cm-cell-3);
 }
 
+/* slate-700 / 800 / 900 為深色實心按鈕，兩主題相同，維持原值 */
 .bg-slate-700 {
     background-color: #334155;
 }
@@ -58,56 +370,146 @@
     background-color: #0f172a;
 }
 
-.text-slate-400 {
-    color: #94a3b8;
+/* Modal 遮罩與半透明底：2.2.19 不支援斜線透明度語法，原本完全不存在 */
+.bg-slate-900\/50 {
+    background-color: var(--cm-overlay);
 }
 
-.text-slate-500 {
-    color: #64748b;
+.bg-slate-900\/5 {
+    background-color: var(--cm-tint-5);
 }
 
-.text-slate-600 {
-    color: #475569;
+.bg-white\/60 {
+    background-color: var(--cm-tint-white60);
 }
 
-.text-slate-700 {
-    color: #334155;
-}
-
-.text-slate-800 {
-    color: #1e293b;
-}
-
-.text-slate-900 {
-    color: #0f172a;
-}
+/* ---------- 邊框 ---------- */
 
 .border-slate-100 {
-    border-color: #f1f5f9;
+    border-color: var(--cm-bd-100);
 }
 
 .border-slate-200 {
-    border-color: #e2e8f0;
+    border-color: var(--cm-bd-200);
 }
 
 .border-slate-300 {
-    border-color: #cbd5e1;
+    border-color: var(--cm-bd-300);
 }
 
 .border-slate-600 {
     border-color: #475569;
 }
 
-/* ---------- 用途 2：amber 色系 (2.2.19 缺) ---------- */
+/* ---------- 文字（slate-400 與 text-white 兩主題相同，維持原值） ---------- */
+
+.text-slate-400 {
+    color: #94a3b8;
+}
+
+.text-slate-500 {
+    color: var(--cm-tx-500);
+}
+
+.text-slate-600 {
+    color: var(--cm-tx-600);
+}
+
+.text-slate-700 {
+    color: var(--cm-tx-700);
+}
+
+.text-slate-800 {
+    color: var(--cm-tx-800);
+}
+
+.text-slate-900 {
+    color: var(--cm-tx-900);
+}
+
+/* ---------- blue ---------- */
+
+.bg-blue-50 {
+    background-color: var(--cm-blue-50);
+}
+
+.bg-blue-100 {
+    background-color: var(--cm-blue-100);
+}
+
+.border-blue-200 {
+    border-color: var(--cm-blue-bd-200);
+}
+
+.border-blue-300 {
+    border-color: var(--cm-blue-bd-300);
+}
+
+.text-blue-600 {
+    color: var(--cm-blue-tx-600);
+}
+
+.text-blue-700 {
+    color: var(--cm-blue-tx-700);
+}
+
+.text-blue-800 {
+    color: var(--cm-blue-tx-800);
+}
+
+/* ---------- red ---------- */
+
+.bg-red-50 {
+    background-color: var(--cm-red-50);
+}
+
+.bg-red-100 {
+    background-color: var(--cm-red-100);
+}
+
+.bg-red-200 {
+    background-color: var(--cm-red-200);
+}
+
+.border-red-100 {
+    border-color: var(--cm-red-bd-100);
+}
+
+.border-red-200 {
+    border-color: var(--cm-red-bd-200);
+}
+
+.border-red-300 {
+    border-color: var(--cm-red-bd-300);
+}
+
+.text-red-500 {
+    color: var(--cm-red-tx-500);
+}
+
+.text-red-600 {
+    color: var(--cm-red-tx-600);
+}
+
+.text-red-700 {
+    color: var(--cm-red-tx-700);
+}
+
+.text-red-800 {
+    color: var(--cm-red-tx-800);
+}
+
+/* ---------- amber ---------- */
 
 .bg-amber-50 {
-    background-color: #fffbeb;
+    background-color: var(--cm-amber-50);
 }
 
 .bg-amber-100 {
-    background-color: #fef3c7;
+    background-color: var(--cm-amber-100);
 }
 
+/* 實心按鈕色（兩主題相同） */
 .bg-amber-600 {
     background-color: #d97706;
 }
@@ -116,42 +518,29 @@
     background-color: #b45309;
 }
 
+.border-amber-300 {
+    border-color: var(--cm-amber-bd-300);
+}
+
 .text-amber-700 {
-    color: #b45309;
+    color: var(--cm-amber-tx-700);
 }
 
 .text-amber-800 {
-    color: #92400e;
+    color: var(--cm-amber-tx-800);
 }
 
-.border-amber-300 {
-    border-color: #fcd34d;
-}
-
-/* ---------- 用途 2：rose 色系 (2.2.19 缺) ---------- */
-
-.bg-rose-100 {
-    background-color: #ffe4e6;
-}
-
-.text-rose-700 {
-    color: #be123c;
-}
-
-.border-rose-300 {
-    border-color: #fda4af;
-}
-
-/* ---------- 用途 2：emerald 色系 (2.2.19 缺) ---------- */
+/* ---------- emerald ---------- */
 
 .bg-emerald-50 {
-    background-color: #ecfdf5;
+    background-color: var(--cm-emerald-50);
 }
 
 .bg-emerald-100 {
-    background-color: #d1fae5;
+    background-color: var(--cm-emerald-100);
 }
 
+/* 實心按鈕色（兩主題相同） */
 .bg-emerald-600 {
     background-color: #059669;
 }
@@ -160,66 +549,157 @@
     background-color: #047857;
 }
 
-.text-emerald-600 {
-    color: #059669;
-}
-
-.text-emerald-700 {
-    color: #047857;
-}
-
 .border-emerald-200 {
-    border-color: #a7f3d0;
+    border-color: var(--cm-emerald-bd-200);
 }
 
 .border-emerald-300 {
-    border-color: #6ee7b7;
+    border-color: var(--cm-emerald-bd-300);
 }
 
-/* ---------- 用途 2 補完：slate / amber / emerald 缺漏的 hover: 變體 ----------
-   Tailwind 2.2.19 沒有這四個色系，因此 `hover:bg-slate-200` 這類變體
-   在本地靜態檔中完全不存在 → 滑鼠移入毫無反應。
-   （blue / red / indigo / purple 屬 2.2.19 預設色系，靜態檔已有，不在此補。）
-   ---------------------------------------------------------------------------- */
+.text-emerald-600 {
+    color: var(--cm-emerald-tx-600);
+}
+
+.text-emerald-700 {
+    color: var(--cm-emerald-tx-700);
+}
+
+/* ---------- indigo ---------- */
+
+.bg-indigo-50 {
+    background-color: var(--cm-indigo-50);
+}
+
+.bg-indigo-100 {
+    background-color: var(--cm-indigo-100);
+}
+
+.border-indigo-300 {
+    border-color: var(--cm-indigo-bd-300);
+}
+
+.text-indigo-600 {
+    color: var(--cm-indigo-tx-600);
+}
+
+.text-indigo-700 {
+    color: var(--cm-indigo-tx-700);
+}
+
+.text-indigo-800 {
+    color: var(--cm-indigo-tx-800);
+}
+
+/* ---------- purple ---------- */
+
+.bg-purple-50 {
+    background-color: var(--cm-purple-50);
+}
+
+.bg-purple-100 {
+    background-color: var(--cm-purple-100);
+}
+
+.border-purple-200 {
+    border-color: var(--cm-purple-bd-200);
+}
+
+.border-purple-300 {
+    border-color: var(--cm-purple-bd-300);
+}
+
+.text-purple-700 {
+    color: var(--cm-purple-tx-700);
+}
+
+.text-purple-900 {
+    color: var(--cm-purple-tx-900);
+}
+
+/* ---------- rose ---------- */
+
+.bg-rose-100 {
+    background-color: var(--cm-rose-100);
+}
+
+.border-rose-300 {
+    border-color: var(--cm-rose-bd-300);
+}
+
+.text-rose-700 {
+    color: var(--cm-rose-tx-700);
+}
+
+/* ---------- hover 變體 ----------
+   2.2.19 沒有 slate / amber / rose / emerald 的 hover 變體，
+   `hover:bg-slate-200` 這類原本完全無效；blue / red / indigo /
+   purple 的 hover 在深色模式也必須改色。 */
 
 .hover\:bg-slate-50:hover {
-    background-color: #f8fafc;
+    background-color: var(--cm-inset);
 }
 
 .hover\:bg-slate-100:hover {
-    background-color: #f1f5f9;
+    background-color: var(--cm-cell);
 }
 
 .hover\:bg-slate-200:hover {
-    background-color: #e2e8f0;
+    background-color: var(--cm-cell-2);
 }
 
 .hover\:bg-slate-300:hover {
-    background-color: #cbd5e1;
+    background-color: var(--cm-cell-3);
 }
 
+/* 資源回收桶深色按鈕：深色模式改以「變亮」表達 hover，
+   否則 hover 會變成與卡片底同色而消失 */
 .hover\:bg-slate-800:hover {
-    background-color: #1e293b;
+    background-color: var(--cm-hover-solid-700);
 }
 
 .hover\:text-slate-600:hover {
-    color: #475569;
+    color: var(--cm-tx-600);
 }
 
 .hover\:text-slate-800:hover {
-    color: #1e293b;
+    color: var(--cm-tx-800);
 }
 
 .hover\:text-slate-900:hover {
-    color: #0f172a;
+    color: var(--cm-tx-900);
 }
 
 .hover\:border-slate-300:hover {
-    border-color: #cbd5e1;
+    border-color: var(--cm-bd-300);
+}
+
+.hover\:bg-blue-50:hover {
+    background-color: var(--cm-blue-50);
+}
+
+.hover\:bg-blue-100:hover {
+    background-color: var(--cm-blue-100);
+}
+
+.hover\:text-blue-800:hover {
+    color: var(--cm-blue-tx-800);
+}
+
+.hover\:bg-red-50:hover {
+    background-color: var(--cm-red-50);
+}
+
+.hover\:bg-red-100:hover {
+    background-color: var(--cm-red-100);
+}
+
+.hover\:text-red-800:hover {
+    color: var(--cm-red-tx-800);
 }
 
 .hover\:bg-amber-50:hover {
-    background-color: #fffbeb;
+    background-color: var(--cm-amber-50);
 }
 
 .hover\:bg-amber-700:hover {
@@ -227,20 +707,53 @@
 }
 
 .hover\:bg-emerald-100:hover {
-    background-color: #d1fae5;
+    background-color: var(--cm-emerald-100);
 }
 
 .hover\:bg-emerald-700:hover {
     background-color: #047857;
 }
 
-/* ---------- 用途 3：檔案選擇按鈕 (file input) ---------- */
+.hover\:bg-indigo-100:hover {
+    background-color: var(--cm-indigo-100);
+}
+
+.hover\:text-indigo-800:hover {
+    color: var(--cm-indigo-tx-800);
+}
+
+.hover\:bg-purple-100:hover {
+    background-color: var(--cm-purple-100);
+}
+
+.hover\:text-purple-900:hover {
+    color: var(--cm-purple-tx-900);
+}
+
+/* ---------- 表單控制項 ----------
+   未帶 bg-* 的欄位會落到瀏覽器依 color-scheme 套用的預設底色
+   （深色模式下 Chrome 為 #3b3b3b），與本站色票不協調，故明確指定。
+   checkbox / radio / file 不覆寫，保留原生繪製。 */
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+select,
+textarea {
+    background-color: var(--cm-field);
+    color: var(--cm-tx-800);
+}
+
+/* 帶 bg-white 的欄位需提高特異度才蓋得過 .bg-white */
+input.bg-white,
+select.bg-white,
+textarea.bg-white {
+    background-color: var(--cm-field);
+}
+
+/* ---------- 用途 5：檔案選擇按鈕 (file input) ---------- */
 
 input[type="file"]::file-selector-button {
-    background-color: #eff6ff;
-    /* blue-50 */
-    color: #1d4ed8;
-    /* blue-700 */
+    background-color: var(--cm-file-bg);
+    color: var(--cm-file-fg);
     border: 0;
     border-radius: 0.5rem;
     padding: 0.5rem 1rem;
@@ -252,14 +765,13 @@ input[type="file"]::file-selector-button {
 }
 
 input[type="file"]::file-selector-button:hover {
-    background-color: #dbeafe;
-    /* blue-100 */
+    background-color: var(--cm-file-bg-hover);
 }
 
 /* Safari 舊版相容 */
 input[type="file"]::-webkit-file-upload-button {
-    background-color: #eff6ff;
-    color: #1d4ed8;
+    background-color: var(--cm-file-bg);
+    color: var(--cm-file-fg);
     border: 0;
     border-radius: 0.5rem;
     padding: 0.5rem 1rem;
@@ -270,425 +782,5 @@ input[type="file"]::-webkit-file-upload-button {
 }
 
 input[type="file"]::-webkit-file-upload-button:hover {
-    background-color: #dbeafe;
-}
-
-/* ============================================================
-   用途 4：裝置深淺色模式自動適配 (v2.5.0)
-   - 跟隨裝置系統設定 (prefers-color-scheme)，無需 JS、無切換按鈕。
-   - 本地 tailwind.min.css 建置時 darkMode 為 false，無任何 dark: variant
-     可用，因此以覆寫「專案實際用到的顏色 class」達成；
-     custom.css 於 tailwind.min.css 之後載入，同特異度下後者勝出。
-   - 未新增任何 inline style / style 屬性，CSP 維持 style-src 'self'。
-   ============================================================ */
-
-/* ---------- 用途 4-0：補上 2.2.19 缺漏的半透明背景 class ---------- */
-/* 這三個 class 原本在 tailwind.min.css 與 custom.css 皆不存在，
-   導致 8 個 Modal 的遮罩完全透明（僅有模糊、沒有變暗）。 */
-
-.bg-slate-900\/50 {
-    background-color: rgba(15, 23, 42, 0.5);
-}
-
-.bg-slate-900\/5 {
-    background-color: rgba(15, 23, 42, 0.05);
-}
-
-.bg-white\/60 {
-    background-color: rgba(255, 255, 255, 0.6);
-}
-
-/* ---------- 用途 4-1：深色模式色票 ----------
-   頁面底層 #0f172a < 卡片 #1e293b < 內嵌面板 #223049 < chip #2b3a52
-   階層不可顛倒，否則深色模式下卡片會「沉」進背景。
-   -------------------------------------------- */
-
-@media (prefers-color-scheme: dark) {
-
-    /* 讓原生控制項（日期選擇器、下拉箭頭、捲軸、checkbox）一併轉為深色 */
-    :root,
-    html {
-        color-scheme: dark;
-    }
-
-    /* ── 頁面底層與各種表面 ── */
-    body.bg-slate-100 {
-        background-color: #0f172a;
-    }
-
-    .bg-white {
-        background-color: #1e293b;
-    }
-
-    .bg-slate-50 {
-        background-color: #223049;
-    }
-
-    .bg-slate-100 {
-        background-color: #2b3a52;
-    }
-
-    .bg-slate-200 {
-        background-color: #3d4d66;
-    }
-
-    .bg-slate-300 {
-        background-color: #64748b;
-    }
-
-    /* Modal 遮罩加深，確保彈窗與深色背景分離 */
-    .bg-slate-900\/50 {
-        background-color: rgba(2, 6, 23, 0.72);
-    }
-
-    .bg-slate-900\/5 {
-        background-color: rgba(255, 255, 255, 0.05);
-    }
-
-    .bg-white\/60 {
-        background-color: rgba(255, 255, 255, 0.06);
-    }
-
-    /* bg-slate-700 / bg-slate-800 為深色實心按鈕，深色模式下維持原色不覆寫
-       （其 hover 變體見下方 hover 區塊） */
-
-    /* ── 邊框 ── */
-    .border-slate-100 {
-        border-color: #2b3a52;
-    }
-
-    .border-slate-200 {
-        border-color: #334155;
-    }
-
-    .border-slate-300 {
-        border-color: #475569;
-    }
-
-    /* ── 中性文字（明暗反轉，維持閱讀層級） ── */
-    .text-slate-500 {
-        color: #a3b1c2;
-    }
-
-    .text-slate-600 {
-        color: #cbd5e1;
-    }
-
-    .text-slate-700 {
-        color: #e2e8f0;
-    }
-
-    .text-slate-800 {
-        color: #f1f5f9;
-    }
-
-    .text-slate-900 {
-        color: #f8fafc;
-    }
-
-    /* text-slate-400 (#94a3b8) 於深色底對比已達 5.9:1，維持不變；
-       text-white 用於實心彩色按鈕，亦維持不變 */
-
-    /* ── blue ── */
-    .bg-blue-50 {
-        background-color: #16283f;
-    }
-
-    .bg-blue-100 {
-        background-color: #1c3557;
-    }
-
-    .border-blue-200 {
-        border-color: #2b5680;
-    }
-
-    .border-blue-300 {
-        border-color: #3b74a8;
-    }
-
-    .text-blue-600 {
-        color: #7cb8f5;
-    }
-
-    .text-blue-700 {
-        color: #9cc9f8;
-    }
-
-    .text-blue-800 {
-        color: #c7e0fb;
-    }
-
-    /* ── red ── */
-    .bg-red-50 {
-        background-color: #3a1a1f;
-    }
-
-    .bg-red-100 {
-        background-color: #4a2027;
-    }
-
-    .bg-red-200 {
-        background-color: #5c2731;
-    }
-
-    .border-red-100 {
-        border-color: #4a2027;
-    }
-
-    .border-red-200 {
-        border-color: #6b2b36;
-    }
-
-    .border-red-300 {
-        border-color: #8a3a47;
-    }
-
-    .text-red-500 {
-        color: #f87171;
-    }
-
-    .text-red-600 {
-        color: #fca5a5;
-    }
-
-    .text-red-700 {
-        color: #fecaca;
-    }
-
-    .text-red-800 {
-        color: #fee2e2;
-    }
-
-    /* ── amber ── */
-    .bg-amber-50 {
-        background-color: #3a2c10;
-    }
-
-    .bg-amber-100 {
-        background-color: #4a3a14;
-    }
-
-    .border-amber-300 {
-        border-color: #8a6a1f;
-    }
-
-    .text-amber-700 {
-        color: #fbbf24;
-    }
-
-    .text-amber-800 {
-        color: #fcd34d;
-    }
-
-    /* ── emerald ── */
-    .bg-emerald-50 {
-        background-color: #10302a;
-    }
-
-    .bg-emerald-100 {
-        background-color: #14453a;
-    }
-
-    .border-emerald-200 {
-        border-color: #1d6b56;
-    }
-
-    .border-emerald-300 {
-        border-color: #27876c;
-    }
-
-    .text-emerald-600 {
-        color: #34d399;
-    }
-
-    .text-emerald-700 {
-        color: #6ee7b7;
-    }
-
-    /* ── indigo ── */
-    .bg-indigo-50 {
-        background-color: #1e2547;
-    }
-
-    .bg-indigo-100 {
-        background-color: #2a3160;
-    }
-
-    .border-indigo-300 {
-        border-color: #4f5bb0;
-    }
-
-    .text-indigo-600 {
-        color: #a5b4fc;
-    }
-
-    .text-indigo-700 {
-        color: #c7d2fe;
-    }
-
-    .text-indigo-800 {
-        color: #e0e7ff;
-    }
-
-    /* ── purple ── */
-    .bg-purple-50 {
-        background-color: #2b1f47;
-    }
-
-    .bg-purple-100 {
-        background-color: #382a5e;
-    }
-
-    .border-purple-200 {
-        border-color: #5a43a8;
-    }
-
-    .border-purple-300 {
-        border-color: #6f55c4;
-    }
-
-    .text-purple-700 {
-        color: #d8b4fe;
-    }
-
-    .text-purple-900 {
-        color: #f3e8ff;
-    }
-
-    /* ── rose ── */
-    .bg-rose-100 {
-        background-color: #4a2028;
-    }
-
-    .border-rose-300 {
-        border-color: #9f4a5e;
-    }
-
-    .text-rose-700 {
-        color: #fda4af;
-    }
-
-    /* ── hover 變體（須與上方同色票，否則滑鼠移入會瞬間跳回淺色） ── */
-    .hover\:bg-slate-50:hover {
-        background-color: #223049;
-    }
-
-    .hover\:bg-slate-100:hover {
-        background-color: #2b3a52;
-    }
-
-    .hover\:bg-slate-200:hover {
-        background-color: #3d4d66;
-    }
-
-    .hover\:bg-slate-300:hover {
-        background-color: #64748b;
-    }
-
-    /* 資源回收桶深色按鈕 (bg-slate-700)：深色模式改以「變亮」表達 hover，
-       否則 hover 會變成與卡片底同色而消失 */
-    .hover\:bg-slate-800:hover {
-        background-color: #475569;
-    }
-
-    .hover\:bg-blue-50:hover {
-        background-color: #1c3557;
-    }
-
-    .hover\:bg-blue-100:hover {
-        background-color: #24466f;
-    }
-
-    .hover\:bg-red-50:hover {
-        background-color: #4a2027;
-    }
-
-    .hover\:bg-red-100:hover {
-        background-color: #5c2731;
-    }
-
-    .hover\:bg-amber-50:hover {
-        background-color: #4a3a14;
-    }
-
-    .hover\:bg-emerald-100:hover {
-        background-color: #1d6b56;
-    }
-
-    .hover\:bg-indigo-100:hover {
-        background-color: #343d78;
-    }
-
-    .hover\:bg-purple-100:hover {
-        background-color: #463472;
-    }
-
-    .hover\:text-slate-600:hover {
-        color: #cbd5e1;
-    }
-
-    .hover\:text-slate-800:hover {
-        color: #f1f5f9;
-    }
-
-    .hover\:text-slate-900:hover {
-        color: #f8fafc;
-    }
-
-    .hover\:text-blue-800:hover {
-        color: #dbeafe;
-    }
-
-    .hover\:text-indigo-800:hover {
-        color: #e0e7ff;
-    }
-
-    .hover\:text-purple-900:hover {
-        color: #f3e8ff;
-    }
-
-    .hover\:text-red-800:hover {
-        color: #fee2e2;
-    }
-
-    .hover\:border-slate-300:hover {
-        border-color: #64748b;
-    }
-
-    /* ── 檔案選擇按鈕（深色版，沿用淺色版的藍底藍字語意） ── */
-    input[type="file"]::file-selector-button {
-        background-color: #1c3557;
-        color: #9cc9f8;
-    }
-
-    input[type="file"]::file-selector-button:hover {
-        background-color: #24466f;
-    }
-
-    input[type="file"]::-webkit-file-upload-button {
-        background-color: #1c3557;
-        color: #9cc9f8;
-    }
-
-    input[type="file"]::-webkit-file-upload-button:hover {
-        background-color: #24466f;
-    }
-
-    /* ── 表單控制項 ──
-       未帶 bg-* class 的欄位會落到瀏覽器依 color-scheme 套用的預設灰 (#3b3b3b)，
-       與本站深藍色票不協調；這裡明確指定欄位底色。
-       checkbox / radio 不覆寫，保留原生深色繪製。 */
-    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
-    select,
-    textarea {
-        background-color: #16233a;
-        color: #f1f5f9;
-    }
-
-    /* 帶 bg-white 的 select 需提高特異度才蓋得過 .bg-white */
-    input.bg-white,
-    select.bg-white,
-    textarea.bg-white {
-        background-color: #16233a;
-    }
+    background-color: var(--cm-file-bg-hover);
 }

@@ -9,11 +9,13 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.5.0</title>
+    <title>比賽管理系統 v2.6.0</title>
     <!-- Tailwind CSS 2.2.19 (本地靜態檔，符合 CSP style-src 'self') -->
     <link href="/css/tailwind.min.css" rel="stylesheet">
     <!-- 自訂補強樣式 (Modal 高度、滾動、背景模糊、色系補強、檔案按鈕、深淺色模式) -->
     <link href="/css/custom.css" rel="stylesheet">
+    <!-- 主題初始化：必須同步且早於首次繪製，避免強制深色時出現淺色閃爍 -->
+    <script src="/js/theme-init.js"></script>
 </head>
 
 <body class="bg-slate-100 min-h-screen text-slate-800 font-sans">
@@ -25,7 +27,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.5.0)</p>
+                <p class="text-xs text-slate-500 mt-0.5">發佈與管理各類賽事資訊 (v2.6.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
@@ -82,6 +84,14 @@
                         </button>
 
                         <div id="menuDivider" class="hidden border-t border-slate-100 my-1"></div>
+
+                        <!-- 主題切換：跟隨系統 / 淺色 / 深色（純 UI 偏好） -->
+                        <button id="themeToggleBtn"
+                            class="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                            🌗 主題：跟隨系統
+                        </button>
+
+                        <div class="border-t border-slate-100 my-1"></div>
 
                         <!-- 登入後專屬：修改密碼 -->
                         <button id="changePwdBtn"
