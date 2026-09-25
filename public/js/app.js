@@ -898,6 +898,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (btn.dataset.action === 'waitlist-move') moveWaitlist(btn.dataset.id, btn.dataset.dir);
         else if (btn.dataset.action === 'promote-reg') promoteWaitlistMember(btn.dataset.id, btn.dataset.username || '');
     });
+    // v2.22.0：候補相關的新控制項。
+    // 記取 v2.12.2 的教訓：<select> 一定要用 change 事件，click 不會觸發（也不會冒泡成我們要的結果）。
+    document.getElementById('waitlistList')?.addEventListener('change', (e) => {
+        const sel = e.target.closest('select[data-action="waitlist-jump"]');
+        if (!sel) return;
+        jumpWaitlist(sel.dataset.id, sel.value);
+    });
+    document.getElementById('waitlistNotifyToggle')?.addEventListener('change', (e) => {
+        toggleWaitlistNotify(e.target.checked);
+    });
+    document.getElementById('waitlistHistoryBtn')?.addEventListener('click', loadWaitlistHistory);
+    document.getElementById('waitlistHistoryClose')?.addEventListener('click', () => {
+        document.getElementById('waitlistHistoryPanel')?.classList.add('hidden');
+    });
+    initWaitlistDrag();
 
     document.getElementById('closeAuditModalBtn')?.addEventListener('click', closeAuditLogModal);
     document.getElementById('closeAuditModalBtn2')?.addEventListener('click', closeAuditLogModal);
@@ -1894,9 +1909,14 @@ async function exportCompetitionRegistrationsCsv() {
             setTeamMsg('這場賽事目前沒有報名資料。', 'error');
             return;
         }
+        // v2.22.0：匯出時帶上狀態與候補順位——現場報到／計分時才看得出誰已核准、誰在候補第幾位
         const rows = list.map((r) => ({
             姓名: r.username || '',
             隊伍: r.team_name || '',
+            狀態: r.status_label || (window.CMCompetitionState
+                ? CMCompetitionState.REG_STATUS_LABELS[CMCompetitionState.normalizeRegStatus(r.status)]
+                : (r.status || '')) || '',
+            候補順位: Number(r.waitlist_position) > 0 ? r.waitlist_position : '',
             備註: r.note || '',
             報名時間: String(r.created_at || '').slice(0, 16).replace('T', ' ')
         }));
@@ -2084,16 +2104,37 @@ function renderReviewSection(data) {
             ? (manualOrdered ? '順位：管理員手動排定（新報名的人一律排到最後）' : '順位：依報名時間自動排序（可用 ⬆️⬇️ 手動調整）')
             : '順位：依報名時間自動排序（執行 v2.21.0 migration 後可手動調整）';
     }
+    // v2.22.0：遞補通知開關（沒有 waitlist_notify 欄位時顯示為停用並說明）
+    const notifyToggle = document.getElementById('waitlistNotifyToggle');
+    const notifyNote = document.getElementById('waitlistNotifyNote');
+    if (notifyToggle) {
+        const notifyReady = data.notify_schema_ready !== false;
+        notifyToggle.disabled = !notifyReady;
+        notifyToggle.checked = data.notify_on_promote !== false;
+        if (notifyNote) {
+            notifyNote.innerText = !notifyReady
+                ? '遞補通知設定需要先執行 v2.22.0 migration（目前一律通知）'
+                : (notifyToggle.checked ? '遞補時推播通知對方' : '遞補時不通知（遞補仍然生效，只是不推播）');
+        }
+    }
+
     // v2.21.0：名額已滿時不能遞補（後端也會擋，前端先講清楚避免白按）
     const canPromote = max === 0 || counts.slots < max;
     if (waitlistList) {
+        // v2.22.0：拖拉排序要知道這份名單現在可不可以手動排（pointerdown 時會檢查）
+        waitlistList.dataset.reorderable = reorderable ? '1' : '0';
         waitlistList.innerHTML = waitlisted.map((r, i) => `
             <div data-waitlist-id="${r.id}" class="flex items-center justify-between gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
                 <p class="text-xs text-slate-700 truncate flex-1">
+                    ${reorderable ? `<span data-waitlist-handle="1" class="cm-drag-handle text-slate-400 mr-1" title="按住拖曳就能調整順位">⠿</span>` : ''}
                     <span class="font-bold text-blue-700">第 ${r.waitlist_position} 位</span>　🙋 ${escapeHtml(r.username)}
                     <span class="text-slate-400">｜${escapeHtml(String(r.created_at || '').slice(0, 16).replace('T', ' '))}</span></p>
-                <div class="flex items-center gap-1 shrink-0">
+                <div class="flex items-center justify-end gap-1 shrink-0 flex-wrap">
                     ${reorderable ? `
+                    <select data-action="waitlist-jump" data-id="${r.id}" title="搬到指定順位"
+                        class="text-[11px] bg-white border border-blue-200 text-blue-700 rounded px-1 py-1">
+                        ${waitlisted.map((_, k) => `<option value="${k + 1}" ${k === i ? 'selected' : ''}>第 ${k + 1} 位</option>`).join('')}
+                    </select>
                     <button data-action="waitlist-move" data-id="${r.id}" data-dir="up" ${i === 0 ? 'disabled' : ''}
                         class="text-xs px-2 py-1 rounded transition ${i === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-100'}"
                         title="往前一位">↑</button>
@@ -2180,33 +2221,157 @@ async function promoteWaitlistMember(id, username) {
     }
 }
 
-/* v2.21.0：調整候補順位（把畫面上「目前這筆」跟隔壁那筆對調，送出完整順序讓後端驗證） */
-async function moveWaitlist(id, dir) {
+/* v2.22.0：候補順位的四條路（↑、↓、移到第 N 位、拖拉）都走這一支送出，
+   差別只在「怎麼算出新的順序」。送出的一定是完整順序，後端會驗證名單是否一致。 */
+async function sendWaitlistOrder(ids, okMsg) {
     const comp = currentTeamComp;
     if (!comp) return;
     if (!isAdminUser()) return alert('權限不足：只有管理員以上可以調整候補順位');
 
-    const ids = Array.from(document.querySelectorAll('#waitlistList [data-waitlist-id]')).map((el) => el.getAttribute('data-waitlist-id'));
-    const from = ids.indexOf(String(id));
-    const to = dir === 'up' ? from - 1 : from + 1;
-    if (from < 0 || to < 0 || to >= ids.length) return;
-
-    const next = ids.slice();
-    next[from] = ids[to];
-    next[to] = ids[from];
-
     try {
         const res = await customFetch(`/api/competitions/${comp.id}/waitlist/reorder`, {
             method: 'POST',
-            body: JSON.stringify({ order: next })
+            body: JSON.stringify({ order: ids })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || '調整失敗');
         await loadTeams(comp.id);
-        setTeamMsg('已更新候補順位（新報名的人一律排到最後）', 'success');
+        setTeamMsg(okMsg || '已更新候補順位（新報名的人一律排到最後）', 'success');
+    } catch (err) {
+        setTeamMsg(err.message, 'error');
+        // 失敗最常見的原因是名單已經被別人改過 → 把畫面拉回真實狀態，避免管理員對著舊名單繼續操作
+        await loadTeams(comp.id);
+    }
+}
+
+/* 畫面上目前的候補順序（DOM 順序就是後端算出來的順位） */
+function waitlistIdsFromDom() {
+    return Array.from(document.querySelectorAll('#waitlistList [data-waitlist-id]'))
+        .map((el) => el.getAttribute('data-waitlist-id'));
+}
+
+/* v2.21.0：與隔壁那筆對調 */
+async function moveWaitlist(id, dir) {
+    const ids = waitlistIdsFromDom();
+    const from = ids.indexOf(String(id));
+    const to = dir === 'up' ? from - 1 : from + 1;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    return sendWaitlistOrder(CMCompetitionState.moveInQueue(ids, id, to), '已更新候補順位（新報名的人一律排到最後）');
+}
+
+/* v2.22.0：一次搬到指定順位（下拉選單；想搬多遠就搬多遠，不用連按 ↑／↓） */
+async function jumpWaitlist(id, position) {
+    const ids = waitlistIdsFromDom();
+    const next = CMCompetitionState.moveInQueue(ids, id, Number(position) - 1);
+    if (!next) return;
+    if (next.join(',') === ids.join(',')) {
+        setTeamMsg('這一筆已經在那個順位了', 'success');
+        return;
+    }
+    return sendWaitlistOrder(next, `已更新候補順位（這一筆搬到第 ${position} 位）`);
+}
+
+/* v2.22.0：遞補時要不要通知（每個賽事自己決定；關掉時遞補照常生效，只是不推播） */
+async function toggleWaitlistNotify(checked) {
+    const comp = currentTeamComp;
+    if (!comp) return;
+    if (!isAdminUser()) return alert('權限不足：只有管理員以上可以調整遞補通知設定');
+
+    try {
+        const res = await customFetch(`/api/competitions/${comp.id}/waitlist/notify`, {
+            method: 'POST',
+            body: JSON.stringify({ notify: !!checked })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '設定失敗');
+        setTeamMsg(data.message || '已更新遞補通知設定', 'success');
+        await loadTeams(comp.id);
+    } catch (err) {
+        setTeamMsg(err.message, 'error');
+        await loadTeams(comp.id);   // 失敗時把勾選狀態還原成資料庫的實際值
+    }
+}
+
+/* v2.22.0：候補與審核的異動紀錄（調整順位、遞補、審核、取消都在這裡） */
+async function loadWaitlistHistory() {
+    const comp = currentTeamComp;
+    if (!comp) return;
+    const panel = document.getElementById('waitlistHistoryPanel');
+    const list = document.getElementById('waitlistHistoryList');
+    if (!panel || !list) return;
+
+    try {
+        const res = await customFetch(`/api/competitions/${comp.id}/waitlist/history?limit=30`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '讀取異動紀錄失敗');
+
+        if (!data.logs || !data.logs.length) {
+            list.innerHTML = '<p class="text-[11px] text-slate-500">目前沒有候補相關的異動紀錄（調整順位、遞補、審核、取消報名都會記在這裡）。</p>';
+        } else {
+            list.innerHTML = data.logs.map((l) => `
+                <div class="text-[11px] text-slate-600 border-b border-slate-100 py-1">
+                    <span class="text-slate-400">${escapeHtml(String(l.at || '').slice(0, 16).replace('T', ' '))}</span>
+                    ｜<span class="font-medium text-slate-700">${escapeHtml(l.action_label || l.action || '')}</span>
+                    <span class="text-slate-400">（${escapeHtml(l.user || '系統')}）</span>
+                    <div class="truncate" title="${escapeHtml(l.details || '')}">${escapeHtml(l.details || '')}</div>
+                </div>`).join('');
+        }
+        panel.classList.remove('hidden');
     } catch (err) {
         setTeamMsg(err.message, 'error');
     }
+}
+
+/* v2.22.0：拖拉排序（pointer 事件，手機也能用；不用 HTML5 drag and drop 也不用外部套件）
+   - 只有拖曳把手（⠿）會啟動，避免跟「點列選取」「捲動」衝突
+   - 拖動時只動畫面，放開才送出一次 API（成敗都靠後端驗證） */
+const waitlistDrag = { row: null, moved: false };
+
+function initWaitlistDrag() {
+    const list = document.getElementById('waitlistList');
+    if (!list) return;
+
+    list.addEventListener('pointerdown', (e) => {
+        const handle = e.target.closest('[data-waitlist-handle]');
+        if (!handle) return;
+        if (!isAdminUser()) return;
+        if (list.dataset.reorderable !== '1') return;
+        const row = handle.closest('[data-waitlist-id]');
+        if (!row) return;
+        waitlistDrag.row = row;
+        waitlistDrag.moved = false;
+        row.classList.add('cm-dragging');
+        if (e.cancelable) e.preventDefault();
+    });
+
+    document.addEventListener('pointermove', (e) => {
+        if (!waitlistDrag.row) return;
+        if (e.cancelable) e.preventDefault();
+        const rows = Array.from(list.querySelectorAll('[data-waitlist-id]'));
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const over = el && el.closest ? el.closest('#waitlistList [data-waitlist-id]') : null;
+        if (over && over !== waitlistDrag.row) {
+            const overIdx = rows.indexOf(over);
+            const dragIdx = rows.indexOf(waitlistDrag.row);
+            if (overIdx < dragIdx) list.insertBefore(waitlistDrag.row, over);
+            else list.insertBefore(waitlistDrag.row, over.nextSibling);
+            waitlistDrag.moved = true;
+        }
+    }, { passive: false });
+
+    const finish = async () => {
+        if (!waitlistDrag.row) return;
+        const row = waitlistDrag.row;
+        const moved = waitlistDrag.moved;
+        waitlistDrag.row = null;
+        waitlistDrag.moved = false;
+        row.classList.remove('cm-dragging');
+        if (!moved) return;   // 只是按一下把手就不送 API
+        const ids = Array.from(list.querySelectorAll('[data-waitlist-id]')).map((el) => el.getAttribute('data-waitlist-id'));
+        await sendWaitlistOrder(ids, '已用拖拉調整候補順位');
+    };
+    document.addEventListener('pointerup', finish);
+    document.addEventListener('pointercancel', finish);
 }
 
 async function createTeam() {

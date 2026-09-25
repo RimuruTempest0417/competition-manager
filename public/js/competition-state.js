@@ -302,6 +302,21 @@
         return { ok: true, reason: '', status: promotionStatus(comp), position: index + 1 };
     }
 
+    /* 把某一位搬到指定位置（0 開始的索引），回傳新的完整順序（純函式，不動原陣列）。
+       拖拉排序與「移到第 N 位」都用這一個：位置超出範圍就夾到頭或尾，
+       認不出 id（例如名單剛被別人改過）就回傳 null，呼叫端不送 API。 */
+    function moveInQueue(ids, id, toIndex) {
+        const list = (ids || []).map((x) => String(x));
+        const from = list.indexOf(String(id));
+        if (from < 0) return null;
+        const to = Math.max(0, Math.min(list.length - 1, Number(toIndex)));
+        if (!Number.isFinite(to) || to === from) return list;
+        const next = list.slice();
+        next.splice(from, 1);
+        next.splice(to, 0, String(id));
+        return next;
+    }
+
     /* 有人讓出名額時，該遞補誰？（第一個候補，可排除剛取消的那筆） */
     function nextWaitlist(rows, excludeId) {
         const queue = waitlistQueue(rows).filter((r) => excludeId === undefined || String(r.id) !== String(excludeId));
@@ -325,6 +340,8 @@
         REG_STATUS_LABELS, REG_STATUS_TONES, countByStatus, normalizeRegStatus, reviewFlags,
         decideRegistration, waitlistQueue, nextWaitlist, promotionStatus,
         // v2.21.0：指定遞補與候補順位手動調整
-        waitlistPosition, planWaitlistOrder, planPromotion, waitlistOrderNum
+        waitlistPosition, planWaitlistOrder, planPromotion, waitlistOrderNum,
+        // v2.22.0：一次搬動到指定位置（拖拉排序與下拉共用）
+        moveInQueue
     };
 }));

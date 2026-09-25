@@ -133,9 +133,25 @@
         return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     }
 
+    /* v2.22.0：物件列（例如 {姓名:'王小明', 隊伍:'A 隊'}）自動轉成「表頭 + 資料列」。
+       以前只認陣列，傳物件進去會**安靜地**產生一整份空行的 CSV——檔案下載成功、打開卻是空的，
+       很難發現（報名名單匯出就是這樣壞掉的）。欄位順序依物件自己的鍵順序，缺的欄位留空。 */
+    function objectRowsToArrays(list) {
+        const headers = [];
+        list.forEach((r) => Object.keys(r || {}).forEach((k) => { if (!headers.includes(k)) headers.push(k); }));
+        return [headers].concat(list.map((r) => headers.map((k) => {
+            const v = r ? r[k] : undefined;
+            return v === undefined || v === null ? '' : v;
+        })));
+    }
+
     function stringify(rows, options) {
         const opts = options || {};
-        const body = rows.map((r) => (Array.isArray(r) ? r : []).map(escapeCell).join(',')).join('\r\n');
+        const list = rows || [];
+        const useHeaders = list.length > 0 && !Array.isArray(list[0]) && typeof list[0] === 'object';
+        const body = (useHeaders ? objectRowsToArrays(list) : list)
+            .map((r) => (Array.isArray(r) ? r : []).map(escapeCell).join(','))
+            .join('\r\n');
         return (opts.bom ? '\uFEFF' : '') + body + (opts.trailingNewline === false ? '' : '\r\n');
     }
 

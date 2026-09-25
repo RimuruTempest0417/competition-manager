@@ -1172,3 +1172,20 @@ canvas {
 .hover\:bg-rose-700:hover { background-color: var(--cm-rose-700); }
 .border-rose-200 { border-color: var(--cm-rose-bd-200); }
 .hover\:text-slate-700:hover { color: var(--cm-tx-700); }
+
+/* v2.22.0：候補名單的拖拉把手與拖曳中的樣式
+   touch-action: none 是為了手機——不寫的話手指一拖就變成捲動頁面，拖曳永遠不會觸發。 */
+.cm-drag-handle {
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    padding: 0 2px;
+}
+.cm-drag-handle:hover { color: #2563eb; }
+.cm-dragging {
+    background-color: #dbeafe !important;
+    border-color: #60a5fa !important;
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.15);
+    cursor: grabbing;
+}

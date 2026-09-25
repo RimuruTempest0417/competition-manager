@@ -1076,6 +1076,7 @@ const AUDIT_ACTION_LABELS = {
     REGISTER_REJECTED: '拒絕報名（審核）',
     PROMOTE_WAITLIST: '手動遞補候補',
     REORDER_WAITLIST: '調整候補順位',
+    WAITLIST_NOTIFY: '調整遞補通知設定',
     AUTO_PROMOTE_WAITLIST: '自動遞補候補',
     PURGE_AUDIT_LOGS: '清理稽核日誌',
     '2FA_SETUP_STARTED': '開始設定兩步驟驗證',
@@ -2690,6 +2691,27 @@ const REGISTRATION_REVIEW_HINT =
     '資料庫尚未執行 v2.20.0 migration（migrations/2026-09-26-v2.20.0-registration-review.sql）：' +
     '報名審核與候補需要 competitions.requires_approval／waitlist_enabled 與 registrations 的審核欄位。';
 
+/* v2.22.0：遞補通知開關也只多一個欄位（competitions.waitlist_notify）。 */
+const WAITLIST_NOTIFY_HINT =
+    '資料庫尚未執行 v2.22.0 migration（migrations/2026-09-26-v2.22.0-waitlist-notify.sql）：' +
+    '遞補通知開關需要 competitions.waitlist_notify 欄位（未執行時一律視為「通知＝開啟」）。';
+
+let waitlistNotifySchemaCache = null;
+
+async function waitlistNotifySchemaReady() {
+    if (waitlistNotifySchemaCache !== null) return waitlistNotifySchemaCache;
+    waitlistNotifySchemaCache = await columnExists('competitions', 'waitlist_notify');
+    if (!waitlistNotifySchemaCache) {
+        console.warn('⚠️ 尚未執行 v2.22.0 migration：遞補通知開關停用（一律通知）');
+    }
+    return waitlistNotifySchemaCache;
+}
+
+/* 這個賽事遞補時要不要通知？（欄位不存在 → 通知；NULL → 通知） */
+function notifyOnPromote(comp) {
+    return !comp || comp.waitlist_notify !== false;
+}
+
 let registrationReviewSchemaCache = null;
 
 /* v2.21.0：候補順位手動調整只多一個欄位（registrations.waitlist_order）。
@@ -3133,22 +3155,25 @@ app.post('/api/competitions/:id/registrations/promote', authenticateToken, async
         const { error: updErr } = await supabase.from('registrations').update(patchFields).eq('id', next.id);
         if (updErr) throw updErr;
 
+        // v2.22.0：賽事可關閉「遞補就通知」（關掉時遞補照常成立，只是不推播，稽核寫明原因）
+        const notify = notifyOnPromote(comp);
         await logAudit(req.user.username, 'PROMOTE_WAITLIST', comp.id,
-            `手動遞補候補: ${next.username}（第 ${plan.position} 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}）`, req.userAgent);
+            `手動遞補候補: ${next.username}（第 ${plan.position} 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}）${notify ? '' : '｜未通知（依賽事設定）'}`, req.userAgent);
 
-        const push = await notifyUser(next.user_id, {
+        const push = notify ? await notifyUser(next.user_id, {
             title: '候補遞補通知',
             body: `${comp.name}：你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}`,
             url: '/?view=myregs',
             tag: `cm-reg-promote-${next.id}`
-        });
-        await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
+        }) : { sent: 0 };
+        if (notify) await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
 
         res.json({
-            message: `已遞補 ${next.username}`,
+            message: notify ? `已遞補 ${next.username}` : `已遞補 ${next.username}（依賽事設定未通知）`,
             registration: Object.assign({}, next, patchFields),
             status_label: CMCompetitionState.REG_STATUS_LABELS[nextStatus],
-            notified: push.sent
+            notified: push.sent,
+            notify_disabled: !notify
         });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
@@ -3193,23 +3218,27 @@ app.post('/api/registrations/:id/promote', authenticateToken, async (req, res) =
         const { error: updErr } = await supabase.from('registrations').update(patchFields).eq('id', reg.id);
         if (updErr) throw updErr;
 
+        const notify = notifyOnPromote(comp);
         await logAudit(req.user.username, 'PROMOTE_WAITLIST', comp.id,
-            `指定遞補候補: ${reg.username}（第 ${plan.position} 順位 → ${CMCompetitionState.REG_STATUS_LABELS[plan.status]}，未照順位）`,
+            `指定遞補候補: ${reg.username}（第 ${plan.position} 順位 → ${CMCompetitionState.REG_STATUS_LABELS[plan.status]}，未照順位）${notify ? '' : '｜未通知（依賽事設定）'}`,
             req.userAgent);
 
-        const push = await notifyUser(reg.user_id, {
+        const push = notify ? await notifyUser(reg.user_id, {
             title: '候補遞補通知',
             body: `${comp.name}：你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[plan.status]}`,
             url: '/?view=myregs',
             tag: `cm-reg-promote-${reg.id}`
-        });
-        await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
+        }) : { sent: 0 };
+        if (notify) await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
 
         res.json({
-            message: `已遞補 ${reg.username}（原第 ${plan.position} 順位）`,
+            message: notify
+                ? `已遞補 ${reg.username}（原第 ${plan.position} 順位）`
+                : `已遞補 ${reg.username}（原第 ${plan.position} 順位，依賽事設定未通知）`,
             registration: Object.assign({}, reg, patchFields),
             status_label: CMCompetitionState.REG_STATUS_LABELS[plan.status],
-            notified: push.sent
+            notified: push.sent,
+            notify_disabled: !notify
         });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
@@ -3268,6 +3297,98 @@ app.post('/api/competitions/:id/waitlist/reorder', authenticateToken, async (req
     }
 });
 
+// 調整「遞補時要不要通知」（v2.22.0，管理員以上）
+app.post('/api/competitions/:id/waitlist/notify', authenticateToken, async (req, res) => {
+    const competitionId = req.params.id;
+    if (!ADMIN_ROLES.has(req.user.role)) {
+        return res.status(403).json({ error: '權限不足：只有管理員以上可以調整遞補通知設定' });
+    }
+
+    try {
+        if (!(await waitlistNotifySchemaReady())) return res.status(503).json({ error: WAITLIST_NOTIFY_HINT });
+
+        const comp = await fetchCompetition(competitionId);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        if (typeof (req.body && req.body.notify) !== 'boolean') {
+            return res.status(400).json({ error: '請提供 notify（true＝遞補時通知，false＝不通知）' });
+        }
+        const notify = req.body.notify;
+        const before = notifyOnPromote(comp);
+        if (before === notify) {
+            return res.json({ message: notify ? '遞補通知已是開啟' : '遞補通知已是關閉', notify });
+        }
+
+        const { error } = await supabase.from('competitions').update({ waitlist_notify: notify }).eq('id', comp.id);
+        if (error) throw error;
+
+        await logAudit(req.user.username, 'WAITLIST_NOTIFY', comp.id,
+            `遞補通知設定：${before ? '開啟' : '關閉'} → ${notify ? '開啟' : '關閉'}${notify ? '' : '（遞補仍會生效，只是不推播）'}`,
+            req.userAgent);
+
+        res.json({
+            message: notify ? '已開啟：之後遞補候補會推播通知對方' : '已關閉：之後遞補候補不會推播通知（遞補仍然生效）',
+            notify
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'update_waitlist_notify_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 候補相關的異動紀錄（v2.22.0，管理員以上）：從稽核日誌撈這場合適的紀錄，組成時間軸
+app.get('/api/competitions/:id/waitlist/history', authenticateToken, async (req, res) => {
+    const competitionId = req.params.id;
+    if (!ADMIN_ROLES.has(req.user.role)) {
+        return res.status(403).json({ error: '權限不足：只有管理員以上可以查看候補異動紀錄' });
+    }
+
+    try {
+        const comp = await fetchCompetition(competitionId);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+
+        // 只認「跟候補有關」的動作：調整順位、手動遞補、自動遞補、審核、通知設定、取消報名
+        const actions = ['REORDER_WAITLIST', 'PROMOTE_WAITLIST', 'AUTO_PROMOTE_WAITLIST', 'WAITLIST_NOTIFY',
+            'REGISTER_APPROVED', 'REGISTER_REJECTED', 'CANCEL_REGISTRATION'];
+
+        // 一律從最新抓到上限（100 筆）再自己切 limit：正式站 PostgREST 會依 range 回傳、
+        // 測試替身則回全部，這樣寫兩種環境行為一致（與 /api/audit-logs 同一個理由）。
+        const { data, error } = await supabase
+            .from('audit_logs')
+            .select('*')
+            .eq('target_id', comp.id)
+            .in('action', actions)
+            .order('created_at', { ascending: false })
+            .range(0, 99);
+        if (error) throw error;
+
+        const logs = (data || []).slice(0, limit).map((l) => ({
+            id: l.id,
+            at: l.created_at,
+            action: l.action,
+            action_label: auditActionLabel(l.action),
+            user: l.user_id,
+            details: l.details || ''
+        }));
+
+        res.json({
+            competition_id: comp.id,
+            name: comp.name,
+            returned: logs.length,
+            limit,
+            actions: actions.map((a) => ({ value: a, label: auditActionLabel(a) })),
+            logs
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'fetch_waitlist_history_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // 取消報名（本人或管理員以上）
 app.delete('/api/registrations/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
@@ -3313,24 +3434,27 @@ app.delete('/api/registrations/:id', authenticateToken, async (req, res) => {
                         const { error: pErr } = await supabase.from('registrations').update(patchFields).eq('id', next.id);
                         if (pErr) throw pErr;
 
+                        // v2.22.0：自動遞補也遵守賽事的「遞補通知」設定
+                        const autoNotify = notifyOnPromote(comp);
                         await logAudit(req.user.username, 'AUTO_PROMOTE_WAITLIST', reg.competition_id,
-                            `自動遞補候補: ${next.username}（第 1 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}，因 ${reg.username} 取消報名）`,
+                            `自動遞補候補: ${next.username}（第 1 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}，因 ${reg.username} 取消報名）${autoNotify ? '' : '｜未通知（依賽事設定）'}`,
                             req.userAgent);
 
-                        const push = await notifyUser(next.user_id, {
+                        const push = autoNotify ? await notifyUser(next.user_id, {
                             title: '候補遞補通知',
                             body: `${comp.name}：有人取消報名，你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}`,
                             url: '/?view=myregs',
                             tag: `cm-reg-promote-${next.id}`
-                        });
-                        await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
+                        }) : { sent: 0 };
+                        if (autoNotify) await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
 
                         promoted = {
                             id: next.id,
                             username: next.username,
                             status: nextStatus,
                             status_label: CMCompetitionState.REG_STATUS_LABELS[nextStatus],
-                            notified: push.sent
+                            notified: push.sent,
+                            notify_disabled: !autoNotify
                         };
                     }
                 }
@@ -3354,12 +3478,13 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
 
     try {
         const reviewReady = await registrationReviewSchemaReady();
+        const orderReady = reviewReady ? await waitlistOrderSchemaReady() : false;
         const isAdmin = ADMIN_ROLES.has(req.user.role);
         const baseCols = 'id,competition_id,user_id,username,team_id,team_name,note,status,created_at';
 
         const { data, error } = await supabase
             .from('registrations')
-            .select(reviewReady ? `${baseCols},reviewed_at,reviewed_by,review_note` : baseCols)
+            .select(reviewReady ? `${baseCols},reviewed_at,reviewed_by,review_note${orderReady ? ',waitlist_order' : ''}` : baseCols)
             .eq('competition_id', competitionId)
             .eq('is_deleted', false)
             .order('id', { ascending: true });
@@ -3408,6 +3533,9 @@ app.get('/api/competitions/:id/teams', authenticateToken, async (req, res) => {
     try {
         const reviewReady = await registrationReviewSchemaReady();
         const orderReady = reviewReady ? await waitlistOrderSchemaReady() : false;
+        const notifyReady = reviewReady ? await waitlistNotifySchemaReady() : false;
+        // 只有欄位存在時才多查一次（未執行 migration 時不多打一次資料庫）
+        const notifyRow = notifyReady ? await fetchCompetition(competitionId) : null;
         const [teamsRes, regsRes] = await Promise.all([
             supabase.from('competition_teams').select('*').eq('competition_id', competitionId).eq('is_deleted', false).order('id', { ascending: true }),
             supabase.from('registrations')
@@ -3448,6 +3576,9 @@ app.get('/api/competitions/:id/teams', authenticateToken, async (req, res) => {
             schema_ready: reviewReady,
             // v2.21.0：候補順位可不可以手動調整（有欄位才行；沒欄位時前端不顯示上下移按鈕）
             canReorderWaitlist: orderReady,
+            // v2.22.0：遞補通知開關（未執行 migration 時 notify_schema_ready=false、一律視為開啟）
+            notify_schema_ready: notifyReady,
+            notify_on_promote: notifyOnPromote(notifyRow),
             totalRegistrations: regs.length,
             canArrange: ADMIN_ROLES.has(req.user.role),
             canDelete: SUPER_ADMIN_ROLES.has(req.user.role)

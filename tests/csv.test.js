@@ -190,3 +190,25 @@ test('v2.12.0 安全性：正常資料匯出→匯入仍可往返', () => {
     assert.strictEqual(result.value.time, '09:00');
     assert.deepStrictEqual(result.value.tags, ['國中組', '團體賽']);
 });
+
+/* v2.22.0：物件列要自動變「表頭 + 資料」（以前會安靜地產生空行 CSV） */
+test('stringify：物件列會自動加上表頭（欄位順序照物件）', () => {
+    const csv = CMCSV.stringify([
+        { 姓名: '王小明', 隊伍: 'A 隊', 狀態: '已核准' },
+        { 姓名: '陳大文', 隊伍: 'B 隊', 狀態: '候補' }
+    ], { bom: true });
+    assert.strictEqual(csv, '\uFEFF姓名,隊伍,狀態\r\n王小明,A 隊,已核准\r\n陳大文,B 隊,候補\r\n');
+});
+
+test('stringify：物件列缺欄位留空、多欄位會補進表頭', () => {
+    const csv = CMCSV.stringify([
+        { 姓名: '甲', 備註: '' },
+        { 姓名: '乙', 備註: '=1+1', 候補順位: 2 }
+    ]);
+    assert.strictEqual(csv, '姓名,備註,候補順位\r\n甲,,\r\n乙,\'=1+1,2\r\n');
+});
+
+test('stringify：物件列裡的換行與逗號一樣會被跳脫', () => {
+    const csv = CMCSV.stringify([{ a: 'x,y', b: '第一行\n第二行' }]);
+    assert.strictEqual(csv, 'a,b\r\n"x,y","第一行\n第二行"\r\n');
+});

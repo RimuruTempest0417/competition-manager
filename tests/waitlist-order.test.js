@@ -177,3 +177,41 @@ test('指定遞補：手動排定的順位會反映在「原第幾順位」', ()
     const plan = CS.planPromotion({ max_registrations: 5 }, rows, 1);
     assert.strictEqual(plan.position, 2);   // 被管理員排到第二位
 });
+
+/* ── v2.22.0：一次搬動到指定位置（拖拉排序與「移到第 N 位」共用） ── */
+
+test('搬到指定位置：往後搬（把第一位搬到第三位）', () => {
+    assert.deepStrictEqual(CS.moveInQueue([1, 2, 3, 4], 1, 2), ['2', '3', '1', '4']);
+});
+
+test('搬到指定位置：往前搬（把最後一位搬到第一位）', () => {
+    assert.deepStrictEqual(CS.moveInQueue([1, 2, 3, 4], 4, 0), ['4', '1', '2', '3']);
+});
+
+test('搬到指定位置：搬到原本的位置＝完全不動', () => {
+    assert.deepStrictEqual(CS.moveInQueue([1, 2, 3], 2, 1), ['1', '2', '3']);
+});
+
+test('搬到指定位置：超出範圍會夾到頭或尾（不會產生空位）', () => {
+    assert.deepStrictEqual(CS.moveInQueue([1, 2, 3], 3, 99), ['1', '2', '3']);
+    assert.deepStrictEqual(CS.moveInQueue([1, 2, 3], 1, -5), ['1', '2', '3']);
+    assert.deepStrictEqual(CS.moveInQueue(['a', 'b', 'c'], 'c', 0), ['c', 'a', 'b']);
+});
+
+test('搬到指定位置：找不到這個 id 就回 null（呼叫端不送 API）', () => {
+    assert.strictEqual(CS.moveInQueue([1, 2, 3], 99, 1), null);
+    assert.strictEqual(CS.moveInQueue([], 1, 0), null);
+});
+
+test('搬到指定位置：回傳的一定是同一批人（不會多也不會少）', () => {
+    const next = CS.moveInQueue([7, 8, 9, 10], 9, 0);
+    assert.strictEqual(next.length, 4);
+    assert.deepStrictEqual(next.slice().sort(), ['10', '7', '8', '9']);
+});
+
+test('搬到指定位置：拖到某列上面＝插到那一列的位置（前端 elementFromPoint 的用法）', () => {
+    // 前端拖曳時是「把被拖的那列插到指標下那列之前／之後」，這裡驗證索引換算的結果一致
+    const ids = [11, 12, 13, 14];
+    assert.deepStrictEqual(CS.moveInQueue(ids, 14, ids.indexOf(11)), ['14', '11', '12', '13']);
+    assert.deepStrictEqual(CS.moveInQueue(ids, 11, ids.indexOf(13)), ['12', '13', '11', '14']);
+});

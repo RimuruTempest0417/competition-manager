@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.21.0</title>
+    <title>比賽管理系統 v2.22.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -1100,12 +1100,29 @@
                         <p class="text-xs font-bold text-blue-700 uppercase">🕒 候補名單 (<span id="waitlistCount">0</span>)</p>
                         <p id="waitlistOrderNote" class="text-[11px] text-slate-500 mt-0.5"></p>
                     </div>
-                        <button id="promoteWaitlistBtn"
-                            class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-1.5 rounded-lg transition shrink-0">
-                            ⬆️ 遞補下一位
-                        </button>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button id="waitlistHistoryBtn"
+                                class="text-xs bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium px-2.5 py-1.5 rounded-lg transition">
+                                🕘 順位異動
+                            </button>
+                            <button id="promoteWaitlistBtn"
+                                class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-1.5 rounded-lg transition shrink-0">
+                                ⬆️ 遞補下一位
+                            </button>
+                        </div>
                     </div>
+                    <label class="flex items-center gap-1.5 text-[11px] text-slate-600 mb-2">
+                        <input type="checkbox" id="waitlistNotifyToggle" class="w-4 h-4">
+                        <span id="waitlistNotifyNote">遞補時推播通知對方</span>
+                    </label>
                     <div id="waitlistList" class="space-y-1.5"></div>
+                    <div id="waitlistHistoryPanel" class="hidden mt-2 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+                        <div class="flex items-center justify-between mb-1.5">
+                            <p class="text-[11px] font-bold text-slate-600">🕘 候補與審核異動紀錄（最近 30 筆）</p>
+                            <button id="waitlistHistoryClose" class="text-[11px] text-slate-500 hover:text-slate-700">收起</button>
+                        </div>
+                        <div id="waitlistHistoryList" class="space-y-0.5"></div>
+                    </div>
                 </div>
                 <div>
                     <p class="text-xs font-bold text-slate-700 uppercase mb-2">
