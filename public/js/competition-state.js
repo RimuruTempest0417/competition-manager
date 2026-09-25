@@ -97,6 +97,12 @@
         const registeredCount = parseInt(opts.registeredCount, 10) || 0;
         const max = parseInt(comp && comp.max_registrations, 10) || 0;
         const full = max > 0 && registeredCount >= max;
+        // v2.20.0：名額滿了但有開放候補 → 報名還是送得出去（會排進候補），不是「不能報名」
+        const waitlistOnFull = full && reviewFlags(comp).waitlistEnabled;
+        const needsApproval = reviewFlags(comp).requiresApproval;
+        const waitlistCount = parseInt(opts.waitlistCount, 10) || 0;
+        // 額滿但可候補時，把「會排到第幾位」講清楚（前端按鈕與說明都用同一段文字）
+        const waitlistReason = `名額已滿（${max} 人），報名將排入候補（第 ${waitlistCount + 1} 位）`;
 
         const build = (state, canRegister, reason, detail) => ({
             state,
@@ -106,6 +112,10 @@
             reason: reason || '',
             detail: detail || '',
             full: state === 'registration_open' ? full : false,
+            // 「額滿但會排候補」在報名中與日期未定兩種狀態下都成立（都不會擋下報名）
+            waitlist: waitlistOnFull,
+            waitlist_position: waitlistOnFull ? waitlistCount + 1 : null,
+            needs_approval: needsApproval,
             registered_count: registeredCount,
             max_registrations: max,
             timeline: {
@@ -124,7 +134,8 @@
             if (!comp.is_registration_open) return build('unscheduled', false, '此賽事目前未開放報名', '尚未設定賽事日期');
             if (t.regStart && at < t.regStart) return build('unscheduled', false, `報名將於 ${fmtDate(t.regStart)} 開始`, '日期未定');
             if (t.regEnd && at > t.regEnd) return build('unscheduled', false, `報名已於 ${fmtDate(t.regEnd)} 截止`, '日期未定');
-            if (full) return build('unscheduled', false, `報名人數已達上限（${max} 人）`, '日期未定');
+            if (full && !waitlistOnFull) return build('unscheduled', false, `報名人數已達上限（${max} 人）`, '日期未定');
+            if (waitlistOnFull) return build('unscheduled', true, waitlistReason, '日期未定');
             return build('unscheduled', true, '', '日期未定（仍開放報名）');
         }
 
@@ -139,8 +150,109 @@
         if (t.regEnd && at > t.regEnd) {
             return build('registration_closed', false, `報名已於 ${fmtDate(t.regEnd)} 截止`, `${fmtDateTime(t.start)} 開始`);
         }
-        if (full) return build('registration_open', false, `報名人數已達上限（${max} 人）`, `報名至 ${fmtDateTime(t.regEnd) || '賽事開始'}`);
+        if (full && !waitlistOnFull) return build('registration_open', false, `報名人數已達上限（${max} 人）`, `報名至 ${fmtDateTime(t.regEnd) || '賽事開始'}`);
+        if (waitlistOnFull) return build('registration_open', true, waitlistReason, `報名至 ${fmtDateTime(t.regEnd) || '賽事開始'}`);
         return build('registration_open', true, '', `報名至 ${fmtDateTime(t.regEnd) || '賽事開始'}`);
+    }
+
+    /* ---------- v2.20.0：報名審核與候補（同一份規則，前後端共用） ----------
+       報名結果只有四種狀態，而且**名額的定義只有一個**：
+         佔名額 = 已核准（confirmed）＋ 待審核（pending）
+         候補（waitlisted）不佔名額，未錄取（rejected）也不佔。
+       既有資料的 status 都是 'confirmed'，所以舊資料不必搬移。
+    ------------------------------------------------------------------ */
+    const REG_STATUS_LABELS = {
+        pending: '待審核',
+        confirmed: '已核准',
+        waitlisted: '候補',
+        rejected: '未錄取'
+    };
+
+    const REG_STATUS_TONES = {
+        pending: 'amber',
+        confirmed: 'green',
+        waitlisted: 'blue',
+        rejected: 'rose'
+    };
+
+    const OCCUPIES_SLOT = { pending: true, confirmed: true, waitlisted: false, rejected: false };
+
+    const normalizeRegStatus = (s) => {
+        const v = String(s || '').trim().toLowerCase();
+        return REG_STATUS_LABELS[v] ? v : 'confirmed';   // 未知／空值一律視為已核准（v2.9.0 的舊資料）
+    };
+
+    /* 依狀態統計（伺服器與前端都用它算「佔幾個名額、幾人候補」） */
+    function countByStatus(rows) {
+        const out = { confirmed: 0, pending: 0, waitlisted: 0, rejected: 0, slots: 0, total: 0 };
+        for (const r of rows || []) {
+            if (!r || r.is_deleted) continue;
+            const s = normalizeRegStatus(r.status);
+            out[s] += 1;
+            out.total += 1;
+            if (OCCUPIES_SLOT[s]) out.slots += 1;
+        }
+        return out;
+    }
+
+    /* 這個賽事「需不需要審核」「有沒有開放候補」（欄位不存在時一律視為沒有 → 功能自動停用） */
+    function reviewFlags(comp) {
+        const c = comp || {};
+        return {
+            requiresApproval: c.requires_approval === true,
+            waitlistEnabled: c.waitlist_enabled === true
+        };
+    }
+
+    /* 送出一筆報名之後，這筆報名應該是哪種狀態？
+       回 { status, waitlist_position, reason }；status 為 null 代表「不該收這筆報名」（reason 說明原因）。 */
+    function decideRegistration(comp, counts) {
+        const cur = counts || {};
+        const slots = Number(cur.slots) || 0;
+        const max = parseInt(comp && comp.max_registrations, 10) || 0;   // 0 = 不限
+        const full = max > 0 && slots >= max;
+        const flags = reviewFlags(comp);
+        const waitlistLen = Number(cur.waitlisted) || 0;
+
+        if (!full) {
+            return flags.requiresApproval
+                ? { status: 'pending', waitlist_position: null, reason: '' }
+                : { status: 'confirmed', waitlist_position: null, reason: '' };
+        }
+        if (flags.waitlistEnabled) {
+            return { status: 'waitlisted', waitlist_position: waitlistLen + 1, reason: '' };
+        }
+        return {
+            status: null,
+            waitlist_position: null,
+            reason: flags.requiresApproval
+                ? `報名人數已達上限（${max} 人），且此賽事未開放候補，請聯絡主辦單位`
+                : `報名人數已達上限（${max} 人）`
+        };
+    }
+
+    /* 候補順位：先報名先排（created_at，其次 id） */
+    function waitlistQueue(rows) {
+        return (rows || [])
+            .filter((r) => r && !r.is_deleted && normalizeRegStatus(r.status) === 'waitlisted')
+            .slice()
+            .sort((a, b) => {
+                const ta = String(a.created_at || '');
+                const tb = String(b.created_at || '');
+                if (ta !== tb) return ta < tb ? -1 : 1;
+                return (Number(a.id) || 0) - (Number(b.id) || 0);
+            });
+    }
+
+    /* 有人讓出名額時，該遞補誰？（第一個候補，可排除剛取消的那筆） */
+    function nextWaitlist(rows, excludeId) {
+        const queue = waitlistQueue(rows).filter((r) => excludeId === undefined || String(r.id) !== String(excludeId));
+        return queue.length ? queue[0] : null;
+    }
+
+    /* 遞補後要變成什麼狀態：需要審核的賽事遞補後仍需審核（pending），否則直接核准 */
+    function promotionStatus(comp) {
+        return reviewFlags(comp).requiresApproval ? 'pending' : 'confirmed';
     }
 
     /* 舊介面：報名是否可以送出（{ open, reason }） */
@@ -149,5 +261,10 @@
         return { open: !!st.can_register, reason: st.can_register ? '' : st.reason };
     }
 
-    return { LABELS, TONES, evaluate, registrationState, timeline, parseTimestamp, parseLocalDateTime, fmtDate, fmtDateTime };
+    return {
+        LABELS, TONES, evaluate, registrationState, timeline, parseTimestamp, parseLocalDateTime, fmtDate, fmtDateTime,
+        // v2.20.0：報名審核與候補
+        REG_STATUS_LABELS, REG_STATUS_TONES, countByStatus, normalizeRegStatus, reviewFlags,
+        decideRegistration, waitlistQueue, nextWaitlist, promotionStatus
+    };
 }));

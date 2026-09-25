@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.19.0</title>
+    <title>比賽管理系統 v2.20.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -306,6 +306,19 @@
                     <div id="formStatePreview" class="text-xs text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-2 space-y-0.5">
                         <div>目前狀態：<span id="formStatePreviewText" class="font-semibold">—</span></div>
                         <div id="formStateDetail" class="text-slate-500">（填寫日期與報名時間後會即時顯示）</div>
+                    </div>
+                    <!-- v2.20.0：報名審核與候補（兩個開關都預設關閉＝與舊版行為完全相同） -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label class="flex items-start gap-2 border border-slate-200 rounded-lg p-3 bg-white cursor-pointer">
+                            <input type="checkbox" id="requires_approval" class="mt-0.5 shrink-0">
+                            <span class="text-xs text-slate-700 leading-relaxed">⏳ <b>報名需審核</b>
+                                <span class="block text-slate-500">報名後是「待審核」，要你在報名名單按核准才算報名成功</span></span>
+                        </label>
+                        <label class="flex items-start gap-2 border border-slate-200 rounded-lg p-3 bg-white cursor-pointer">
+                            <input type="checkbox" id="waitlist_enabled" class="mt-0.5 shrink-0">
+                            <span class="text-xs text-slate-700 leading-relaxed">🕒 <b>額滿開放候補</b>
+                                <span class="block text-slate-500">名額滿了還能報名（自動排候補），有人取消就自動遞補並通知</span></span>
+                        </label>
                     </div>
                 </div>
 
@@ -993,6 +1006,7 @@
             </div>
 
             <div id="registerCompInfo" class="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-700 leading-relaxed"></div>
+            <p id="registerHint" class="hidden text-xs p-2.5 rounded-lg border"></p>
 
             <div id="registerTeamWrap" class="hidden">
                 <label for="registerTeamName" class="block text-xs font-semibold text-slate-600 mb-1">
@@ -1074,6 +1088,22 @@
             </div>
 
             <div class="flex-1 overflow-y-auto space-y-3">
+                <!-- v2.20.0：報名審核與候補（待審核的人不會出現在下面的隊伍名單裡） -->
+                <div id="reviewSummary" class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2"></div>
+                <div id="pendingSection" class="hidden">
+                    <p class="text-xs font-bold text-amber-700 uppercase mb-2">⏳ 待審核 (<span id="pendingCount">0</span>)</p>
+                    <div id="pendingList" class="space-y-1.5"></div>
+                </div>
+                <div id="waitlistSection" class="hidden">
+                    <div class="flex items-center justify-between gap-2 mb-2">
+                        <p class="text-xs font-bold text-blue-700 uppercase">🕒 候補名單 (<span id="waitlistCount">0</span>)</p>
+                        <button id="promoteWaitlistBtn"
+                            class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-1.5 rounded-lg transition shrink-0">
+                            ⬆️ 遞補下一位
+                        </button>
+                    </div>
+                    <div id="waitlistList" class="space-y-1.5"></div>
+                </div>
                 <div>
                     <p class="text-xs font-bold text-slate-700 uppercase mb-2">
                         未編排報名者 (<span id="unassignedCount">0</span>)

@@ -300,6 +300,21 @@ function normalizeRegistrationWindow(body) {
     return Object.assign({ registration_start_at: start, registration_end_at: end }, derived);
 }
 
+/* v2.20.0：報名審核／候補兩個開關（只有在請求真的有帶欄位時才更新，避免舊前端把設定清掉） */
+function normalizeReviewFlags(body) {
+    const b = body || {};
+    return {
+        requires_approval: b.requires_approval === true || b.requires_approval === 'true',
+        waitlist_enabled: b.waitlist_enabled === true || b.waitlist_enabled === 'true'
+    };
+}
+
+function hasReviewFlagsContent(body) {
+    const b = body || {};
+    return Object.prototype.hasOwnProperty.call(b, 'requires_approval')
+        || Object.prototype.hasOwnProperty.call(b, 'waitlist_enabled');
+}
+
 function hasRegistrationWindowContent(fields) {
     return !!(fields.registration_start_at || fields.registration_end_at);
 }
@@ -1057,6 +1072,10 @@ const AUDIT_ACTION_LABELS = {
     REGISTER_COMPETITION: '報名賽事',
     CANCEL_REGISTRATION: '取消報名',
     SEND_PUSH: '發送推播',
+    REGISTER_APPROVED: '核准報名（審核）',
+    REGISTER_REJECTED: '拒絕報名（審核）',
+    PROMOTE_WAITLIST: '手動遞補候補',
+    AUTO_PROMOTE_WAITLIST: '自動遞補候補',
     PURGE_AUDIT_LOGS: '清理稽核日誌',
     '2FA_SETUP_STARTED': '開始設定兩步驟驗證',
     '2FA_ENABLED': '啟用兩步驟驗證',
@@ -2346,21 +2365,32 @@ app.get('/api/competitions', async (req, res) => {
 
         // v2.19.0：賽事狀態由後端即時推導（報名中／尚未開始／報名已截止／進行中／已結束），前端只負責顯示。
         // 人數上限需要實際報名數 → 一次查回來自己累加（與 /api/registration-counts 同一套規則）。
+        // v2.20.0：「佔名額」＝已核准＋待審核（候補不算），所以這裡要一起讀 status
+        const reviewReady = await registrationReviewSchemaReady();
         const { data: activeRegs } = await supabase
             .from('registrations')
-            .select('competition_id')
+            .select(reviewReady ? 'competition_id,status' : 'competition_id')
             .eq('is_deleted', false);
 
         const regCounts = {};
+        const waitlistCounts = {};
         (activeRegs || []).forEach((r) => {
             const key = String(r.competition_id);
+            const status = CMCompetitionState.normalizeRegStatus(r.status);
+            if (status === 'waitlisted') {
+                waitlistCounts[key] = (waitlistCounts[key] || 0) + 1;
+                return;   // 候補不佔名額
+            }
             regCounts[key] = (regCounts[key] || 0) + 1;
         });
 
         const now = new Date();
         const withState = competitions.map(c => {
             const pubName = publisherMap[String(c.id)] || null;
-            const st = competitionState(c, now, { registeredCount: regCounts[String(c.id)] || 0 });
+            const st = competitionState(c, now, {
+                registeredCount: regCounts[String(c.id)] || 0,
+                waitlistCount: waitlistCounts[String(c.id)] || 0
+            });
             return {
                 ...c,
                 publisher_name: pubName,
@@ -2372,7 +2402,10 @@ app.get('/api/competitions', async (req, res) => {
                 registration_reason: st.reason,
                 state_detail: st.detail,
                 is_full: st.full,
-                registered_count: st.registered_count
+                registered_count: st.registered_count,
+                waitlist_count: waitlistCounts[String(c.id)] || 0,
+                is_waitlist: !!st.waitlist,
+                needs_approval: !!st.needs_approval
             };
         });
 
@@ -2435,6 +2468,11 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
     const includeWindow = shouldIncludeRegistrationWindow(windowFields, schemaHasRegistrationWindow);
     const schemaWindowReady = await registrationWindowSchemaReady();
 
+    // v2.20.0：報名需審核／額滿可候補（尚未 migration 時不帶，功能自動停用）
+    const reviewFields = normalizeReviewFlags(req.body);
+    const schemaReviewReady = await registrationReviewSchemaReady();
+    const includeReviewFields = schemaReviewReady && hasReviewFlagsContent(req.body);
+
     try {
         const payload = {
             name: name.trim(),
@@ -2449,6 +2487,7 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
             ...(includeTeamFields ? teamFields : {}),
             // 欄位不存在時不帶（回傳 window_saved:false 讓前端誠實告知），時間欄位不該拖垮整筆儲存
             ...(includeWindow && schemaWindowReady ? windowFields : {}),
+            ...(includeReviewFields ? reviewFields : {}),
             is_deleted: false,
             created_at: new Date().toISOString()
         };
@@ -2510,6 +2549,11 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
     const includeWindow = shouldIncludeRegistrationWindow(windowFields, schemaHasRegistrationWindow);
     const schemaWindowReady = await registrationWindowSchemaReady();
 
+    // v2.20.0：報名需審核／額滿可候補（尚未 migration 時不帶，功能自動停用）
+    const reviewFields = normalizeReviewFlags(req.body);
+    const schemaReviewReady = await registrationReviewSchemaReady();
+    const includeReviewFields = schemaReviewReady && hasReviewFlagsContent(req.body);
+
     try {
         const payload = {
             name: name.trim(),
@@ -2522,7 +2566,8 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
             is_registration_open: !!is_registration_open,
             ...(includeTaxonomy ? taxonomy : {}),
             ...(includeTeamFields ? teamFields : {}),
-            ...(includeWindow && schemaWindowReady ? windowFields : {})
+            ...(includeWindow && schemaWindowReady ? windowFields : {}),
+            ...(includeReviewFields ? reviewFields : {})
         };
 
         const { data, error } = await supabase
@@ -2636,29 +2681,120 @@ async function fetchCompetition(id) {
     return data;
 }
 
-async function countRegistrations(competitionId) {
+/* ---------- v2.20.0：報名審核與候補 ----------
+   規則本身在 public/js/competition-state.js（前後端共用），這裡只負責資料庫讀寫。
+   名額定義：佔名額 = 已核准（confirmed）＋ 待審核（pending）；候補（waitlisted）不佔名額。
+   -------------------------------------------------- */
+const REGISTRATION_REVIEW_HINT =
+    '資料庫尚未執行 v2.20.0 migration（migrations/2026-09-26-v2.20.0-registration-review.sql）：' +
+    '報名審核與候補需要 competitions.requires_approval／waitlist_enabled 與 registrations 的審核欄位。';
+
+let registrationReviewSchemaCache = null;
+
+/* 審核／候補功能是否可用（欄位探測結果有行程內快取，同一個行程內不會中途翻轉） */
+async function registrationReviewSchemaReady() {
+    if (registrationReviewSchemaCache !== null) return registrationReviewSchemaCache;
+    const [approval, waitlist] = await Promise.all([
+        columnExists('competitions', 'requires_approval'),
+        columnExists('competitions', 'waitlist_enabled')
+    ]);
+    registrationReviewSchemaCache = !!(approval && waitlist);
+    if (!registrationReviewSchemaCache) {
+        console.warn('⚠️ 尚未執行 v2.20.0 migration：報名審核與候補功能停用（報名一律直接核准）');
+    }
+    return registrationReviewSchemaCache;
+}
+
+/* 一場賽事的報名列與狀態統計（審核、候補、名額全部靠這一份） */
+async function registrationSummary(competitionId) {
+    const cols = 'id,user_id,username,team_id,team_name,note,status,is_deleted,created_at';
     const { data, error } = await supabase
         .from('registrations')
-        .select('id')
+        .select(cols)
         .eq('competition_id', competitionId)
-        .eq('is_deleted', false);
+        .eq('is_deleted', false)
+        .order('id', { ascending: true });
     if (error) throw error;
-    return (data || []).length;
+    const rows = data || [];
+    const counts = CMCompetitionState.countByStatus(rows);
+    return { rows, counts };
+}
+
+/* 佔名額的人數（＝狀態機判斷「額滿」用的數字） */
+async function countRegistrations(competitionId) {
+    const { counts } = await registrationSummary(competitionId);
+    return counts.slots;
+}
+
+/* 針對單一使用者的推播（審核結果、候補遞補）。
+   沒有訂閱／沒有金鑰都不是錯誤：回 { sent: 0 } 讓呼叫端照常完成動作。 */
+async function notifyUser(userId, payload) {
+    if (userId === null || userId === undefined) return { sent: 0, total: 0 };
+    try {
+        const { data, error } = await supabase
+            .from('push_subscriptions')
+            .select('id,endpoint,p256dh,auth')
+            .eq('user_id', userId)
+            .eq('is_active', true);
+        if (error) throw error;
+        const subs = data || [];
+        let sent = 0;
+        let gone = 0;
+        let failed = 0;
+        for (const sub of subs) {
+            const result = await sendPushTo(sub, payload);
+            if (result.ok) sent += 1;
+            else if (result.gone) {
+                gone += 1;
+                await supabase.from('push_subscriptions').update({ is_active: false }).eq('id', sub.id);
+            } else failed += 1;
+        }
+        return { sent, total: subs.length, gone, failed };
+    } catch (err) {
+        if (isMissingTableError(err)) return { sent: 0, total: 0, skipped: 'no_table' };
+        console.warn('推播通知失敗（不影響主要動作）：', err.message);
+        return { sent: 0, total: 0, error: err.message };
+    }
+}
+
+/* 推播事件紀錄（跟每日提醒共用 push_log；這張表不存在時安靜略過） */
+async function logPushEvent(competitionId, kind, sentCount) {
+    try {
+        const { error } = await supabase.from('push_log').insert([{
+            competition_id: competitionId === undefined ? null : competitionId,
+            kind,
+            sent_count: sentCount || 0,
+            sent_at: new Date().toISOString()
+        }]);
+        if (error) throw error;
+    } catch (err) {
+        if (!isMissingTableError(err)) console.warn('push_log 寫入失敗：', err.message);
+    }
 }
 
 // 各賽事報名人數（公開的彙總資訊，未執行 migration 時回空物件）
 app.get('/api/registration-counts', async (req, res) => {
     try {
-        const { data, error } = await supabase.from('registrations').select('competition_id').eq('is_deleted', false);
+        // v2.20.0：公開端點只回「佔名額的人數」與「候補人數」這種聚合數字，不含任何個人資訊
+        const reviewReady = await registrationReviewSchemaReady();
+        const { data, error } = await supabase
+            .from('registrations')
+            .select(reviewReady ? 'competition_id,status' : 'competition_id')
+            .eq('is_deleted', false);
         if (error) throw error;
 
         const counts = {};
+        const waitlist = {};
         (data || []).forEach((r) => {
             const key = String(r.competition_id);
+            if (reviewReady && CMCompetitionState.normalizeRegStatus(r.status) === 'waitlisted') {
+                waitlist[key] = (waitlist[key] || 0) + 1;
+                return;
+            }
             counts[key] = (counts[key] || 0) + 1;
         });
 
-        res.json({ counts, total: (data || []).length });
+        res.json({ counts, waitlist, total: Object.values(counts).reduce((a, b) => a + b, 0) });
     } catch (err) {
         // 前端仍可優雅降級，但後台要看得到（原本完全靜默）
         await logErrorToDb(req, 'registration_counts_error', err, { severity: 'warn' });
@@ -2752,7 +2888,33 @@ app.get('/api/my/registrations', authenticateToken, async (req, res) => {
             .order('id', { ascending: false });
         if (error) throw error;
 
-        res.json((data || []).filter((r) => r.competitions && !r.competitions.is_deleted));
+        const rows = (data || []).filter((r) => r.competitions && !r.competitions.is_deleted);
+
+        // v2.20.0：附上狀態中文與「候補第幾位」（同一場賽事的候補一起排順位）
+        const reviewReady = await registrationReviewSchemaReady();
+        const queues = {};
+        if (reviewReady) {
+            const compIds = Array.from(new Set(rows.map((r) => String(r.competition_id))));
+            for (const cid of compIds) {
+                const { data: all } = await supabase
+                    .from('registrations')
+                    .select('id,user_id,status,created_at,is_deleted')
+                    .eq('competition_id', cid)
+                    .eq('is_deleted', false);
+                queues[cid] = CMCompetitionState.waitlistQueue(all || []).map((r) => String(r.id));
+            }
+        }
+
+        res.json(rows.map((r) => {
+            const status = CMCompetitionState.normalizeRegStatus(r.status);
+            const idx = (queues[String(r.competition_id)] || []).indexOf(String(r.id));
+            return Object.assign({}, r, {
+                status,
+                status_label: CMCompetitionState.REG_STATUS_LABELS[status],
+                waitlist_position: idx >= 0 ? idx + 1 : null,
+                can_cancel: status !== 'rejected'
+            });
+        }));
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
         await logErrorToDb(req, 'my_registrations_error', err);
@@ -2770,9 +2932,9 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
         const comp = await fetchCompetition(competitionId);
         if (!comp) return res.status(404).json({ error: '找不到該賽事' });
 
-        const count = await countRegistrations(competitionId);
-        const state = registrationState(comp, new Date(), count);
-        if (!state.open) return res.status(400).json({ error: state.reason });
+        const { counts } = await registrationSummary(competitionId);
+        const state = competitionState(comp, new Date(), { registeredCount: counts.slots, waitlistCount: counts.waitlisted });
+        if (!state.can_register) return res.status(400).json({ error: state.reason });
 
         const { data: existing, error: exErr } = await supabase
             .from('registrations')
@@ -2789,6 +2951,14 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
             return res.status(400).json({ error: '此為組隊比賽，請填寫隊伍名稱' });
         }
 
+        // v2.20.0：需審核 → 待審核；額滿且開放候補 → 候補；否則直接核准
+        // （尚未執行 migration 時退回 v2.9.0 行為：一律直接核准，網站照常運作）
+        const reviewReady = await registrationReviewSchemaReady();
+        const decision = reviewReady
+            ? CMCompetitionState.decideRegistration(comp, counts)
+            : { status: 'confirmed', waitlist_position: null, reason: '' };
+        if (!decision.status) return res.status(400).json({ error: decision.reason });
+
         const { data, error } = await supabase
             .from('registrations')
             .insert([{
@@ -2797,21 +2967,171 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
                 username: operator.username,
                 team_name: teamName || null,
                 note: cleanText(body.note, 200) || null,
-                status: 'confirmed',
+                status: decision.status,
                 is_deleted: false,
                 created_at: new Date().toISOString()
             }])
             .select();
         if (error) throw error;
 
+        const statusNote = decision.status === 'pending' ? '（待審核）'
+            : decision.status === 'waitlisted' ? `（候補第 ${decision.waitlist_position} 位）` : '';
         await logAudit(operator.username, 'REGISTER_COMPETITION', comp.id,
-            `報名賽事: ${comp.name}${teamName ? '（隊伍：' + teamName + '）' : ''}`, req.userAgent);
+            `報名賽事: ${comp.name}${teamName ? '（隊伍：' + teamName + '）' : ''}${statusNote}`, req.userAgent);
 
-        res.json({ message: '報名成功', registration: data[0], registrations: count + 1 });
+        const message = decision.status === 'pending' ? '已送出報名，等待主辦單位審核'
+            : decision.status === 'waitlisted' ? `已排入候補（第 ${decision.waitlist_position} 位）`
+                : '報名成功';
+
+        res.json({
+            message,
+            status: decision.status,
+            status_label: CMCompetitionState.REG_STATUS_LABELS[decision.status],
+            waitlist_position: decision.waitlist_position,
+            needs_approval: decision.status === 'pending',
+            registration: data[0],
+            registrations: counts.slots + (decision.status === 'waitlisted' ? 0 : 1)
+        });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
         if ((err && err.code) === '23505') return res.status(409).json({ error: '你已經報名過此賽事了' });
         await logErrorToDb(req, 'register_competition_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* 審核一筆報名（管理員以上）：approve → 已核准；reject → 未錄取（附拒絕原因） */
+app.post('/api/registrations/:id/review', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const action = String((req.body && req.body.action) || '').toLowerCase();
+    const note = cleanText((req.body && req.body.note) || '', 200);
+
+    if (!ADMIN_ROLES.has(req.user.role)) {
+        return res.status(403).json({ error: '權限不足：只有管理員以上可以審核報名' });
+    }
+    if (!['approve', 'reject'].includes(action)) {
+        return res.status(400).json({ error: 'action 只接受 approve（核准）或 reject（拒絕）' });
+    }
+
+    try {
+        if (!(await registrationReviewSchemaReady())) return res.status(503).json({ error: REGISTRATION_REVIEW_HINT });
+
+        const { data: reg, error } = await supabase.from('registrations').select('*').eq('id', id).maybeSingle();
+        if (error) throw error;
+        if (!reg || reg.is_deleted) return res.status(404).json({ error: '找不到此報名紀錄' });
+
+        const comp = await fetchCompetition(reg.competition_id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const { counts } = await registrationSummary(reg.competition_id);
+        const current = CMCompetitionState.normalizeRegStatus(reg.status);
+
+        if (action === 'approve') {
+            const max = parseInt(comp.max_registrations, 10) || 0;
+            // 自己目前佔的名額要扣掉，否則「核准最後一個名額」會被誤判成名額已滿
+            const others = counts.slots - (current === 'pending' || current === 'confirmed' ? 1 : 0);
+            if (max > 0 && others >= max) {
+                return res.status(400).json({ error: `名額已滿（${max} 人）：請先處理候補或拒絕其他報名，再核准這一筆` });
+            }
+        }
+
+        const nextStatus = action === 'approve' ? 'confirmed' : 'rejected';
+        const patchFields = {
+            status: nextStatus,
+            reviewed_at: new Date().toISOString(),
+            reviewed_by: req.user.username,
+            review_note: note || null
+        };
+        const { error: updErr } = await supabase.from('registrations').update(patchFields).eq('id', id);
+        if (updErr) throw updErr;
+
+        // 稽核動作一律寫字面值（tests/audit-actions.test.js 會擋「用變數拼出來的動作」，否則篩選會漏掉）
+        if (action === 'approve') {
+            await logAudit(req.user.username, 'REGISTER_APPROVED', comp.id,
+                `核准報名: ${reg.username}（原狀態 ${CMCompetitionState.REG_STATUS_LABELS[current]}）${note ? '｜備註：' + note : ''}`,
+                req.userAgent);
+        } else {
+            await logAudit(req.user.username, 'REGISTER_REJECTED', comp.id,
+                `拒絕報名: ${reg.username}（原狀態 ${CMCompetitionState.REG_STATUS_LABELS[current]}）${note ? '｜備註：' + note : ''}`,
+                req.userAgent);
+        }
+
+        const push = await notifyUser(reg.user_id, {
+            title: action === 'approve' ? '報名已核准' : '報名結果通知',
+            body: action === 'approve'
+                ? `${comp.name}：你的報名已通過審核`
+                : `${comp.name}：很抱歉，你的報名未錄取${note ? `（${note}）` : ''}`,
+            url: '/?view=myregs',
+            tag: `cm-reg-review-${reg.id}`
+        });
+        await logPushEvent(comp.id, 'review_result', push.sent);
+
+        res.json({
+            message: action === 'approve' ? '已核准這筆報名' : '已拒絕這筆報名',
+            registration: Object.assign({}, reg, patchFields),
+            status_label: CMCompetitionState.REG_STATUS_LABELS[nextStatus],
+            notified: push.sent
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'review_registration_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* 手動遞補下一位候補（管理員以上）：自動遞補失效時（例如當下沒名額、後來才空出來）的補救手段 */
+app.post('/api/competitions/:id/registrations/promote', authenticateToken, async (req, res) => {
+    const competitionId = req.params.id;
+
+    if (!ADMIN_ROLES.has(req.user.role)) {
+        return res.status(403).json({ error: '權限不足：只有管理員以上可以遞補候補' });
+    }
+
+    try {
+        if (!(await registrationReviewSchemaReady())) return res.status(503).json({ error: REGISTRATION_REVIEW_HINT });
+
+        const comp = await fetchCompetition(competitionId);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const { rows, counts } = await registrationSummary(competitionId);
+        const next = CMCompetitionState.nextWaitlist(rows);
+        if (!next) return res.status(400).json({ error: '目前沒有候補名單' });
+
+        const max = parseInt(comp.max_registrations, 10) || 0;
+        if (max > 0 && counts.slots >= max) {
+            return res.status(400).json({ error: `名額已滿（${max} 人）：請先取消或拒絕其他報名，再遞補候補` });
+        }
+
+        const nextStatus = CMCompetitionState.promotionStatus(comp);
+        const patchFields = {
+            status: nextStatus,
+            reviewed_at: new Date().toISOString(),
+            reviewed_by: req.user.username,
+            review_note: '候補遞補'
+        };
+        const { error: updErr } = await supabase.from('registrations').update(patchFields).eq('id', next.id);
+        if (updErr) throw updErr;
+
+        await logAudit(req.user.username, 'PROMOTE_WAITLIST', comp.id,
+            `手動遞補候補: ${next.username}（第 1 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}）`, req.userAgent);
+
+        const push = await notifyUser(next.user_id, {
+            title: '候補遞補通知',
+            body: `${comp.name}：你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}`,
+            url: '/?view=myregs',
+            tag: `cm-reg-promote-${next.id}`
+        });
+        await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
+
+        res.json({
+            message: `已遞補 ${next.username}`,
+            registration: Object.assign({}, next, patchFields),
+            status_label: CMCompetitionState.REG_STATUS_LABELS[nextStatus],
+            notified: push.sent
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'promote_waitlist_error', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -2839,7 +3159,56 @@ app.delete('/api/registrations/:id', authenticateToken, async (req, res) => {
         await logAudit(req.user.username, 'CANCEL_REGISTRATION', reg.competition_id,
             `取消報名: ${reg.username}（${isOwner ? '本人' : '管理員代為取消'}）`, req.userAgent);
 
-        res.json({ message: '已取消報名' });
+        // v2.20.0：讓出名額時自動遞補第一位候補（僅限「原本佔名額」的報名，且此賽事開放候補）
+        let promoted = null;
+        try {
+            const reviewReady = await registrationReviewSchemaReady();
+            const cancelledStatus = CMCompetitionState.normalizeRegStatus(reg.status);
+            if (reviewReady && cancelledStatus !== 'waitlisted' && cancelledStatus !== 'rejected') {
+                const comp = await fetchCompetition(reg.competition_id);
+                if (comp && CMCompetitionState.reviewFlags(comp).waitlistEnabled) {
+                    const { rows, counts } = await registrationSummary(reg.competition_id);
+                    const next = CMCompetitionState.nextWaitlist(rows, reg.id);
+                    const max = parseInt(comp.max_registrations, 10) || 0;
+                    if (next && (max === 0 || counts.slots < max)) {
+                        const nextStatus = CMCompetitionState.promotionStatus(comp);
+                        const patchFields = {
+                            status: nextStatus,
+                            reviewed_at: new Date().toISOString(),
+                            reviewed_by: req.user.username,
+                            review_note: '候補自動遞補'
+                        };
+                        const { error: pErr } = await supabase.from('registrations').update(patchFields).eq('id', next.id);
+                        if (pErr) throw pErr;
+
+                        await logAudit(req.user.username, 'AUTO_PROMOTE_WAITLIST', reg.competition_id,
+                            `自動遞補候補: ${next.username}（第 1 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}，因 ${reg.username} 取消報名）`,
+                            req.userAgent);
+
+                        const push = await notifyUser(next.user_id, {
+                            title: '候補遞補通知',
+                            body: `${comp.name}：有人取消報名，你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}`,
+                            url: '/?view=myregs',
+                            tag: `cm-reg-promote-${next.id}`
+                        });
+                        await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
+
+                        promoted = {
+                            id: next.id,
+                            username: next.username,
+                            status: nextStatus,
+                            status_label: CMCompetitionState.REG_STATUS_LABELS[nextStatus],
+                            notified: push.sent
+                        };
+                    }
+                }
+            }
+        } catch (promoteErr) {
+            // 遞補失敗不可以讓「取消報名」跟著失敗（取消已經生效了）
+            await logErrorToDb(req, 'auto_promote_waitlist_error', promoteErr);
+        }
+
+        res.json({ message: '已取消報名', promoted });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
         await logErrorToDb(req, 'cancel_registration_error', err);
@@ -2852,19 +3221,47 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
     const competitionId = req.params.id;
 
     try {
-        let query = supabase
+        const reviewReady = await registrationReviewSchemaReady();
+        const isAdmin = ADMIN_ROLES.has(req.user.role);
+        const baseCols = 'id,competition_id,user_id,username,team_id,team_name,note,status,created_at';
+
+        const { data, error } = await supabase
             .from('registrations')
-            .select('id,competition_id,user_id,username,team_id,team_name,note,status,created_at')
+            .select(reviewReady ? `${baseCols},reviewed_at,reviewed_by,review_note` : baseCols)
             .eq('competition_id', competitionId)
             .eq('is_deleted', false)
             .order('id', { ascending: true });
-
-        if (!ADMIN_ROLES.has(req.user.role)) query = query.eq('user_id', req.user.sub);
-
-        const { data, error } = await query;
         if (error) throw error;
 
-        res.json({ registrations: data || [], total: (data || []).length });
+        let rows = data || [];
+        if (!isAdmin) rows = rows.filter((r) => String(r.user_id) === String(req.user.sub));
+
+        rows = rows.map((r) => Object.assign({}, r, {
+            status: CMCompetitionState.normalizeRegStatus(r.status),
+            status_label: CMCompetitionState.REG_STATUS_LABELS[CMCompetitionState.normalizeRegStatus(r.status)]
+        }));
+
+        // 候補順位（先報名先排；只有管理員需要看到整份名單的順位）
+        if (isAdmin) {
+            const queue = CMCompetitionState.waitlistQueue(rows);
+            const position = {};
+            queue.forEach((r, i) => { position[String(r.id)] = i + 1; });
+            rows = rows.map((r) => Object.assign({}, r, {
+                waitlist_position: position[String(r.id)] || null
+            }));
+        }
+
+        const counts = CMCompetitionState.countByStatus(rows);
+        const wanted = String(req.query.status || '').split(',').map((s) => s.trim()).filter(Boolean);
+        const result = wanted.length ? rows.filter((r) => wanted.includes(r.status)) : rows;
+
+        res.json({
+            registrations: result,
+            total: result.length,
+            counts,
+            waitlist_queue: isAdmin ? CMCompetitionState.waitlistQueue(rows).map((r) => r.id) : undefined,
+            schema_ready: reviewReady
+        });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
         await logErrorToDb(req, 'list_registrations_error', err);
@@ -2877,21 +3274,45 @@ app.get('/api/competitions/:id/teams', authenticateToken, async (req, res) => {
     const competitionId = req.params.id;
 
     try {
+        const reviewReady = await registrationReviewSchemaReady();
         const [teamsRes, regsRes] = await Promise.all([
             supabase.from('competition_teams').select('*').eq('competition_id', competitionId).eq('is_deleted', false).order('id', { ascending: true }),
-            supabase.from('registrations').select('id,username,user_id,team_id,team_name').eq('competition_id', competitionId).eq('is_deleted', false).order('id', { ascending: true })
+            supabase.from('registrations')
+                .select(reviewReady
+                    ? 'id,username,user_id,team_id,team_name,status,created_at'
+                    : 'id,username,user_id,team_id,team_name')
+                .eq('competition_id', competitionId)
+                .eq('is_deleted', false)
+                .order('id', { ascending: true })
         ]);
         if (teamsRes.error) throw teamsRes.error;
         if (regsRes.error) throw regsRes.error;
 
-        const regs = regsRes.data || [];
+        const regs = (regsRes.data || []).map((r) => {
+            const status = CMCompetitionState.normalizeRegStatus(r.status);
+            return Object.assign({}, r, {
+                status,
+                status_label: CMCompetitionState.REG_STATUS_LABELS[status]
+            });
+        });
+        // 只有「已核准」的人算在隊伍名單裡（待審核／候補還不確定能不能參賽，不該先編隊）
+        const approved = regs.filter((r) => r.status === 'confirmed');
         const teams = (teamsRes.data || []).map((t) => Object.assign({}, t, {
-            members: regs.filter((r) => String(r.team_id) === String(t.id))
+            members: approved.filter((r) => String(r.team_id) === String(t.id))
         }));
+
+        const queue = CMCompetitionState.waitlistQueue(regs);
+        const pending = regs.filter((r) => r.status === 'pending');
+        const waitlisted = queue.map((r, i) => Object.assign({}, r, { waitlist_position: i + 1 }));
 
         res.json({
             teams,
-            unassigned: regs.filter((r) => !r.team_id),
+            unassigned: approved.filter((r) => !r.team_id),
+            // v2.20.0：審核／候補用的清單（管理員才看得到內容，但一般用戶本來就打不到這個端點）
+            pending,
+            waitlisted,
+            counts: CMCompetitionState.countByStatus(regs),
+            schema_ready: reviewReady,
             totalRegistrations: regs.length,
             canArrange: ADMIN_ROLES.has(req.user.role),
             canDelete: SUPER_ADMIN_ROLES.has(req.user.role)
@@ -3024,6 +3445,14 @@ app.post('/api/teams/:id/members', requireAdmin, async (req, res) => {
         if (!reg || reg.is_deleted) return res.status(404).json({ error: '找不到該報名紀錄' });
         if (String(reg.competition_id) !== String(team.competition_id)) {
             return res.status(400).json({ error: '報名紀錄與隊伍不屬於同一場賽事' });
+        }
+
+        // v2.20.0：只有「已核准」的報名可以編進隊伍（待審核／候補還沒確定能不能參賽）
+        const regStatus = CMCompetitionState.normalizeRegStatus(reg.status);
+        if (regStatus !== 'confirmed') {
+            return res.status(400).json({
+                error: `只能編排「已核准」的報名（${reg.username} 目前是「${CMCompetitionState.REG_STATUS_LABELS[regStatus]}」）`
+            });
         }
 
         const comp = await fetchCompetition(team.competition_id);
@@ -3802,6 +4231,15 @@ app.__test__ = {
     shouldIncludeRegistrationWindow,
     hasTeamFieldsContent,
     shouldIncludeTeamFields,
+    // v2.20.0：報名審核與候補
+    normalizeReviewFlags,
+    hasReviewFlagsContent,
+    registrationReviewSchemaReady,
+    registrationSummary,
+    decideRegistration: CMCompetitionState.decideRegistration,
+    countByStatus: CMCompetitionState.countByStatus,
+    nextWaitlist: CMCompetitionState.nextWaitlist,
+    promotionStatus: CMCompetitionState.promotionStatus,
     registrationState,
     parseImageDataUrl,
     competitionStartMs,

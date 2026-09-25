@@ -13,7 +13,8 @@ let currentUser = null;
 let currentBase64Screenshot = '';
 let currentPosterItem = null;
 let currentView = 'list';                                        // 'list' | 'calendar'
-let regCounts = {};                                             // 各賽事報名人數（v2.9.0）
+let regCounts = {};                                             // 各賽事報名人數（v2.9.0；v2.20.0 起＝佔名額人數）
+let regWaitlistCounts = {};                                     // 各賽事候補人數（v2.20.0）
 let myRegistrations = [];                                       // 我的報名（v2.9.0）
 let currentRegisterItem = null;                                 // 正在報名的賽事
 let currentTeamComp = null;                                     // 隊伍編排視窗對應的賽事
@@ -884,6 +885,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (btn.dataset.action === 'delete-team') deleteTeam(Number(btn.dataset.id));
         else if (btn.dataset.action === 'remove-member') removeTeamMember(Number(btn.dataset.id));
     });
+    // v2.20.0：審核與候補（這些按鈕在彈窗內，不在 #mainContent 的事件委派範圍）
+    document.getElementById('promoteWaitlistBtn')?.addEventListener('click', promoteWaitlist);
+    document.getElementById('pendingList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn || btn.dataset.action !== 'review-reg') return;
+        reviewRegistration(btn.dataset.id, btn.dataset.verdict);
+    });
 
     document.getElementById('closeAuditModalBtn')?.addEventListener('click', closeAuditLogModal);
     document.getElementById('closeAuditModalBtn2')?.addEventListener('click', closeAuditLogModal);
@@ -1223,7 +1231,11 @@ function clientRegistrationState(item) {
             state: item.state,
             label: item.state_label || '',
             tone: item.state_tone || 'slate',
-            detail: item.state_detail || ''
+            detail: item.state_detail || '',
+            // v2.20.0：額滿但有候補／需審核時，按鈕與提示要跟著變
+            waitlist: !!item.is_waitlist,
+            waitlist_position: item.waitlist_position || null,
+            needs_approval: !!item.needs_approval
         };
     }
     return localRegistrationState(item);
@@ -1300,6 +1312,11 @@ function regMetaHtml(item) {
         parts.push(`<span class="text-emerald-600 font-medium">👥 ${count} 人已報名</span>`);
     }
     if (item.is_team_event && Number(item.team_size) > 0) parts.push(`<span>每隊上限 ${item.team_size} 人</span>`);
+    // v2.20.0：需審核／額滿可候補（讓使用者一眼看出報名之後會怎樣）
+    if (item.needs_approval && item.can_register) parts.push('<span class="text-amber-600 font-medium">⏳ 報名需審核</span>');
+    if (item.is_waitlist) {
+        parts.push(`<span class="text-blue-600 font-medium">🕒 額滿，報名排候補${Number(regWaitlistCounts[String(item.id)]) > 0 ? `（已有 ${Number(regWaitlistCounts[String(item.id)])} 人候補）` : ''}</span>`);
+    }
     // v2.19.0：截止時間優先顯示新的 registration_end_at（可精確到分），舊資料才用 registration_deadline
     const regEnd = item.registration_end_at || item.registration_deadline;
     if (regEnd) {
@@ -1318,7 +1335,8 @@ function registrationButtonHtml(item) {
     }
     const state = clientRegistrationState(item);
     if (state.open) {
-        return `<button data-action="register-comp" data-id="${item.id}" class="text-xs text-white bg-blue-600 hover:bg-blue-700 font-medium px-2.5 py-1 rounded transition">📝 報名</button>`;
+        const label = state.waitlist ? '📝 報名（排候補）' : '📝 報名';
+        return `<button data-action="register-comp" data-id="${item.id}" class="text-xs text-white bg-blue-600 hover:bg-blue-700 font-medium px-2.5 py-1 rounded transition">${label}</button>`;
     }
     return `<button data-action="register-comp" data-id="${item.id}" class="text-xs text-slate-500 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">🔒 ${escapeHtml(state.reason)}</button>`;
 }
@@ -1367,14 +1385,20 @@ function updateFormStatePreview() {
         is_registration_open: !!document.getElementById('is_registration_open')?.checked,
         registration_start_at: localInputToIso(document.getElementById('registration_start_at')?.value),
         registration_end_at: localInputToIso(document.getElementById('registration_end_at')?.value),
-        max_registrations: Number(document.getElementById('max_registrations')?.value) || 0
+        max_registrations: Number(document.getElementById('max_registrations')?.value) || 0,
+        // v2.20.0：審核與候補會影響「送出後會變成什麼狀態」
+        requires_approval: !!document.getElementById('requires_approval')?.checked,
+        waitlist_enabled: !!document.getElementById('waitlist_enabled')?.checked
     };
 
     const editingId = document.getElementById('editingId')?.value;
     const registeredCount = editingId ? (Number(regCounts[String(editingId)]) || 0) : 0;
     const st = window.CMCompetitionState.evaluate(draft, new Date(), { registeredCount });
 
-    textEl.textContent = `${st.label}${st.full ? '（已額滿）' : ''}`;
+    const extras = [];
+    if (st.needs_approval) extras.push('需審核');
+    if (st.waitlist) extras.push('額滿排候補');
+    textEl.textContent = `${st.label}${st.full ? '（已額滿）' : ''}${extras.length ? '｜' + extras.join('、') : ''}`;
     textEl.className = 'font-semibold ' + ({
         green: 'text-emerald-600', amber: 'text-amber-600', blue: 'text-blue-600', slate: 'text-slate-500'
     }[st.tone] || 'text-slate-500');
@@ -1383,7 +1407,7 @@ function updateFormStatePreview() {
 }
 
 function bindFormStatePreview() {
-    ['date', 'end_date', 'is_registration_open', 'registration_start_at', 'registration_end_at', 'max_registrations']
+    ['date', 'end_date', 'is_registration_open', 'registration_start_at', 'registration_end_at', 'max_registrations', 'requires_approval', 'waitlist_enabled']
         .forEach((id) => {
             const el = document.getElementById(id);
             if (!el) return;
@@ -1513,13 +1537,15 @@ async function fetchRegistrationCounts() {
         if (countsRes.ok) {
             const data = await countsRes.json();
             regCounts = data.counts || {};
+            regWaitlistCounts = data.waitlist || {};   // v2.20.0：候補人數（公開的聚合數字）
         }
         if (cfgRes.ok) {
             const cfg = await cfgRes.json();
             CM_META.registration = { codeRequired: !!cfg.requireRegistrationCode };
         }
     } catch (e) {
-        regCounts = {};   // 未執行 migration 或離線時不影響瀏覽
+        regCounts = {};            // 未執行 migration 或離線時不影響瀏覽
+        regWaitlistCounts = {};
     }
 }
 
@@ -1532,6 +1558,9 @@ function clearTeamFormFields() {
     setValue('max_registrations', '');
     setValue('registration_start_at', '');
     setValue('registration_end_at', '');
+    // v2.20.0：審核與候補預設關閉（與舊版行為相同）
+    setChecked('requires_approval', false);
+    setChecked('waitlist_enabled', false);
 }
 
 let myRegsError = null;   // { kind, message }：讓「我的報名」能顯示真正的原因，而不是靜默空白
@@ -1587,6 +1616,19 @@ function openRegisterModal(id) {
             ${count > 0 ? `<p class="mt-1 text-emerald-600">目前已報名 ${count} 人</p>` : ''}
             ${state.open ? '' : `<p class="text-red-600 font-medium mt-1">🔒 ${escapeHtml(state.reason)}</p>`}
         `;
+    }
+
+    // v2.20.0：先告訴使用者「送出之後會變成什麼狀態」，不要送出後才發現只是候補
+    const hint = document.getElementById('registerHint');
+    if (hint) {
+        const bits = [];
+        if (state.waitlist) bits.push(`🕒 名額已滿，送出後會排入候補${state.waitlist_position ? `（第 ${state.waitlist_position} 位）` : ''}；有人取消時會自動遞補並通知你。`);
+        if (state.needs_approval) bits.push('⏳ 此賽事報名需審核：送出後狀態是「待審核」，主辦單位核准才算報名成功。');
+        hint.classList.toggle('hidden', bits.length === 0);
+        hint.className = bits.length
+            ? 'text-xs p-2.5 rounded-lg border ' + (state.waitlist ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-amber-50 border-amber-200 text-amber-900')
+            : 'hidden text-xs p-2.5 rounded-lg border';
+        hint.innerText = bits.join('\n');
     }
 
     document.getElementById('registerTeamWrap')?.classList.toggle('hidden', !item.is_team_event);
@@ -1724,6 +1766,23 @@ function setMyRegsStatus(kind, message) {
     box.classList.remove('hidden');
 }
 
+/* v2.20.0：我的報名狀態徽章（待審核／已核准／候補第 N 位／未錄取） */
+function myRegStatusBadge(r) {
+    const CM = window.CMCompetitionState;
+    const label = r.status_label || (CM ? CM.REG_STATUS_LABELS[r.status] : '') || '';
+    if (!label) return '';
+    const tone = (CM ? CM.REG_STATUS_TONES[r.status] : '') || 'slate';
+    const cls = {
+        amber: 'bg-amber-100 text-amber-700',
+        green: 'bg-emerald-100 text-emerald-700',
+        blue: 'bg-blue-100 text-blue-700',
+        rose: 'bg-rose-50 text-rose-700 border border-rose-200',
+        slate: 'bg-slate-100 text-slate-500'
+    }[tone] || 'bg-slate-100 text-slate-500';
+    const extra = r.status === 'waitlisted' && r.waitlist_position ? `第 ${r.waitlist_position} 位` : '';
+    return `<span class="ml-1 align-middle text-xs font-medium px-2 py-0.5 rounded-full ${cls}">${escapeHtml(label)}${extra ? ' ' + extra : ''}</span>`;
+}
+
 function renderMyRegs() {
     const list = document.getElementById('myRegsList');
     if (!list) return;
@@ -1744,7 +1803,8 @@ function renderMyRegs() {
         return `
         <div class="border border-slate-200 rounded-lg p-3 flex justify-between items-start gap-3">
             <div class="min-w-0">
-                <p class="text-sm font-bold text-slate-800">${escapeHtml(comp.name || '(賽事已刪除)')}</p>
+                <p class="text-sm font-bold text-slate-800">${escapeHtml(comp.name || '(賽事已刪除)')}
+                    ${myRegStatusBadge(r)}</p>
                 <p class="text-xs text-slate-500 mt-0.5">📅 ${escapeHtml(comp.date || '')}${comp.time ? ' ' + escapeHtml(comp.time) : ''}${comp.location ? ' ｜ 📍 ' + escapeHtml(comp.location) : ''}</p>
                 ${comp.is_team_event && r.team_name ? `<p class="text-xs text-indigo-600 mt-0.5">👥 隊伍：${escapeHtml(r.team_name)}</p>` : ''}
                 ${r.note ? `<p class="text-xs text-slate-500 mt-0.5">📝 ${escapeHtml(r.note)}</p>` : ''}
@@ -1756,8 +1816,8 @@ function renderMyRegs() {
                     class="text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">📅 行程檔</button>
                 <button data-action="reg-gcal" data-id="${r.id}"
                     class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">🗓️ 日曆</button>` : ''}
-                <button data-action="cancel-reg" data-id="${r.id}"
-                    class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition">取消報名</button>
+                ${r.can_cancel === false ? '' : `<button data-action="cancel-reg" data-id="${r.id}"
+                    class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition">取消報名</button>`}
             </div>
         </div>`;
     }).join('');
@@ -1901,6 +1961,9 @@ function renderTeams(data) {
     const unassigned = data.unassigned || [];
     const canDelete = !!data.canDelete;
 
+    // ---------- v2.20.0：報名審核與候補 ----------
+    renderReviewSection(data);
+
     const unassignedCountEl = document.getElementById('unassignedCount');
     const teamCountEl = document.getElementById('teamCount');
     if (unassignedCountEl) unassignedCountEl.innerText = String(unassigned.length);
@@ -1950,6 +2013,123 @@ function renderTeams(data) {
                             </div>`).join('')}
                     </div>
                 </div>`).join('');
+    }
+}
+
+/* v2.20.0：審核區塊（待審核名單＋候補順位＋遞補按鈕） */
+function renderReviewSection(data) {
+    const comp = currentTeamComp || {};
+    const counts = data.counts || { confirmed: 0, pending: 0, waitlisted: 0, rejected: 0, slots: 0 };
+    const schemaReady = data.schema_ready !== false;
+    const max = Number(comp.max_registrations) || 0;
+
+    const summaryEl = document.getElementById('reviewSummary');
+    if (summaryEl) {
+        if (!schemaReady) {
+            summaryEl.className = 'text-xs p-2.5 rounded-lg border bg-amber-50 border-amber-200 text-amber-900';
+            summaryEl.innerText = '⚠️ 資料庫尚未執行 v2.20.0 migration：報名審核與候補功能目前停用（報名一律直接核准）。';
+        } else {
+            const bits = [
+                `佔名額 ${counts.slots}${max > 0 ? ` / ${max}` : '（不限）'} 人`,
+                `已核准 ${counts.confirmed}`,
+                `待審核 ${counts.pending}`,
+                `候補 ${counts.waitlisted}`
+            ];
+            if (counts.rejected) bits.push(`未錄取 ${counts.rejected}`);
+            bits.push(comp.requires_approval ? '⏳ 本賽事需審核' : '不需審核');
+            bits.push(comp.waitlist_enabled ? '🕒 開放候補（取消自動遞補）' : '未開放候補');
+            summaryEl.className = 'text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2';
+            summaryEl.innerText = bits.join('｜');
+        }
+    }
+
+    const pending = data.pending || [];
+    const pendingSection = document.getElementById('pendingSection');
+    const pendingList = document.getElementById('pendingList');
+    const pendingCountEl = document.getElementById('pendingCount');
+    if (pendingCountEl) pendingCountEl.innerText = String(pending.length);
+    if (pendingSection) pendingSection.classList.toggle('hidden', !pending.length || !schemaReady);
+    if (pendingList) {
+        pendingList.innerHTML = pending.map((r) => `
+            <div class="flex items-center justify-between gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <p class="text-xs text-slate-700 truncate">🙋 ${escapeHtml(r.username)}${r.team_name ? ` <span class="text-slate-400">（自填：${escapeHtml(r.team_name)}）</span>` : ''}
+                    <span class="text-slate-400">｜${escapeHtml(String(r.created_at || '').slice(0, 10))} 報名</span></p>
+                <div class="flex items-center gap-1 shrink-0">
+                    <button data-action="review-reg" data-id="${r.id}" data-verdict="approve"
+                        class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-2.5 py-1 rounded transition">✅ 核准</button>
+                    <button data-action="review-reg" data-id="${r.id}" data-verdict="reject"
+                        class="text-xs bg-rose-600 hover:bg-rose-700 text-white font-medium px-2.5 py-1 rounded transition">❌ 拒絕</button>
+                </div>
+            </div>`).join('');
+    }
+
+    const waitlisted = data.waitlisted || [];
+    const waitlistSection = document.getElementById('waitlistSection');
+    const waitlistList = document.getElementById('waitlistList');
+    const waitlistCountEl = document.getElementById('waitlistCount');
+    if (waitlistCountEl) waitlistCountEl.innerText = String(waitlisted.length);
+    if (waitlistSection) waitlistSection.classList.toggle('hidden', !waitlisted.length || !schemaReady);
+    if (waitlistList) {
+        waitlistList.innerHTML = waitlisted.map((r) => `
+            <div class="flex items-center justify-between gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                <p class="text-xs text-slate-700 truncate">
+                    <span class="font-bold text-blue-700">第 ${r.waitlist_position} 位</span>　🙋 ${escapeHtml(r.username)}
+                    <span class="text-slate-400">｜${escapeHtml(String(r.created_at || '').slice(0, 16).replace('T', ' '))}</span></p>
+                <p class="text-xs text-slate-500 shrink-0">${max > 0 ? `${counts.slots} / ${max}` : '不限名額'}</p>
+            </div>`).join('');
+    }
+
+    const promoteBtn = document.getElementById('promoteWaitlistBtn');
+    if (promoteBtn) {
+        const usable = schemaReady && waitlisted.length > 0 && (max === 0 || counts.slots < max);
+        promoteBtn.disabled = !usable;
+        promoteBtn.className = usable
+            ? 'text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-1.5 rounded-lg transition shrink-0'
+            : 'text-xs bg-slate-100 text-slate-400 font-medium px-3 py-1.5 rounded-lg transition shrink-0 cursor-not-allowed';
+        promoteBtn.title = usable ? '' : (max > 0 && counts.slots >= max ? '名額已滿：請先取消或拒絕其他報名' : '目前沒有可遞補的候補');
+    }
+}
+
+/* 審核一筆報名（管理員以上） */
+async function reviewRegistration(id, verdict) {
+    if (!isAdminUser()) return alert('權限不足：只有管理員以上可以審核報名');
+    let note = '';
+    if (verdict === 'reject') {
+        note = window.prompt('拒絕原因（選填，會顯示在稽核日誌）', '') || '';
+    } else if (!window.confirm('確定要核准這筆報名嗎？')) {
+        return;
+    }
+
+    try {
+        const res = await customFetch(`/api/registrations/${id}/review`, {
+            method: 'POST',
+            body: JSON.stringify({ action: verdict === 'reject' ? 'reject' : 'approve', note })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '審核失敗');
+        setTeamMsg(`${data.message}${data.notified ? `（已推播通知 ${data.notified} 個裝置）` : '（對方沒有推播訂閱，未通知）'}`, 'success');
+        if (currentTeamComp) await loadTeams(currentTeamComp.id);
+        await fetchMyRegistrations().catch(() => {});
+    } catch (err) {
+        setTeamMsg(err.message, 'error');
+    }
+}
+
+/* 手動遞補下一位候補（管理員以上） */
+async function promoteWaitlist() {
+    const comp = currentTeamComp;
+    if (!comp) return;
+    if (!isAdminUser()) return alert('權限不足：只有管理員以上可以遞補候補');
+    if (!window.confirm('確定要遞補下一位候補嗎？（會立即通知對方）')) return;
+
+    try {
+        const res = await customFetch(`/api/competitions/${comp.id}/registrations/promote`, { method: 'POST', body: JSON.stringify({}) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '遞補失敗');
+        setTeamMsg(`${data.message}（狀態：${data.status_label}）${data.notified ? `，已推播通知 ${data.notified} 個裝置` : '，對方沒有推播訂閱'}`, 'success');
+        await loadTeams(comp.id);
+    } catch (err) {
+        setTeamMsg(err.message, 'error');
     }
 }
 
@@ -2993,7 +3173,10 @@ async function handleFormSubmit(e) {
         // timestamp 與 timestamptz 兩種欄位型別；registration_deadline 仍寫入（舊資料／舊前端相容）。
         registration_start_at: localInputToIso(document.getElementById('registration_start_at').value),
         registration_end_at: localInputToIso(document.getElementById('registration_end_at').value),
-        registration_deadline: (document.getElementById('registration_end_at').value || '').slice(0, 10) || null
+        registration_deadline: (document.getElementById('registration_end_at').value || '').slice(0, 10) || null,
+        // v2.20.0：報名審核與候補（資料庫尚未 migration 時後端不會帶，功能自動停用）
+        requires_approval: !!document.getElementById('requires_approval').checked,
+        waitlist_enabled: !!document.getElementById('waitlist_enabled').checked
     };
 
     const url = editingId ? `/api/competitions/${editingId}` : '/api/competitions';
@@ -3064,6 +3247,9 @@ function startEdit(id) {
         || (item.registration_deadline ? `${String(item.registration_deadline).slice(0, 10)}T23:59` : '');
     document.getElementById('registration_start_at').value = isoToLocalInput(item.registration_start_at);
     document.getElementById('registration_end_at').value = isoToLocalInput(legacyEnd);
+    // v2.20.0：審核與候補開關
+    document.getElementById('requires_approval').checked = !!item.requires_approval;
+    document.getElementById('waitlist_enabled').checked = !!item.waitlist_enabled;
     updateFormStatePreview();
     renderTagPreview();
 
