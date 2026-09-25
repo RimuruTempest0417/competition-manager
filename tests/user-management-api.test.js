@@ -157,7 +157,8 @@ test('v2.12.0 帳號管理 API：階梯權限、角色調整、停用與軟性�
 
     // 角色調整要留下稽核紀錄
     const audit = state.tables.audit_logs;
-    assert.ok(audit.some((a) => a.action === 'UPDATE_ADMIN' && /角色/.test(String(a.details))), '角色調整須寫入稽核日誌');
+    // v2.19.0：帳號管理動作改名為 *_USER（*_ADMIN 只留給歷史紀錄）
+    assert.ok(audit.some((a) => a.action === 'UPDATE_USER' && /角色/.test(String(a.details))), '角色調整須寫入稽核日誌');
 
     // ---------- 重設密碼 / 改帳號名 ----------
     const pwByMgrOnBoss = await patch('/api/admin/users/2', { password: 'newpass1' }, asMgr);

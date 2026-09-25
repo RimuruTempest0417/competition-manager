@@ -12,28 +12,61 @@
 */
 const http = require('node:http');
 
+/* 單一欄位條件的比對（eq. / is. / lt. / gt. / in.） */
+function matchExpr(row, key, rawValue) {
+    if (rawValue.startsWith('eq.')) {
+        const want = rawValue.slice(3);
+        if (String(row[key]) !== want) return false;
+    } else if (rawValue === 'is.null') {
+        if (row[key] !== null && row[key] !== undefined) return false;
+    } else if (rawValue === 'is.true') {
+        if (row[key] !== true) return false;
+    } else if (rawValue === 'is.false') {
+        if (row[key] !== false) return false;
+    } else if (rawValue.startsWith('lt.')) {
+        if (!(String(row[key]) < rawValue.slice(3))) return false;
+    } else if (rawValue.startsWith('gt.')) {
+        if (!(String(row[key]) > rawValue.slice(3))) return false;
+    } else if (rawValue.startsWith('in.')) {
+        // PostgREST 的 in.(1,2,3)：字串化的值比對（v2.17.0 批次標記錯誤日誌需要）
+        const list = rawValue.slice(3).replace(/^\(|\)$/g, '').split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
+        if (!list.includes(String(row[key]))) return false;
+    }
+    return true;
+}
+
+/* 依「括號深度」切開最上層的逗號：or=(a.is.null,b.in.(1,2)) 的值裡還有括號，不能用單純 split(',') */
+function splitTopLevel(text) {
+    const parts = [];
+    let depth = 0;
+    let current = '';
+    for (const ch of String(text)) {
+        if (ch === '(') depth++;
+        if (ch === ')') depth--;
+        if (ch === ',' && depth === 0) { parts.push(current); current = ''; continue; }
+        current += ch;
+    }
+    if (current) parts.push(current);
+    return parts.map((s) => s.trim()).filter(Boolean);
+}
+
 function matches(row, params) {
     for (const [key, rawValue] of params.entries()) {
         if (['select', 'order', 'limit', 'offset'].includes(key)) continue;
 
-        if (rawValue.startsWith('eq.')) {
-            const want = rawValue.slice(3);
-            if (String(row[key]) !== want) return false;
-        } else if (rawValue === 'is.null') {
-            if (row[key] !== null && row[key] !== undefined) return false;
-        } else if (rawValue === 'is.true') {
-            if (row[key] !== true) return false;
-        } else if (rawValue === 'is.false') {
-            if (row[key] !== false) return false;
-        } else if (rawValue.startsWith('lt.')) {
-            if (!(String(row[key]) < rawValue.slice(3))) return false;
-        } else if (rawValue.startsWith('gt.')) {
-            if (!(String(row[key]) > rawValue.slice(3))) return false;
-        } else if (rawValue.startsWith('in.')) {
-            // PostgREST 的 in.(1,2,3)：字串化的值比對（v2.17.0 批次標記錯誤日誌需要）
-            const list = rawValue.slice(3).replace(/^\(|\)$/g, '').split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
-            if (!list.includes(String(row[key]))) return false;
+        // PostgREST 的 or=(a.eq.1,b.is.null)：任一條件成立就通過（v2.19.0 測 /api/competitions 需要）
+        if (key === 'or') {
+            const inner = String(rawValue).replace(/^\(|\)$/g, '');
+            const ok = splitTopLevel(inner).some((part) => {
+                const idx = part.indexOf('.');
+                if (idx < 0) return false;
+                return matchExpr(row, part.slice(0, idx), part.slice(idx + 1));
+            });
+            if (!ok) return false;
+            continue;
         }
+
+        if (!matchExpr(row, key, rawValue)) return false;
     }
     return true;
 }

@@ -153,6 +153,15 @@
     --cm-rose-100: #ffe4e6;
     --cm-rose-bd-300: #fda4af;
     --cm-rose-tx-700: #be123c;
+    /* v2.19.0 補齊：這些 class 原本只寫在 HTML／JS 裡、custom.css 沒有規則 → 靜默失效 */
+    --cm-amber-200: #fde68a;
+    --cm-amber-300: #fcd34d;
+    --cm-amber-tx-900: #78350f;
+    --cm-emerald-tx-800: #065f46;
+    --cm-rose-50: #fff1f2;
+    --cm-rose-600: #e11d48;
+    --cm-rose-700: #be123c;
+    --cm-rose-bd-200: #fecdd3;
 
     /* file input */
     --cm-file-bg: #eff6ff;
@@ -241,6 +250,14 @@ html[data-theme="dark"] {
     --cm-rose-100: #4a2028;
     --cm-rose-bd-300: #9f4a5e;
     --cm-rose-tx-700: #fda4af;
+    --cm-amber-200: #7a5c1c;
+    --cm-amber-300: #8a6a1f;
+    --cm-amber-tx-900: #fde68a;
+    --cm-emerald-tx-800: #6ee7b7;
+    --cm-rose-50: #3f1d24;
+    --cm-rose-600: #f43f5e;
+    --cm-rose-700: #fb7185;
+    --cm-rose-bd-200: #9f4a5e;
 
     --cm-file-bg: #1c3557;
     --cm-file-fg: #9cc9f8;
@@ -329,6 +346,14 @@ html[data-theme="dark"] {
         --cm-rose-100: #4a2028;
         --cm-rose-bd-300: #9f4a5e;
         --cm-rose-tx-700: #fda4af;
+        --cm-amber-200: #7a5c1c;
+        --cm-amber-300: #8a6a1f;
+        --cm-amber-tx-900: #fde68a;
+        --cm-emerald-tx-800: #6ee7b7;
+        --cm-rose-50: #3f1d24;
+        --cm-rose-600: #f43f5e;
+        --cm-rose-700: #fb7185;
+        --cm-rose-bd-200: #9f4a5e;
 
         --cm-file-bg: #1c3557;
         --cm-file-fg: #9cc9f8;
@@ -1095,3 +1120,55 @@ canvas {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     letter-spacing: 0.06em;
 }
+
+/* ===== v2.19.0 賽事狀態篩選列（狀態由後端依當下時間即時判定） =====
+   用既有的 --cm-* 變數，淺色／深色都跟著主題走，不需要額外的深色票。 */
+.cm-state-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.35;
+    border-radius: 9999px;
+    border: 1px solid var(--cm-bd-300);
+    background-color: var(--cm-surface);
+    color: var(--cm-tx-600);
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.cm-state-chip:hover {
+    background-color: var(--cm-cell);
+    color: var(--cm-tx-800);
+}
+
+.cm-state-chip.is-active {
+    background-color: var(--cm-blue-tx-600);
+    border-color: var(--cm-blue-tx-700);
+    color: #ffffff;
+}
+
+.cm-state-count {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.75;
+}
+
+.cm-state-chip.is-active .cm-state-count {
+    opacity: 0.95;
+}
+
+/* ===== v2.19.0 補齊缺失的顏色 class（原本沒有任何規則，等於靜默失效） =====
+   來源：public/index.html 與 public/js/app.js 實際用到的 class，但 tailwind.min.css 與
+   custom.css 都沒有規則。補上後 class-coverage.py 的四項檢查應全綠。 */
+.bg-amber-200 { background-color: var(--cm-amber-200); }
+.bg-amber-300, .hover\:bg-amber-300:hover { background-color: var(--cm-amber-300); }
+.hover\:bg-amber-100:hover { background-color: var(--cm-amber-100); }
+.hover\:bg-amber-200:hover { background-color: var(--cm-amber-200); }
+.text-amber-900 { color: var(--cm-amber-tx-900); }
+.text-emerald-800 { color: var(--cm-emerald-tx-800); }
+.bg-rose-50 { background-color: var(--cm-rose-50); }
+.bg-rose-600 { background-color: var(--cm-rose-600); }
+.hover\:bg-rose-700:hover { background-color: var(--cm-rose-700); }
+.border-rose-200 { border-color: var(--cm-rose-bd-200); }
+.hover\:text-slate-700:hover { color: var(--cm-tx-700); }

@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.18.0
+# 🏆 比賽管理系統 (Competition Manager) v2.19.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -172,6 +172,18 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.19.0 (2026-09-26) - 賽事狀態機（自動切換）＋ 稽核紀錄補齊
+
+- **問題**：「能不能報名」原本是前端自己算的（拿日期與 `is_registration_open` 推論），後端在送出時再算一次——兩套規則就會出現「畫面說可報名、送出卻被拒」，而且報名時間到、賽事開始、結束都不會自己切換，只能靠管理員手動改。
+- **本版做了什麼**：
+  - **狀態由後端即時判定**：`報名中`／`尚未開放報名`／`報名已截止`／`進行中`／`已結束`／`日期未定`／`已刪除`。`/api/competitions` 每筆都附 `state`／`state_label`／`can_register`／`registration_reason`／`is_full`，並支援 `?state=ongoing,finished` 篩選。**不需要排程**：狀態是時間的函數，讀取時算即可。
+  - **前後端共用同一份規則**：新模組 `public/js/competition-state.js`（UMD，後端 `require`、前端 `<script>`），前端不再自己算一套。卡片徽章、**狀態篩選列（含各狀態數量）**、報名按鈕（鎖住時直接寫出原因）、表單**即時狀態預覽**都用它。
+  - **表單新增「報名開始／報名截止」（到分鐘）**：寫入 `registration_start_at`／`registration_end_at`，並自動同步舊欄位 `registration_deadline`（舊前端與既有查詢照樣可用）；清空也會真的清成 null。欄位不存在時誠實回 `registration_window_saved:false` 與警告，不讓整場賽事存不進去。
+  - **邊界修正**：單日賽事沒有結束日期時，結束時間是「當天 23:59:59」而不是開始時間（原本 09:00 的比賽在 09:01 就被判成已結束）；開賽那一秒起算進行中、結束時間那一刻起算已結束。
+  - **稽核紀錄補齊**（回應「請確保以上內容均有記錄 logs」）：新增 `POST /api/auth/logout`（登出真的寫 `LOGOUT`）、實際發送推播寫 `SEND_PUSH`、動作標籤與程式實際寫入的動作對齊；新增**守門測試**比對「選單宣告的動作」＝「程式真的會寫的動作」（這種不一致原本不會有任何錯誤訊息）。
+  - 順手修掉 `custom.css` 缺 11 個 class 規則（`bg-rose-600`、`border-rose-200`、`hover:bg-rose-700`… 靜默失效）與 `class-coverage.py` 對 `var(--x, 預設值)` 的誤判。
+- **驗證**：`npm test` **177 項全綠**（新增狀態機純函式 10 項＋狀態機 API 6 項＋稽核守門與登出／推播 5 項）；`npm run check:browser` **115 項全綠**（新增 `competition-state-check.js` 30 項，真實 Chrome 手機尺寸：六種徽章、篩選數量與點擊、鎖住的按鈕寫出原因、表單預覽、儲存後資料庫真的有時間、**用「30 秒前剛截止／30 秒後才開始」的賽事驗證真的會自動切換**）。
 
 ### v2.18.0 (2026-09-26) - 資料備份與還原
 

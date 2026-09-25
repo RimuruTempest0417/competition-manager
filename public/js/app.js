@@ -1,4 +1,14 @@
 let allCompetitions = [];
+// v2.19.0：賽事狀態篩選（空字串＝全部）
+let currentStateFilter = '';
+const CM_STATE_FILTERS = [
+    { value: '', label: '全部' },
+    { value: 'registration_open', label: '🔥 報名中' },
+    { value: 'registration_upcoming', label: '🕒 尚未開放' },
+    { value: 'registration_closed', label: '🔒 報名已截止' },
+    { value: 'ongoing', label: '🏃 進行中' },
+    { value: 'finished', label: '🏁 已結束' }
+];
 let currentUser = null;
 let currentBase64Screenshot = '';
 let currentPosterItem = null;
@@ -149,6 +159,12 @@ function dismissErrorAlert() {
 }
 
 function handleLogout() {
+    // v2.19.0：先請後端留一筆「登出」稽核紀錄（原本純前端清權杖，稽核日誌的「登出」永遠是空的）。
+    // 用最原始的 fetch 且不理會結果：稽核失敗不該讓使用者登不掉。
+    const logoutToken = localStorage.getItem('auth_token');
+    if (logoutToken) {
+        fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + logoutToken } }).catch(() => {});
+    }
     pendingTwoFactor = null;
     setLoginStep('credentials');
     currentUser = null;
@@ -274,30 +290,22 @@ function format24HourTime(timeStr) {
     return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
 }
 
-function getBadgeStatus(dateStr, endDateStr) {
-    if (!dateStr) return '';
+// 只做「倒數幾天」；進行中／已結束交給狀態徽章（後端判定），避免同一張卡片兩個徽章講同一件事
+function getBadgeStatus(dateStr) {
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}/.test(String(dateStr))) return '';
 
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    const [startYear, startMonth, startDay] = dateStr.split('-').map(Number);
+    const [startYear, startMonth, startDay] = String(dateStr).slice(0, 10).split('-').map(Number);
     const start = new Date(startYear, startMonth - 1, startDay);
 
-    let end = start;
-    if (endDateStr) {
-        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-        end = new Date(endYear, endMonth - 1, endDay);
-    }
-
-    const diffTime = start - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const diffDays = Math.round((start - today) / (1000 * 60 * 60 * 24));
 
     if (diffDays > 0) {
         return `<span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">⏳ 倒數 ${diffDays} 天</span>`;
-    } else if (today >= start && today <= end) {
-        return '<span class="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-medium">🔥 進行中</span>';
     }
-    return '<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full">已結束</span>';
+    return '';
 }
 
 function escapeHtml(str) {
@@ -692,6 +700,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('navMenuBtn')?.addEventListener('click', toggleNavDropdown);
     document.getElementById('menuBugReport')?.addEventListener('click', () => { openBugReportModal(); closeNavDropdown(); });
     document.getElementById('auditLogBtn')?.addEventListener('click', () => { openAuditLogModal(); closeNavDropdown(); });
+    // v2.19.0：賽事狀態篩選列與報名時間預覽
+    bindStateFilterBar();
+    bindFormStatePreview();
+
+    // v2.19.0：賽事狀態是後端依「當下時間」即時判定的，分頁放久了一定會過期
+    // （例如報名剛截止、賽事剛開賽）。回到頁面時若資料超過 2 分鐘就自動重新載入。
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        if (!currentUser) return;
+        if (Date.now() - lastCompetitionsLoadAt < 2 * 60 * 1000) return;
+        fetchCompetitions();
+    });
     // v2.18.0：資料備份與還原（放在這裡而不是 bindErrorLogControls：那個函式只在開啟錯誤日誌視窗時才會跑）
     document.getElementById('backupBtn')?.addEventListener('click', () => { openBackupModal(); closeNavDropdown(); });
     document.getElementById('closeBackupModalBtn')?.addEventListener('click', closeBackupModal);
@@ -1191,23 +1211,41 @@ function todayString(d) {
     return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+/* 賽事狀態（v2.19.0）：一律採用**後端算好的狀態**（/api/competitions 帶 state／state_label／
+   can_register／registration_reason）。後端是唯一真實來源，前端不再自己算一套——
+   兩套邏輯遲早會不一致（畫面說可以報名、送出卻被拒）。只有在舊回應沒有 state 欄位時才退回本機推算。 */
 function clientRegistrationState(item) {
-    if (!item) return { open: false, reason: '找不到該賽事' };
-    if (!item.is_registration_open) return { open: false, reason: '未開放報名' };
-
-    const today = todayString();
-    if (item.registration_deadline && today > String(item.registration_deadline).slice(0, 10)) {
-        return { open: false, reason: '報名已截止' };
+    if (!item) return { open: false, reason: '找不到該賽事', state: 'missing', label: '找不到該賽事', tone: 'slate' };
+    if (item.state) {
+        return {
+            open: !!item.can_register,
+            reason: item.registration_reason || '',
+            state: item.state,
+            label: item.state_label || '',
+            tone: item.state_tone || 'slate',
+            detail: item.state_detail || ''
+        };
     }
-    if (item.date && today > String(item.date).slice(0, 10)) {
-        return { open: false, reason: '已結束' };
+    return localRegistrationState(item);
+}
+
+/* 相容舊回應／離線的降級推算（規則與 public/js/competition-state.js 相同） */
+function localRegistrationState(item) {
+    if (!item) return { open: false, reason: '找不到該賽事', state: 'missing', label: '找不到該賽事', tone: 'slate' };
+    const st = window.CMCompetitionState
+        ? window.CMCompetitionState.evaluate(Object.assign({}, item, {
+            // 後端算出來的報名人數優先，沒有才用本機快取
+            registered_count: undefined
+        }), new Date(), { registeredCount: Number(regCounts[String(item.id)]) || 0 })
+        : null;
+
+    if (st) {
+        return { open: !!st.can_register, reason: st.can_register ? '' : st.reason, state: st.state, label: st.label, tone: st.tone, detail: st.detail };
     }
 
-    const max = Number(item.max_registrations) || 0;
-    const count = Number(regCounts[String(item.id)]) || 0;
-    if (max > 0 && count >= max) return { open: false, reason: '已額滿' };
-
-    return { open: true, reason: '' };
+    // 連共用模組都載不到時的極簡推算（不應發生；僅為避免整頁壞掉）
+    if (!item.is_registration_open) return { open: false, reason: '未開放報名', state: 'registration_closed', label: '未開放報名', tone: 'slate' };
+    return { open: true, reason: '', state: 'registration_open', label: '報名中', tone: 'green' };
 }
 
 // 是否為管理員以上（與後端 ADMIN_ROLES 一致：test 帳號不具管理權）
@@ -1219,12 +1257,33 @@ function isMyRegistration(id) {
     return myRegistrations.some((r) => String(r.competition_id) === String(id));
 }
 
+// 狀態徽章：文字與色調都由後端狀態決定（v2.19.0）
+const CM_STATE_BADGE_EMOJI = {
+    registration_open: '🔥',
+    registration_upcoming: '🕒',
+    registration_closed: '🔒',
+    ongoing: '🏃',
+    finished: '🏁',
+    unscheduled: '📅',
+    deleted: '🗑️',
+    missing: '❓'
+};
+
 function regStatusBadgeHtml(item) {
-    const state = clientRegistrationState(item);
-    if (state.open) {
-        return '<span class="bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full font-medium">🔥 報名中</span>';
-    }
-    return `<span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium">${escapeHtml(state.reason)}</span>`;
+    const st = clientRegistrationState(item);
+    const toneClass = {
+        green: 'bg-emerald-100 text-emerald-700',
+        amber: 'bg-amber-100 text-amber-700',
+        blue: 'bg-blue-100 text-blue-700',
+        slate: 'bg-slate-100 text-slate-500'
+    }[st.tone] || 'bg-slate-100 text-slate-500';
+
+    const label = st.label || (st.open ? '報名中' : st.reason);
+    const emoji = CM_STATE_BADGE_EMOJI[st.state] || '';
+    const full = item.is_full ? '（已額滿）' : '';
+    const title = st.reason ? ` title="${escapeHtml(st.reason)}"` : '';
+
+    return `<span class="${toneClass} text-xs px-2 py-0.5 rounded-full font-medium"${title}>${emoji} ${escapeHtml(label)}${full}</span>`;
 }
 
 function regMetaHtml(item) {
@@ -1241,9 +1300,14 @@ function regMetaHtml(item) {
         parts.push(`<span class="text-emerald-600 font-medium">👥 ${count} 人已報名</span>`);
     }
     if (item.is_team_event && Number(item.team_size) > 0) parts.push(`<span>每隊上限 ${item.team_size} 人</span>`);
-    if (item.registration_deadline) {
+    // v2.19.0：截止時間優先顯示新的 registration_end_at（可精確到分），舊資料才用 registration_deadline
+    const regEnd = item.registration_end_at || item.registration_deadline;
+    if (regEnd) {
         const open = clientRegistrationState(item).open;
-        parts.push(`<span class="${open ? '' : 'text-red-500'}">⏰ 報名截止 ${escapeHtml(String(item.registration_deadline).slice(0, 10))}</span>`);
+        const text = window.CMCompetitionState
+            ? window.CMCompetitionState.fmtDateTime(window.CMCompetitionState.parseTimestamp(regEnd))
+            : String(regEnd).slice(0, 16).replace('T', ' ');
+        parts.push(`<span class="${open ? '' : 'text-red-500'}">⏰ 報名截止 ${escapeHtml(text)}</span>`);
     }
     return parts.join('');
 }
@@ -1257,6 +1321,80 @@ function registrationButtonHtml(item) {
         return `<button data-action="register-comp" data-id="${item.id}" class="text-xs text-white bg-blue-600 hover:bg-blue-700 font-medium px-2.5 py-1 rounded transition">📝 報名</button>`;
     }
     return `<button data-action="register-comp" data-id="${item.id}" class="text-xs text-slate-500 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">🔒 ${escapeHtml(state.reason)}</button>`;
+}
+
+
+/* ---------- v2.19.0：賽事狀態機的介面工具 ---------- */
+
+/* datetime-local 的值（'2026-10-01T23:59'，不帶時區）→ 帶本地時區的 ISO 字串。
+   為什麼要帶時區：資料庫欄位可能是 timestamp 或 timestamptz。帶 '+08:00' 的寫法兩種都對
+   （timestamptz 存正確的瞬間；timestamp 取當地牆上時間），不帶時區會依伺服器時區解讀而位移。 */
+function localInputToIso(value) {
+    if (!value) return null;
+    const dt = new Date(value);
+    if (isNaN(dt.getTime())) return null;
+    const pad = (n) => String(n).padStart(2, '0');
+    const offsetMin = -dt.getTimezoneOffset();
+    const sign = offsetMin >= 0 ? '+' : '-';
+    const abs = Math.abs(offsetMin);
+    return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}:00${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+
+/* ISO 時間戳 → datetime-local 的值（取本地時間，秒以下截掉） */
+function isoToLocalInput(value) {
+    if (!value) return '';
+    const dt = window.CMCompetitionState
+        ? window.CMCompetitionState.parseTimestamp(value)
+        : new Date(value);
+    if (!dt || isNaN(dt.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
+
+/* 表單裡的即時狀態預覽：用與後端**同一份**規則（public/js/competition-state.js）算，
+   所以「預覽顯示什麼」與「儲存後後端判定什麼」不會不一致。 */
+function updateFormStatePreview() {
+    const textEl = document.getElementById('formStatePreviewText');
+    if (!textEl) return;
+    if (!window.CMCompetitionState) { textEl.textContent = '—'; return; }
+
+    const draft = {
+        name: document.getElementById('name')?.value || '',
+        date: document.getElementById('date')?.value || '',
+        time: getSelectedTime('start_hour', 'start_minute'),
+        end_date: document.getElementById('end_date')?.value || '',
+        end_time: getSelectedTime('end_hour', 'end_minute'),
+        is_registration_open: !!document.getElementById('is_registration_open')?.checked,
+        registration_start_at: localInputToIso(document.getElementById('registration_start_at')?.value),
+        registration_end_at: localInputToIso(document.getElementById('registration_end_at')?.value),
+        max_registrations: Number(document.getElementById('max_registrations')?.value) || 0
+    };
+
+    const editingId = document.getElementById('editingId')?.value;
+    const registeredCount = editingId ? (Number(regCounts[String(editingId)]) || 0) : 0;
+    const st = window.CMCompetitionState.evaluate(draft, new Date(), { registeredCount });
+
+    textEl.textContent = `${st.label}${st.full ? '（已額滿）' : ''}`;
+    textEl.className = 'font-semibold ' + ({
+        green: 'text-emerald-600', amber: 'text-amber-600', blue: 'text-blue-600', slate: 'text-slate-500'
+    }[st.tone] || 'text-slate-500');
+    const detailEl = document.getElementById('formStateDetail');
+    if (detailEl) detailEl.textContent = st.can_register ? st.detail : (st.reason || st.detail);
+}
+
+function bindFormStatePreview() {
+    ['date', 'end_date', 'is_registration_open', 'registration_start_at', 'registration_end_at', 'max_registrations']
+        .forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('change', updateFormStatePreview);
+            el.addEventListener('input', updateFormStatePreview);
+        });
+    ['start_hour', 'start_minute', 'end_hour', 'end_minute'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', updateFormStatePreview);
+    });
 }
 
 /* ---------- 登入 / 註冊視窗 ---------- */
@@ -1392,7 +1530,8 @@ function clearTeamFormFields() {
     setChecked('is_team_event', false);
     setValue('team_size', '');
     setValue('max_registrations', '');
-    setValue('registration_deadline', '');
+    setValue('registration_start_at', '');
+    setValue('registration_end_at', '');
 }
 
 let myRegsError = null;   // { kind, message }：讓「我的報名」能顯示真正的原因，而不是靜默空白
@@ -2601,15 +2740,19 @@ function renderTagPreview() {
         : '';
 }
 
+let lastCompetitionsLoadAt = 0;   // v2.19.0：回到頁面時判斷資料是否夠新
+
 async function fetchCompetitions() {
     try {
         const res = await customFetch('/api/competitions');
         if (!res.ok) throw new Error('無法載入比賽資料');
         allCompetitions = await res.json();
+        lastCompetitionsLoadAt = Date.now();
         populateTagFilter();
-        renderCurrentView(allCompetitions);
+        // 用 filterCompetitions：會一併更新狀態篩選列，且保留使用者當下的搜尋／狀態條件
+        filterCompetitions();
 
-        // 資料到齊後再檢查一次通知（第一次執行只建立基準，不會灌通知）
+        // 資料到齊後再檢查一次通知（第一次只建立基準，不會灌通知）
         if (notifyWatcher) notifyWatcher.tick();
     } catch (err) {
         document.getElementById('competitionList').innerHTML = `<p class="text-red-500 text-center py-4">無法載入比賽資料</p>`;
@@ -2635,6 +2778,7 @@ function tagsBadgeHtml(item) {
 
 function currentFilters() {
     return {
+        state: currentStateFilter,
         query: (document.getElementById('searchInput')?.value || '').toLowerCase().trim(),
         date: document.getElementById('filterDateInput')?.value || '',
         category: document.getElementById('filterCategory')?.value || '',
@@ -2643,6 +2787,9 @@ function currentFilters() {
 }
 
 function matchesFilters(item, f) {
+    // v2.19.0：狀態篩選用後端算好的 state（不在前端重算）
+    const matchState = !f.state || (clientRegistrationState(item).state || '') === f.state;
+
     const matchQuery = !f.query ||
         (item.name && item.name.toLowerCase().includes(f.query)) ||
         (item.location && item.location.toLowerCase().includes(f.query)) ||
@@ -2653,15 +2800,48 @@ function matchesFilters(item, f) {
     const matchTag = !f.tag ||
         (Array.isArray(item.tags) && item.tags.some((t) => t.toLowerCase() === f.tag.toLowerCase()));
 
-    return matchQuery && matchDate && matchCategory && matchTag;
+    return matchQuery && matchDate && matchCategory && matchTag && matchState;
+}
+
+/* 狀態篩選列（v2.19.0）：數字由目前載入的清單即時算出來，不需要額外 API */
+function renderStateFilterBar(data) {
+    const bar = document.getElementById('stateFilterBar');
+    if (!bar) return;
+    const list = Array.isArray(data) ? data : [];
+    const counts = {};
+    list.forEach((item) => {
+        const s = clientRegistrationState(item).state || 'other';
+        counts[s] = (counts[s] || 0) + 1;
+    });
+
+    bar.innerHTML = CM_STATE_FILTERS.map((f) => {
+        const n = f.value ? (counts[f.value] || 0) : list.length;
+        const active = currentStateFilter === f.value;
+        return `<button type="button" data-state-filter="${f.value}" aria-pressed="${active}"
+            class="cm-state-chip${active ? ' is-active' : ''}">${escapeHtml(f.label)} <span class="cm-state-count">${n}</span></button>`;
+    }).join('');
+}
+
+function bindStateFilterBar() {
+    const bar = document.getElementById('stateFilterBar');
+    if (!bar || bar.dataset.bound === '1') return;
+    bar.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-state-filter]');
+        if (!btn) return;
+        currentStateFilter = btn.getAttribute('data-state-filter') || '';
+        filterCompetitions();
+    });
+    bar.dataset.bound = '1';
 }
 
 function filterCompetitions() {
     const f = currentFilters();
+    renderStateFilterBar(allCompetitions);
     renderCurrentView(allCompetitions.filter((item) => matchesFilters(item, f)));
 }
 
 function clearFilter() {
+    currentStateFilter = '';   // v2.19.0：狀態篩選也要一起清掉
     const search = document.getElementById('searchInput');
     const dateInput = document.getElementById('filterDateInput');
     const catInput = document.getElementById('filterCategory');
@@ -2738,7 +2918,7 @@ function competitionCardHtml(item) {
                     ${regStatusBadgeHtml(item)}
                     ${item.is_team_event ? '<span class="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded-full font-medium">👥 組隊比賽</span>' : ''}
                     ${item.poster_updated_at ? '<span class="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full font-medium">🖼️ 自訂海報</span>' : ''}
-                    ${getBadgeStatus(item.date, item.end_date)}
+                    ${getBadgeStatus(item.date)}
                 </div>
                 
                 <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
@@ -2809,7 +2989,11 @@ async function handleFormSubmit(e) {
         is_team_event: document.getElementById('is_team_event').checked,
         team_size: Number(document.getElementById('team_size').value) || 0,
         max_registrations: Number(document.getElementById('max_registrations').value) || 0,
-        registration_deadline: document.getElementById('registration_deadline').value || null
+        // v2.19.0：報名視窗改用 datetime-local（可精確到分）。帶時區位移的 ISO 字串同時相容
+        // timestamp 與 timestamptz 兩種欄位型別；registration_deadline 仍寫入（舊資料／舊前端相容）。
+        registration_start_at: localInputToIso(document.getElementById('registration_start_at').value),
+        registration_end_at: localInputToIso(document.getElementById('registration_end_at').value),
+        registration_deadline: (document.getElementById('registration_end_at').value || '').slice(0, 10) || null
     };
 
     const url = editingId ? `/api/competitions/${editingId}` : '/api/competitions';
@@ -2875,7 +3059,12 @@ function startEdit(id) {
     document.getElementById('is_team_event').checked = !!item.is_team_event;
     document.getElementById('team_size').value = Number(item.team_size) > 0 ? item.team_size : '';
     document.getElementById('max_registrations').value = Number(item.max_registrations) > 0 ? item.max_registrations : '';
-    document.getElementById('registration_deadline').value = item.registration_deadline ? String(item.registration_deadline).slice(0, 10) : '';
+    // v2.19.0：優先帶出新的報名視窗；只有舊資料（registration_deadline，日期）時轉成當天 23:59
+    const legacyEnd = item.registration_end_at
+        || (item.registration_deadline ? `${String(item.registration_deadline).slice(0, 10)}T23:59` : '');
+    document.getElementById('registration_start_at').value = isoToLocalInput(item.registration_start_at);
+    document.getElementById('registration_end_at').value = isoToLocalInput(legacyEnd);
+    updateFormStatePreview();
     renderTagPreview();
 
     document.getElementById('formTitle').innerText = '✏️ 編輯比賽資料';
@@ -2904,7 +3093,12 @@ function copyCompetition(id) {
     document.getElementById('is_team_event').checked = !!item.is_team_event;
     document.getElementById('team_size').value = Number(item.team_size) > 0 ? item.team_size : '';
     document.getElementById('max_registrations').value = Number(item.max_registrations) > 0 ? item.max_registrations : '';
-    document.getElementById('registration_deadline').value = item.registration_deadline ? String(item.registration_deadline).slice(0, 10) : '';
+    // v2.19.0：優先帶出新的報名視窗；只有舊資料（registration_deadline，日期）時轉成當天 23:59
+    const legacyEnd = item.registration_end_at
+        || (item.registration_deadline ? `${String(item.registration_deadline).slice(0, 10)}T23:59` : '');
+    document.getElementById('registration_start_at').value = isoToLocalInput(item.registration_start_at);
+    document.getElementById('registration_end_at').value = isoToLocalInput(legacyEnd);
+    updateFormStatePreview();
     renderTagPreview();
 
     document.getElementById('formTitle').innerText = '➕ 發佈新比賽 (複製內容)';
@@ -2926,6 +3120,7 @@ function copyToClipboard(name, date, endDate, location) {
 }
 
 function resetForm() {
+    updateFormStatePreview();
     document.getElementById('competitionForm').reset();
     document.getElementById('editingId').value = '';
     renderTagPreview();

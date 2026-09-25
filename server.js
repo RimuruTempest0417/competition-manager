@@ -254,6 +254,60 @@ function shouldIncludeTeamFields(fields, schemaState) {
     return hasTeamFieldsContent(fields) || schemaState === true;
 }
 
+/* ---------- v2.19.0：報名視窗（registration_start_at／registration_end_at） ----------
+   這兩個欄位在 v2.9.0 的 migration 就有了，但仍照本專案慣例「先探測、沒有就不帶」，
+   讓還沒跑 migration 的環境不會整條 API 掛掉（主資料照樣存得進去）。 */
+let schemaHasRegistrationWindow = null;
+
+async function registrationWindowSchemaReady() {
+    if (schemaHasRegistrationWindow !== null) return schemaHasRegistrationWindow;
+    try {
+        const { error } = await supabase
+            .from('competitions')
+            .select('id,registration_start_at,registration_end_at')
+            .limit(1);
+        schemaHasRegistrationWindow = !isMissingColumnError(error, ['registration_start_at', 'registration_end_at']);
+        if (!schemaHasRegistrationWindow) {
+            console.warn('⚠️ competitions 表缺少報名開始／截止欄位，報名時間將無法儲存（請執行 migrations/ 內的 SQL）');
+        }
+    } catch (e) {
+        return true;
+    }
+    return schemaHasRegistrationWindow;
+}
+
+/* 只接受可解析的時間字串（前端送帶時區位移的 ISO；日期字串也收，視為當天 23:59） */
+function normalizeRegistrationWindow(body) {
+    const one = (raw) => {
+        if (raw === null || raw === '' || raw === undefined) return null;
+        if (typeof raw !== 'string') return null;
+        const s = raw.trim();
+        if (!/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/.test(s)) return null;
+        const dt = new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T23:59:00` : s);
+        return isNaN(dt.getTime()) ? null : s;
+    };
+    const start = one(body.registration_start_at);
+    const end = one(body.registration_end_at);
+
+    // 舊欄位 registration_deadline（只有日期）與新欄位保持同步：由後端自己算，
+    // 免得前端漏帶或兩邊算出不同日期。只有在請求「明確帶了 registration_end_at」時才動它，
+    // 否則舊版前端只填 registration_deadline 會被這裡清掉。
+    const derived = {};
+    if (Object.prototype.hasOwnProperty.call(body, 'registration_end_at')) {
+        derived.registration_deadline = end ? String(end).slice(0, 10) : null;
+    }
+
+    return Object.assign({ registration_start_at: start, registration_end_at: end }, derived);
+}
+
+function hasRegistrationWindowContent(fields) {
+    return !!(fields.registration_start_at || fields.registration_end_at);
+}
+
+function shouldIncludeRegistrationWindow(fields, schemaState) {
+    return hasRegistrationWindowContent(fields) || schemaState === true;
+}
+
 function isMissingTableError(err) {
     const code = (err && err.code) || '';
     const msg = (err && err.message) || '';
@@ -268,26 +322,24 @@ function toDateString(input) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/* 報名是否開放（純函式，方便單元測試）
-   回傳 { open, reason }；reason 直接顯示給使用者。 */
+/* ---------- 賽事狀態機（v2.19.0） ----------
+   規則本體在 **`public/js/competition-state.js`**（UMD，前後端共用同一份，
+   所以「前端預覽說可報名」與「後端真的放行」永遠一致）。這裡只做轉接與別名。
+   狀態即時由「當下時間」推導（不存資料庫、不需要排程）→ 時間一到就自動切換。
+*/
+const CMCompetitionState = require('./public/js/competition-state');
+const COMPETITION_STATE_LABELS = CMCompetitionState.LABELS;
+const COMPETITION_STATE_TONES = CMCompetitionState.TONES;
+const competitionTimeline = CMCompetitionState.timeline;
+const parseTimestamp = CMCompetitionState.parseTimestamp;
+
+function competitionState(comp, now, options) {
+    return CMCompetitionState.evaluate(comp, now, options);
+}
+
+/* 報名是否可以送出（舊介面，保持 { open, reason } 形狀；實作已統一走賽事狀態機） */
 function registrationState(comp, now, registeredCount) {
-    if (!comp) return { open: false, reason: '找不到該賽事' };
-    if (comp.is_deleted) return { open: false, reason: '此賽事已下架' };
-    if (!comp.is_registration_open) return { open: false, reason: '此賽事目前未開放報名' };
-
-    const today = toDateString(now || new Date());
-
-    if (comp.registration_deadline && today > String(comp.registration_deadline).slice(0, 10)) {
-        return { open: false, reason: `報名已於 ${String(comp.registration_deadline).slice(0, 10)} 截止` };
-    }
-    if (comp.date && today > String(comp.date).slice(0, 10)) {
-        return { open: false, reason: '此賽事已結束' };
-    }
-    const max = parseInt(comp.max_registrations, 10) || 0;
-    if (max > 0 && (parseInt(registeredCount, 10) || 0) >= max) {
-        return { open: false, reason: `報名人數已達上限（${max} 人）` };
-    }
-    return { open: true, reason: '' };
+    return CMCompetitionState.registrationState(comp, now, registeredCount);
 }
 
 /* ---------- 密碼雜湊 ----------
@@ -1009,8 +1061,28 @@ const AUDIT_ACTION_LABELS = {
     '2FA_SETUP_STARTED': '開始設定兩步驟驗證',
     '2FA_ENABLED': '啟用兩步驟驗證',
     '2FA_DISABLED': '停用兩步驟驗證',
+    '2FA_DISABLE_FAILED': '停用兩步驟驗證失敗',
     '2FA_RESET_BY_ADMIN': '管理員重設兩步驟驗證',
-    '2FA_RECOVERY_CODE_USED': '使用備援碼登入'
+    '2FA_RECOVERY_CODE_USED': '使用備援碼登入',
+    LOGIN_LOCKED: '登入失敗次數過多（鎖定）',
+    REGISTER_USER: '使用者自助註冊',
+    REMOVE_TEAM_MEMBER: '移除隊伍成員',
+    UPLOAD_POSTER: '上傳海報',
+    DELETE_POSTER: '刪除海報',
+    EXPORT_COMPETITIONS: '匯出賽事 CSV',
+    IMPORT_COMPETITIONS: '匯入賽事 CSV',
+    EXPORT_BACKUP: '匯出資料備份',
+    RESTORE_BACKUP: '還原資料備份',
+    RESTORE_BACKUP_DRY_RUN: '檢查資料備份（只檢查、未寫入）',
+    EXPORT_AUDIT_LOGS: '匯出稽核日誌 CSV',
+    CLEANUP_ERROR_LOGS: '清理錯誤日誌',
+    RESOLVE_ERROR_LOG: '標記錯誤日誌已處理',
+    REOPEN_ERROR_LOG: '重新開啟錯誤日誌',
+    RESOLVE_ERROR_LOGS: '批次標記錯誤日誌已處理',
+    // v2.12.0 以前的帳號管理動作名稱（歷史紀錄要用，新程式碼請用 CREATE_USER 等）
+    CREATE_ADMIN: '建立帳號（舊名稱）',
+    UPDATE_ADMIN: '更新帳號（舊名稱）',
+    DELETE_ADMIN: '刪除帳號（舊名稱）'
 };
 
 const auditActionLabel = (action) => AUDIT_ACTION_LABELS[action] || action || '（未知）';
@@ -1533,7 +1605,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
 
         if (error) throw error;
 
-        await logAudit(operator.username, 'CREATE_ADMIN', data[0].id, {
+        await logAudit(operator.username, 'CREATE_USER', data[0].id, {
             action: '建立帳號',
             actor_role: operator.role,
             new_user: username,
@@ -1577,7 +1649,7 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
 
         if (delErr) throw delErr;
 
-        await logAudit(operator.username, 'DELETE_ADMIN', targetUser.id, {
+        await logAudit(operator.username, 'DELETE_USER', targetUser.id, {
             action: '刪除帳號',
             actor_role: operator.role,
             deleted_user: targetUser.username,
@@ -1693,7 +1765,7 @@ app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
 
         if (updateErr) throw updateErr;
 
-        await logAudit(operator.username, 'UPDATE_ADMIN', target.id, {
+        await logAudit(operator.username, 'UPDATE_USER', target.id, {
             action: '修改帳號',
             actor_role: operator.role,
             target_user: target.username,
@@ -2272,14 +2344,41 @@ app.get('/api/competitions', async (req, res) => {
             }
         }
 
-        const result = competitions.map(c => {
+        // v2.19.0：賽事狀態由後端即時推導（報名中／尚未開始／報名已截止／進行中／已結束），前端只負責顯示。
+        // 人數上限需要實際報名數 → 一次查回來自己累加（與 /api/registration-counts 同一套規則）。
+        const { data: activeRegs } = await supabase
+            .from('registrations')
+            .select('competition_id')
+            .eq('is_deleted', false);
+
+        const regCounts = {};
+        (activeRegs || []).forEach((r) => {
+            const key = String(r.competition_id);
+            regCounts[key] = (regCounts[key] || 0) + 1;
+        });
+
+        const now = new Date();
+        const withState = competitions.map(c => {
             const pubName = publisherMap[String(c.id)] || null;
+            const st = competitionState(c, now, { registeredCount: regCounts[String(c.id)] || 0 });
             return {
                 ...c,
                 publisher_name: pubName,
-                publisher_role: pubName ? (userRoleMap[pubName] || 'admin') : null
+                publisher_role: pubName ? (userRoleMap[pubName] || 'admin') : null,
+                state: st.state,
+                state_label: st.label,
+                state_tone: st.tone,
+                can_register: st.can_register,
+                registration_reason: st.reason,
+                state_detail: st.detail,
+                is_full: st.full,
+                registered_count: st.registered_count
             };
         });
+
+        // ?state=registration_open,ongoing 只回這些狀態（前端分頁籤與外部整合都用這個）
+        const wanted = String(req.query.state || '').split(',').map(s => s.trim()).filter(Boolean);
+        const result = wanted.length ? withState.filter(c => wanted.includes(c.state)) : withState;
 
         res.json(result);
     } catch (err) {
@@ -2331,6 +2430,11 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
     }
     const includeTeamFields = shouldIncludeTeamFields(teamFields, schemaHasTeamFields);
 
+    // v2.19.0：報名開始／截止時間（時間到會自動切換狀態）
+    const windowFields = normalizeRegistrationWindow(req.body);
+    const includeWindow = shouldIncludeRegistrationWindow(windowFields, schemaHasRegistrationWindow);
+    const schemaWindowReady = await registrationWindowSchemaReady();
+
     try {
         const payload = {
             name: name.trim(),
@@ -2343,6 +2447,8 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
             is_registration_open: !!is_registration_open,
             ...(includeTaxonomy ? taxonomy : {}),
             ...(includeTeamFields ? teamFields : {}),
+            // 欄位不存在時不帶（回傳 window_saved:false 讓前端誠實告知），時間欄位不該拖垮整筆儲存
+            ...(includeWindow && schemaWindowReady ? windowFields : {}),
             is_deleted: false,
             created_at: new Date().toISOString()
         };
@@ -2357,7 +2463,10 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
         const newComp = data[0];
         await logAudit(operator.username, 'CREATE_COMPETITION', newComp.id, `發佈賽事: ${newComp.name}`, req.userAgent);
 
-        res.json(newComp);
+        // 有填報名時間但資料庫沒有欄位時要誠實告知（不要讓使用者以為存進去了）
+        res.json(hasRegistrationWindowContent(windowFields) && !schemaWindowReady
+            ? Object.assign({}, newComp, { registration_window_saved: false, warning: '資料庫缺少報名開始／截止欄位，時間未儲存（請執行 migrations/ 內的 SQL）' })
+            : newComp);
     } catch (err) {
         if (isMissingColumnError(err, ['category', 'tags'])) {
             schemaHasTaxonomy = false;
@@ -2396,6 +2505,11 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
     }
     const includeTeamFields = shouldIncludeTeamFields(teamFields, schemaHasTeamFields);
 
+    // v2.19.0：報名開始／截止時間（時間到會自動切換狀態）
+    const windowFields = normalizeRegistrationWindow(req.body);
+    const includeWindow = shouldIncludeRegistrationWindow(windowFields, schemaHasRegistrationWindow);
+    const schemaWindowReady = await registrationWindowSchemaReady();
+
     try {
         const payload = {
             name: name.trim(),
@@ -2407,7 +2521,8 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
             description: sanitizeInput(description),
             is_registration_open: !!is_registration_open,
             ...(includeTaxonomy ? taxonomy : {}),
-            ...(includeTeamFields ? teamFields : {})
+            ...(includeTeamFields ? teamFields : {}),
+            ...(includeWindow && schemaWindowReady ? windowFields : {})
         };
 
         const { data, error } = await supabase
@@ -2421,7 +2536,9 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
 
         await logAudit(operator.username, 'UPDATE_COMPETITION', id, `更新賽事內容: ${name}`, req.userAgent);
 
-        res.json(data[0]);
+        res.json(hasRegistrationWindowContent(windowFields) && !schemaWindowReady
+            ? Object.assign({}, data[0], { registration_window_saved: false, warning: '資料庫缺少報名開始／截止欄位，時間未儲存（請執行 migrations/ 內的 SQL）' })
+            : data[0]);
     } catch (err) {
         if (isMissingColumnError(err, ['category', 'tags'])) {
             schemaHasTaxonomy = false;
@@ -2603,6 +2720,23 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // 目前登入者
+/* 登出（v2.19.0）：前端本來只清掉本機權杖，所以稽核日誌裡「登出」永遠是空的。
+   現在前端會先打這個端點留一筆紀錄再清權杖（失敗也不影響登出）。 */
+app.post('/api/auth/logout', authenticateToken, async (req, res) => {
+    try {
+        // 注意：`authenticateToken` 只設定 `req.user`（權杖內容）；`req.currentUser` 是
+        // requireAdmin／requireSuperAdmin 另外查資料庫才補上的，這條路由沒有那些中介層。
+        await logAudit(req.user.username, 'LOGOUT', req.user.sub, {
+            role: req.user.role
+        }, req.userAgent);
+        res.json({ success: true });
+    } catch (err) {
+        // 稽核寫不進去不該讓使用者登不掉（前端無論如何都會清掉本機權杖）
+        await logErrorToDb(req, 'logout_audit_error', err, { severity: 'warn' });
+        res.json({ success: true, audit_logged: false });
+    }
+});
+
 app.get('/api/auth/me', authenticateToken, (req, res) => {
     res.json({ user: { id: req.user.sub, username: req.user.username, role: req.user.role } });
 });
@@ -3275,6 +3409,10 @@ app.post('/api/push/test', async (req, res) => {
         if (result.gone) {
             await supabase.from('push_subscriptions').update({ is_active: false }).eq('id', data.id);
         }
+        // v2.19.0：實際有送出（或嘗試送出）就要留稽核紀錄——只記訂閱 id 與結果，不記 endpoint（隱私）
+        await logAudit((req.user && req.user.username) || 'guest', 'SEND_PUSH', data.id, {
+            source: 'test', ok: !!result.ok, error: result.ok ? null : String(result.error || '').slice(0, 120)
+        }, req.userAgent);
         res.json({ ok: result.ok, message: result.ok ? '測試通知已送出（請看系統通知）' : `送出失敗：${result.error}` });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: PUSH_HINT });
@@ -3395,6 +3533,12 @@ app.get('/api/cron/reminders', async (req, res) => {
 
     try {
         const result = await runPushDigest(new Date());
+        // v2.19.0：批次推播「有真的送出」才留紀錄（sent=0 不留，避免每天一筆空紀錄）
+        if (result && result.sent > 0) {
+            await logAudit('system', 'SEND_PUSH', null, {
+                source: 'cron', sent: result.sent, subscriptions: result.subscriptions, details: result.details
+            }, 'cron');
+        }
         // v2.16.0：稽核日誌保留天數清理（**預設不啟用**：只有設了 AUDIT_RETENTION_DAYS 才會刪東西）
         result.audit_purged = null;   // 欄位固定存在，未啟用時明確回 null
         const retention = Number.parseInt(process.env.AUDIT_RETENTION_DAYS, 10);
@@ -3643,8 +3787,19 @@ app.__test__ = {
     hasTaxonomyContent,
     shouldIncludeTaxonomy,
     planImport,
+    AUDIT_ACTION_LABELS,
+    // v2.19.0：賽事狀態機
+    competitionState,
+    competitionTimeline,
+    parseTimestamp,
+    COMPETITION_STATE_LABELS,
+    COMPETITION_STATE_TONES,
     // v2.9.0
     normalizeTeamFields,
+    // v2.19.0：報名視窗
+    normalizeRegistrationWindow,
+    hasRegistrationWindowContent,
+    shouldIncludeRegistrationWindow,
     hasTeamFieldsContent,
     shouldIncludeTeamFields,
     registrationState,
