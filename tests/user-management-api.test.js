@@ -64,7 +64,7 @@ const req = (base, method) => (url, body, headers = {}) => fetch(base + url, {
 
 test('v2.12.0 帳號管理 API：階梯權限、角色調整、停用與軟性保護', async (t) => {
     const state = baseState();
-    const { stub, server, base } = await bootApp(state);
+    const { stub, server, base, app } = await bootApp(state);
     t.after(() => { server.close(); stub.close(); });
 
     const get = req(base, 'GET');
@@ -218,22 +218,38 @@ test('v2.12.0 帳號管理 API：階梯權限、角色調整、停用與軟性�
     assert.strictEqual(loginDisabled.status, 403);
     assert.match((await loginDisabled.json()).error, /已停用/);
 
+    // v2.14.0：單一來源 IP 打錯 5 次不該鎖住別人的帳號（避免用鎖定機制阻斷他人）
     for (let i = 0; i < 5; i += 1) {
         const bad = await post('/api/auth/login', { username: 'locky', password: 'wrong' });
         assert.strictEqual(bad.status, 401);
     }
-    const locked = await post('/api/auth/login', { username: 'locky', password: 'plain-locky' });
-    assert.strictEqual(locked.status, 429, '連續失敗 5 次後應暫時鎖定（即使密碼正確）');
-    assert.match((await locked.json()).error, /分鐘後再試/);
+    const stillOk = await post('/api/auth/login', { username: 'locky', password: 'plain-locky' });
+    assert.strictEqual(stillOk.status, 200, '同一 IP 失敗 5 次不應鎖住帳號（原本可以登入的人仍可登入）');
+
+    // 繼續失敗到 IP 門檻（連續 10 次、期間沒有成功登入）→ 該來源 IP 會被擋下
+    for (let i = 0; i < 10; i += 1) {
+        await post('/api/auth/login', { username: 'locky', password: 'wrong' });
+    }
+    const ipLocked = await post('/api/auth/login', { username: 'locky', password: 'plain-locky' });
+    assert.strictEqual(ipLocked.status, 429, '來源 IP 失敗達 10 次後應被暫時阻擋');
+    assert.match((await ipLocked.json()).error, /嘗試次數過多/);
+
+    // 成功登入會清掉該帳號與該 IP 的計數（由伺服器內部 clearLoginFailures 處理）
+    const clearLock = app.__test__.clearLoginFailures;
+    clearLock('locky', '127.0.0.1');
+    const afterClear = await post('/api/auth/login', { username: 'locky', password: 'plain-locky' });
+    assert.strictEqual(afterClear.status, 200, '清除計數後應可正常登入');
 
     // ---------- 錯誤日誌 API ----------
     const logsRes = await fetch(`${base}/api/admin/error-logs`, { headers: asOwner });
     assert.strictEqual(logsRes.status, 200);
     const logs = await logsRes.json();
     assert.ok(logs.logs.length >= 3, `至少要有 3 筆種子日誌，實際 ${logs.logs.length}`);
+    // v2.14.0：單一 IP 灌失敗次數記錄為 login_ip_throttled；多來源攻擊同一帳號才記 login_lockout。
+    // 兩者都是「鎖定事件」，都必須自動寫入錯誤日誌（v2.12.0 修復的自動寫入）。
     assert.ok(
-        logs.logs.some((l) => l.error_type === 'login_lockout'),
-        '登入連續失敗鎖定時應自動寫入錯誤日誌（v2.12.0 修復的自動寫入）'
+        logs.logs.some((l) => ['login_ip_throttled', 'login_lockout'].includes(l.error_type)),
+        `登入失敗達門檻時應自動寫入錯誤日誌，實際類型：${logs.logs.map((l) => l.error_type).join(', ')}`
     );
     assert.ok(
         logs.logs.some((l) => l.error_type === 'auth_invalid_token'),
@@ -331,6 +347,77 @@ test('v2.12.0 未執行 migration 時：帳號管理自動降級，舊功能不�
 });
 
 // 需要解密碼雜湊時用（server.js 的 verifyPassword）
+test('v2.14.0 未處理錯誤提示：登入回應附帶 alerts 與摘要端點', async (t) => {
+    const state = baseState();
+    const { stub, server, base } = await bootApp(state);
+    t.after(() => { server.close(); stub.close(); });
+
+    const post = req(base, 'POST');
+    const asOwner = auth(1, 'owner', 'web_owner');
+
+    // 種子資料：1 筆未處理的 error 級 + 1 筆未處理的 warn 級 + 1 筆已處理
+    const ownerLogin = await (await post('/api/auth/login', { username: 'owner', password: 'plain-owner' })).json();
+    assert.ok(ownerLogin.alerts, '可看日誌的角色，登入回應應附帶錯誤統計');
+    assert.strictEqual(ownerLogin.alerts.unresolved_errors, 1, '未處理的 error 級應為 1 筆');
+    assert.strictEqual(ownerLogin.alerts.unresolved_total, 2, '未處理（含警告）應為 2 筆');
+    assert.strictEqual(ownerLogin.alerts.may_need_attention, true);
+    assert.ok(ownerLogin.alerts.latest_at, '應附上最新一筆時間');
+
+    // 一般管理員看不到錯誤日誌，不該收到會顯示卻點不動的提示
+    const mgrLogin = await (await post('/api/auth/login', { username: 'mgr', password: 'plain-mgr' })).json();
+    assert.strictEqual(mgrLogin.alerts, null);
+
+    // 摘要端點：未帶權杖 → 401；一般管理員 → 403；擁有者 → 200
+    assert.strictEqual((await fetch(`${base}/api/admin/error-logs/summary`)).status, 401);
+    assert.strictEqual((await fetch(`${base}/api/admin/error-logs/summary`, { headers: auth(3, 'mgr', 'admin') })).status, 403);
+    const summary = await (await fetch(`${base}/api/admin/error-logs/summary`, { headers: asOwner })).json();
+    assert.strictEqual(summary.success, true);
+    assert.strictEqual(summary.unresolved_errors, 1);
+    assert.strictEqual(summary.unresolved_total, 2);
+    assert.strictEqual(summary.may_need_attention, true);
+
+    // 全部標記為已處理後 → 不再提示
+    state.tables.error_logs.forEach((row) => { row.resolved = true; });
+    const cleared = await (await fetch(`${base}/api/admin/error-logs/summary`, { headers: asOwner })).json();
+    assert.strictEqual(cleared.unresolved_errors, 0);
+    assert.strictEqual(cleared.unresolved_total, 0);
+    assert.strictEqual(cleared.may_need_attention, false);
+});
+
+test('v2.14.0 用戶端請求錯誤不該記成伺服器錯誤（JSON 格式錯誤 / body 過大）', async (t) => {
+    const state = baseState();
+    const { stub, server, base } = await bootApp(state);
+    t.after(() => { server.close(); stub.close(); });
+
+    // 送出壞掉的 JSON（模擬掃描器探測或前端 bug）
+    const broken = await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"username": broken'
+    });
+    assert.strictEqual(broken.status, 400, '格式錯誤應回 400（而不是 500 伺服器錯誤）');
+    const brokenBody = await broken.json();
+    assert.match(brokenBody.error, /格式錯誤/);
+
+    // 超過 10mb 的 body → 413
+    const huge = await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'x', password: 'y', pad: 'z'.repeat(11 * 1024 * 1024) })
+    });
+    assert.strictEqual(huge.status, 413, '超過大小限制應回 413');
+
+    // 等日誌寫入（logErrorToDb 為非阻塞）
+    await new Promise((r) => setTimeout(r, 300));
+    const written = state.tables.error_logs.map((l) => l.error_type);
+    assert.ok(written.includes('malformed_json_body'), `應記錄 malformed_json_body，實際：${written.join(', ')}`);
+    assert.ok(written.includes('request_body_too_large'), `應記錄 request_body_too_large，實際：${written.join(', ')}`);
+    assert.ok(!written.includes('unhandled_server_error'), '不該再被記成 unhandled_server_error');
+    const malformed = state.tables.error_logs.find((l) => l.error_type === 'malformed_json_body');
+    assert.strictEqual(malformed.severity, 'warn', '用戶端錯誤應為警告級');
+    assert.strictEqual(malformed.path, '/api/auth/login');
+});
+
 async function bootAppNote() {
     const app = require(path.join(__dirname, '..', 'server.js'));
     return app.__test__;

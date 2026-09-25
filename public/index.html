@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.13.0</title>
+    <title>比賽管理系統 v2.14.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -28,6 +28,23 @@
 
 <body class="bg-slate-100 min-h-screen text-slate-800 font-sans">
 
+    <!-- v2.14.0：未處理錯誤日誌提示橫幅（僅超級管理員以上會顯示） -->
+    <div id="errorAlertBanner" class="hidden bg-amber-50 border-b border-amber-200">
+        <div class="max-w-7xl mx-auto px-4 py-2.5 flex items-start gap-3 flex-wrap">
+            <span class="text-lg leading-none" aria-hidden="true">🐞</span>
+            <div class="flex-1 min-w-[12rem] text-xs text-amber-900 leading-relaxed">
+                <strong id="errorAlertTitle" class="block text-sm"></strong>
+                <span id="errorAlertDetail"></span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="errorAlertOpenBtn" type="button"
+                    class="text-[11px] px-2.5 py-1 rounded bg-amber-200 hover:bg-amber-300 text-amber-900 font-medium transition">查看日誌</button>
+                <button id="errorAlertDismissBtn" type="button"
+                    class="text-[11px] px-2.5 py-1 rounded bg-white hover:bg-slate-50 text-slate-600 border border-slate-300 transition">稍後再看</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 頂部導覽列 -->
     <header class="bg-white shadow-sm border-b border-slate-200">
         <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center cm-header-inner">
@@ -35,7 +52,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2 cm-app-title">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.13.0)</p>
+                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.14.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->

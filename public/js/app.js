@@ -84,28 +84,77 @@ async function submitChangePassword(e) {
     }
 }
 
+/* ---------- v2.14.0：未處理錯誤日誌提示（僅超級管理員以上） ---------- */
+const ERROR_ALERT_DISMISS_KEY = 'cm-error-alert-dismissed-at';
+let lastErrorSummary = null;
+
+function canSeeErrorLogs() {
+    return Boolean(currentUser && ['super_admin', 'web_owner'].includes(currentUser.role));
+}
+
+function updateErrorLogMenuLabel(count) {
+    const btn = document.getElementById('btn-error-logs');
+    if (!btn) return;
+    btn.textContent = count > 0 ? `🚨 錯誤日誌 (${count})` : '🚨 錯誤日誌';
+}
+
+function renderErrorAlert(summary) {
+    lastErrorSummary = summary || null;
+    const banner = document.getElementById('errorAlertBanner');
+    const titleEl = document.getElementById('errorAlertTitle');
+    const detailEl = document.getElementById('errorAlertDetail');
+    if (!banner || !titleEl || !detailEl) return;
+
+    const count = summary && summary.unresolved_errors ? summary.unresolved_errors : 0;
+    updateErrorLogMenuLabel(count);
+
+    if (!summary || !summary.may_need_attention) {
+        banner.classList.add('hidden');
+        return;
+    }
+    // 按過「稍後再看」之後，要等到有更新的錯誤（latest_at 改變）才會再提示
+    const dismissedAt = localStorage.getItem(ERROR_ALERT_DISMISS_KEY) || '';
+    if (summary.latest_at && dismissedAt === String(summary.latest_at)) {
+        banner.classList.add('hidden');
+        return;
+    }
+
+    titleEl.textContent = `有 ${count} 筆未處理的錯誤日誌`;
+    const parts = [];
+    if (summary.last_24h) parts.push(`近 24 小時新增 ${summary.last_24h} 筆`);
+    if (summary.unresolved_total > count) parts.push(`未處理共 ${summary.unresolved_total} 筆（含警告／資訊）`);
+    if (summary.latest_at) parts.push(`最新：${new Date(summary.latest_at).toLocaleString()}`);
+    detailEl.textContent = parts.join('　·　');
+    banner.classList.remove('hidden');
+}
+
+async function refreshErrorAlert() {
+    if (!canSeeErrorLogs()) { renderErrorAlert(null); return; }
+    try {
+        const res = await customFetch('/api/admin/error-logs/summary');
+        if (!res.ok) return;
+        renderErrorAlert(await res.json());
+    } catch (err) {
+        // 提示只是輔助資訊，失敗不影響任何主要功能
+        console.warn('讀取錯誤日誌統計失敗：', err.message);
+    }
+}
+
+function dismissErrorAlert() {
+    const banner = document.getElementById('errorAlertBanner');
+    if (banner) banner.classList.add('hidden');
+    if (lastErrorSummary && lastErrorSummary.latest_at) {
+        localStorage.setItem(ERROR_ALERT_DISMISS_KEY, String(lastErrorSummary.latest_at));
+    }
+}
+
 function handleLogout() {
     currentUser = null;
     localStorage.removeItem('competition_user');
     localStorage.removeItem('auth_token');
     closeNavDropdown();
     updateUIByRole();
-}
-
-function renderRoleSelectOptions() {
-    const selectEl = document.getElementById('newAdminRole');
-    if (!selectEl) return;
-
-    if (currentUser?.role === 'web_owner') {
-        selectEl.innerHTML = `
-            <option value="admin">一般管理員 (admin)</option>
-            <option value="super_admin">超級管理員 (super_admin)</option>
-        `;
-    } else {
-        selectEl.innerHTML = `
-            <option value="admin">一般管理員 (admin)</option>
-        `;
-    }
+    renderErrorAlert(null);   // v2.14.0：登出後不留下前一位使用者的錯誤提示
 }
 
 function getRoleEmoji(role, username = '') {
@@ -645,6 +694,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('adminMgmtBtn')?.addEventListener('click', () => { openAdminModal(); closeNavDropdown(); });
     document.getElementById('pushLogsBtn')?.addEventListener('click', () => { openPushLogsModal(); closeNavDropdown(); });
     document.getElementById('changePwdBtn')?.addEventListener('click', () => { openChangePasswordModal(); closeNavDropdown(); });
+    document.getElementById('errorAlertOpenBtn')?.addEventListener('click', () => { openErrorLogsModal(); });
+    document.getElementById('errorAlertDismissBtn')?.addEventListener('click', dismissErrorAlert);
     document.getElementById('authBtn')?.addEventListener('click', () => { toggleAuth(); closeNavDropdown(); });
     document.getElementById('logoutBtn')?.addEventListener('click', () => { handleLogout(); closeNavDropdown(); });
 
@@ -840,6 +891,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         localStorage.removeItem('competition_user');
         localStorage.removeItem('auth_token');
     }
+    // v2.14.0：已登入的超級管理員以上，載入時檢查是否有未處理錯誤
+    if (canSeeErrorLogs()) refreshErrorAlert();
+    else updateErrorLogMenuLabel(0);
+
     // 日曆初始化：當天清單沿用列表的卡片樣板，因此按鈕行為完全一致
     if (window.CMCalendar) {
         window.CMCalendar.init({
@@ -2849,6 +2904,9 @@ async function performLogin() {
         localStorage.setItem('competition_user', JSON.stringify(currentUser));
         closeLoginModal();
         updateUIByRole();
+        // v2.14.0：登入回應已附上未處理錯誤統計，直接顯示（沒有附帶資料時再自己查一次）
+        if (data.alerts) renderErrorAlert(data.alerts);
+        else refreshErrorAlert();
     } catch (err) {
         alert(err.message);
     }

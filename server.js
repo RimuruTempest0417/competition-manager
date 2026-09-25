@@ -376,32 +376,63 @@ async function logErrorToDb(req, errorType, err, options = {}) {
     }
 }
 
-// 登入失敗鎖定：同一帳號連續失敗 5 次 → 鎖定 15 分鐘（記憶體計數，重啟即歸零）
-const loginFailures = new Map();
-const LOGIN_MAX_FAILURES = 5;
+/* ---------- 登入失敗鎖定（v2.14.0：帳號 + IP 雙重計數） ----------
+   舊版只以「帳號」為鍵：任何人只要對某個帳號連續打錯密碼，就能把該帳號鎖住（阻斷攻擊）。
+   新版：
+     - 以 IP 為主：同一 IP 失敗 10 次 / 15 分鐘 → 鎖該 IP（正常打錯密碼的人很快會停）
+     - 以帳號為輔：同一帳號失敗 10 次「且來自 2 個以上不同 IP」才視為遭到攻擊 → 鎖帳號
+   記憶體計數：serverless 多實例各自計算、重啟歸零，足以阻擋單一來源的暴力破解。 */
+const loginFailures = new Map();          // key: `ip:<ip>` 或 `u:<username小寫>`，值為 [{t, ip}]
+const LOGIN_MAX_FAILURES = 5;             // 保留（舊測試／文件引用的門檻值）
 const LOGIN_LOCK_MS = 15 * 60 * 1000;
+const LOGIN_IP_MAX_FAILURES = 10;
+const LOGIN_ACCOUNT_MAX_FAILURES = 10;
+const LOGIN_ACCOUNT_MIN_IPS = 2;
 
-function loginLockRemaining(username, now = Date.now()) {
-    const key = String(username || '').toLowerCase();
-    const hits = (loginFailures.get(key) || []).filter((t) => now - t < LOGIN_LOCK_MS);
+function loginFailureEntries(key, now) {
+    const hits = (loginFailures.get(key) || []).filter((e) => now - e.t < LOGIN_LOCK_MS);
     loginFailures.set(key, hits);
-    if (hits.length >= LOGIN_MAX_FAILURES) return LOGIN_LOCK_MS - (now - hits[0]);
-    return 0;
+    return hits;
 }
 
-function recordLoginFailure(username, now = Date.now()) {
-    const key = String(username || '').toLowerCase();
-    const hits = (loginFailures.get(key) || []).filter((t) => now - t < LOGIN_LOCK_MS);
-    hits.push(now);
-    loginFailures.set(key, hits);
+const ipKeyOf = (ip) => `ip:${String(ip || 'unknown')}`;
+const userKeyOf = (username) => `u:${String(username || '').toLowerCase()}`;
+
+// 回傳 { remaining, scope, distinctIps }；remaining 為 0 表示未鎖定
+function loginLockRemaining(username, ip, now = Date.now()) {
+    const ipHits = loginFailureEntries(ipKeyOf(ip), now);
+    if (ipHits.length >= LOGIN_IP_MAX_FAILURES) {
+        return { remaining: LOGIN_LOCK_MS - (now - ipHits[0].t), scope: 'ip', distinctIps: 1 };
+    }
+    const userHits = loginFailureEntries(userKeyOf(username), now);
+    const distinctIps = new Set(userHits.map((e) => e.ip)).size;
+    if (userHits.length >= LOGIN_ACCOUNT_MAX_FAILURES && distinctIps >= LOGIN_ACCOUNT_MIN_IPS) {
+        return { remaining: LOGIN_LOCK_MS - (now - userHits[0].t), scope: 'account', distinctIps };
+    }
+    return { remaining: 0, scope: null, distinctIps };
+}
+
+// 同時累計「該 IP」與「該帳號」的失敗次數；回傳該帳號累計次數與來源 IP 數
+function recordLoginFailure(username, ip, now = Date.now()) {
+    const src = String(ip || 'unknown');
+    const userHits = loginFailureEntries(userKeyOf(username), now);
+    userHits.push({ t: now, ip: src });
+    loginFailures.set(userKeyOf(username), userHits);
+
+    const ipHits = loginFailureEntries(ipKeyOf(ip), now);
+    ipHits.push({ t: now, ip: src });
+    loginFailures.set(ipKeyOf(ip), ipHits);
+
     if (loginFailures.size > 1000) {
         [...loginFailures.keys()].slice(0, 200).forEach((k) => loginFailures.delete(k));
     }
-    return hits.length;
+    return { count: userHits.length, distinctIps: new Set(userHits.map((e) => e.ip)).size };
 }
 
-function clearLoginFailures(username) {
-    loginFailures.delete(String(username || '').toLowerCase());
+// 登入成功：清掉該帳號的紀錄；若有帶 IP 也清掉該 IP 的紀錄
+function clearLoginFailures(username, ip) {
+    loginFailures.delete(userKeyOf(username));
+    if (ip) loginFailures.delete(ipKeyOf(ip));
 }
 
 // v2.12.0：公開（未登入）寫入端點的節流，避免匿名請求灌爆資料庫或濫發推播
@@ -599,6 +630,41 @@ const requireSuperAdmin = [authenticateToken, requireRole([...SUPER_ADMIN_ROLES]
 // ==========================================
 // 錯誤日誌 API
 // ==========================================
+
+/* v2.14.0：未處理錯誤日誌的統計（登入回應與 /api/admin/error-logs/summary 共用）
+   只統計數量與時間，不回傳訊息內容，因此不涉及敏感資料。 */
+const ERROR_ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
+async function errorLogAlertSummary() {
+    const empty = { unresolved_total: 0, unresolved_errors: 0, last_24h: 0, latest_at: null, may_need_attention: false, schema: { severity: false, resolved: false } };
+    if (!hasSupabaseConfig) return empty;
+    try {
+        const hasSeverity = await columnExists('error_logs', 'severity');
+        const hasResolved = await columnExists('error_logs', 'resolved');
+        let query = supabase.from('error_logs').select('id, severity, created_at, resolved', { count: 'exact' });
+        if (hasResolved) query = query.eq('resolved', false);
+        const { data, error, count } = await query.order('created_at', { ascending: false }).limit(500);
+        if (error) throw error;
+
+        const rows = data || [];
+        const since = Date.now() - ERROR_ALERT_WINDOW_MS;
+        const errors = rows.filter((r) => (hasSeverity ? (r.severity || 'error') : 'error') === 'error');
+        return {
+            unresolved_total: (count === null || count === undefined) ? rows.length : count,
+            unresolved_errors: errors.length,
+            last_24h: rows.filter((r) => {
+                const t = new Date(r.created_at).getTime();
+                return Number.isFinite(t) && t >= since;
+            }).length,
+            latest_at: rows.length ? rows[0].created_at : null,
+            may_need_attention: errors.length > 0,
+            schema: { severity: hasSeverity, resolved: hasResolved }
+        };
+    } catch (err) {
+        console.error('⚠️ 讀取錯誤日誌統計失敗:', err.message);
+        return empty;
+    }
+}
+
 app.post('/api/logs/error', async (req, res) => {
     // v2.12.0：未登入就能寫入，必須節流並限制欄位長度（避免匿名灌爆資料庫）
     if (!allowPublicWrite(req.ip, 'logs-error', 30, 60000)) {
@@ -713,6 +779,12 @@ app.get('/api/admin/error-logs/health', requireSuperAdmin, async (req, res) => {
         },
         plaintext_passwords: plaintextPasswords
     });
+});
+
+// v2.14.0：未處理錯誤日誌的統計（前端據此顯示提示橫幅／選單數量）
+app.get('/api/admin/error-logs/summary', requireSuperAdmin, async (req, res) => {
+    const summary = await errorLogAlertSummary();
+    res.json(Object.assign({ success: true }, summary));
 });
 
 // 標記錯誤日誌為已處理／未處理
@@ -1090,11 +1162,17 @@ const loginHandler = async (req, res) => {
         return res.status(400).json({ error: '請輸入帳號與密碼' });
     }
 
-    // v2.12.0：連續失敗鎖定（防暴力破解）
-    const locked = loginLockRemaining(username);
-    if (locked > 0) {
-        await logAudit(username, 'LOGIN_LOCKED', null, { ip: clientIp, remaining_sec: Math.ceil(locked / 1000) }, req.userAgent);
-        return res.status(429).json({ error: `登入失敗次數過多，請於 ${Math.ceil(locked / 60000)} 分鐘後再試` });
+    // v2.14.0：登入失敗鎖定（帳號 + IP 雙重計數）
+    const lock = loginLockRemaining(username, clientIp);
+    if (lock.remaining > 0) {
+        await logAudit(username, 'LOGIN_LOCKED', null,
+            { ip: clientIp, scope: lock.scope, remaining_sec: Math.ceil(lock.remaining / 1000) }, req.userAgent);
+        const minutes = Math.max(1, Math.ceil(lock.remaining / 60000));
+        return res.status(429).json({
+            error: lock.scope === 'account'
+                ? `此帳號因多次登入失敗暫時鎖定，請於 ${minutes} 分鐘後再試`
+                : `嘗試次數過多，請於 ${minutes} 分鐘後再試`
+        });
     }
 
     try {
@@ -1105,15 +1183,24 @@ const loginHandler = async (req, res) => {
             .maybeSingle();
 
         if (error || !user || !verifyPassword(user.password, password)) {
-            const fails = recordLoginFailure(username);
+            const { count, distinctIps } = recordLoginFailure(username, clientIp);
             await logAudit(username || 'UNKNOWN', 'LOGIN_FAILED', null, {
                 reason: '帳號或密碼錯誤',
                 ip: clientIp,
-                attempts: fails
+                attempts: count,
+                distinct_ips: distinctIps
             }, req.userAgent);
 
-            if (fails >= LOGIN_MAX_FAILURES) {
-                logErrorToDb(req, 'login_lockout', new Error(`帳號「${username}」連續登入失敗 ${fails} 次，已暫時鎖定 15 分鐘`), {
+            // 只有「同一帳號被多個來源 IP 連續嘗試」才記錄為可能的攻擊（單一 IP 打錯密碼不需要驚動管理員）
+            if (count >= LOGIN_ACCOUNT_MAX_FAILURES && distinctIps >= LOGIN_ACCOUNT_MIN_IPS) {
+                logErrorToDb(req, 'login_lockout', new Error(
+                    `帳號「${username}」連續登入失敗 ${count} 次，且來自 ${distinctIps} 個不同 IP，已暫時鎖定 15 分鐘`), {
+                    severity: 'warn',
+                    context: { ip: clientIp, distinct_ips: distinctIps }
+                }).catch(() => {});
+            } else if (count >= LOGIN_IP_MAX_FAILURES) {
+                logErrorToDb(req, 'login_ip_throttled', new Error(
+                    `來源 IP 連續登入失敗 ${count} 次，已暫時阻擋 15 分鐘`), {
                     severity: 'warn',
                     context: { ip: clientIp }
                 }).catch(() => {});
@@ -1128,7 +1215,7 @@ const loginHandler = async (req, res) => {
             return res.status(403).json({ error: '此帳號已停用，請聯繫管理員' });
         }
 
-        clearLoginFailures(username);
+        clearLoginFailures(username, clientIp);
 
         // v2.12.1：明碼密碼的帳號在登入成功時自動升級成 scrypt 雜湊（失敗不影響登入）
         let passwordUpgraded = false;
@@ -1164,10 +1251,17 @@ const loginHandler = async (req, res) => {
                 .then(() => {}, () => {});
         }
 
+        // v2.14.0：能看錯誤日誌的角色，登入時附上「未處理錯誤」統計，前端可直接顯示提示
+        let alerts = null;
+        if (SUPER_ADMIN_ROLES.has(user.role)) {
+            alerts = await errorLogAlertSummary();
+        }
+
         res.json({
             message: '登入成功',
             token,
-            user: { id: user.id, username: user.username, role: user.role }
+            user: { id: user.id, username: user.username, role: user.role },
+            alerts
         });
     } catch (err) {
         await logErrorToDb(req, 'login_error', err);
@@ -2569,6 +2663,24 @@ app.use((req, res) => {
 
 // 全域 Error Handler (寫入 Supabase 日誌，僅回傳安全 JSON 訊息)
 app.use(async (err, req, res, next) => {
+    // v2.14.0：用戶端送來的請求本身有問題（JSON 格式錯誤、body 過大）不該記成「伺服器錯誤」。
+    // 這些是攻擊探測或前端 bug 的訊號，回 4xx 並以警告級記錄，才不會稀釋真正的錯誤日誌
+    // （本項是「錯誤日誌自動巡檢」跑出來的第一個發現：malformed JSON 被記成 unhandled_server_error）。
+    const isBodyParseError = err && (err.type === 'entity.parse.failed'
+        || (err instanceof SyntaxError && err.status === 400 && 'body' in err));
+    const isBodyTooLarge = err && (err.type === 'entity.too.large' || err.status === 413);
+
+    if (isBodyParseError || isBodyTooLarge) {
+        const status = isBodyTooLarge ? 413 : 400;
+        const errorType = isBodyTooLarge ? 'request_body_too_large' : 'malformed_json_body';
+        const message = isBodyTooLarge
+            ? '送出的內容超過大小限制，請縮小後再試。'
+            : '送出的資料格式錯誤（不是有效的 JSON），請確認後再試。';
+        console.warn(`[Client Request Error] ${errorType} ${req.method} ${req.originalUrl || req.url}`);
+        await logErrorToDb(req, errorType, err, { severity: 'warn' });
+        return res.status(status).json({ success: false, error: message });
+    }
+
     console.error('[Global Server Error]:', err);
     await logErrorToDb(req, 'unhandled_server_error', err);
 
@@ -2614,6 +2726,7 @@ app.__test__ = {
     verifyPassword,
     needsPasswordUpgrade,
     resolveSupabaseKey,
+    errorLogAlertSummary,
     allowRegisterAttempt,
     USERNAME_RE,
     PASSWORD_RE,
@@ -2631,6 +2744,8 @@ app.__test__ = {
     loginLockRemaining,
     recordLoginFailure,
     clearLoginFailures,
+    LOGIN_IP_MAX_FAILURES,
+    LOGIN_ACCOUNT_MAX_FAILURES,
     shouldLogAuthFailure,
     LOGIN_MAX_FAILURES,
     LOGIN_LOCK_MS,

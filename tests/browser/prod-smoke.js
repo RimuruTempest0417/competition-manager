@@ -65,7 +65,7 @@ const get = (p, headers) => fetch(SITE + p, { headers });
 
     // ---------- 3. 未登入的拒絕行為與不快取 ----------
     console.log('\n【3】未登入存取與快取標頭');
-    for (const p of ['/api/admin/users', '/api/admin/error-logs', '/api/admin/error-logs/health', '/api/admin/push-logs']) {
+    for (const p of ['/api/admin/users', '/api/admin/error-logs', '/api/admin/error-logs/health', '/api/admin/error-logs/summary', '/api/admin/push-logs']) {
         const r = await get(p);
         check(`未登入讀取 ${p} 被拒（HTTP ${r.status}）`, r.status === 401, String(r.status));
     }
@@ -115,6 +115,26 @@ const get = (p, headers) => fetch(SITE + p, { headers });
             Object.keys(logsBody).join(',') || '(空)');
         check('日誌系統本身沒有寫入失敗紀錄', Array.isArray(h.recent_write_failures) && h.recent_write_failures.length === 0,
             JSON.stringify(h.recent_write_failures || []).slice(0, 120));
+
+        // v2.14.0：未處理錯誤統計（前端提示橫幅與自動巡檢腳本都靠這個端點）
+        const summary = await get('/api/admin/error-logs/summary', auth);
+        const sum = await summary.json().catch(() => ({}));
+        check(`未處理錯誤統計端點可用（HTTP ${summary.status}）`, summary.status === 200, JSON.stringify(sum).slice(0, 120));
+        check('統計包含未處理錯誤數與是否需要留意',
+            Number.isInteger(sum.unresolved_errors) && typeof sum.may_need_attention === 'boolean',
+            JSON.stringify(sum));
+        check('統計不含任何日誌訊息或金鑰內容', !/jwt|password|eyJ|stack/i.test(JSON.stringify(sum)));
+        const userToken = jwt.sign({ sub: 4, username: 'nobody', role: 'user' }, secret, { expiresIn: '10m' });
+        const summaryDenied = await get('/api/admin/error-logs/summary', { Authorization: 'Bearer ' + userToken });
+        check(`一般角色讀取統計被拒（HTTP ${summaryDenied.status}）`, [401, 403].includes(summaryDenied.status), String(summaryDenied.status));
+
+        // v2.14.0：格式錯誤的請求應回 400（用戶端問題）而不是 500（伺服器錯誤）
+        const badJson = await fetch(SITE + '/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{"username": broken'
+        });
+        check(`格式錯誤的 JSON 請求回 400（HTTP ${badJson.status}）`, badJson.status === 400, String(badJson.status));
 
         const push = await get('/api/admin/push-logs', auth);
         check(`管理員/擁有者可讀推播紀錄（HTTP ${push.status}）`, push.status === 200);
