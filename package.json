@@ -9,6 +9,7 @@
     "check:browser": "node tests/browser/alert-banner-check.js && node tests/browser/twofactor-check.js && node tests/browser/audit-log-check.js && node tests/browser/error-log-resolve-check.js && node tests/browser/backup-check.js && node tests/browser/competition-state-check.js",
     "check:prod": "node tests/browser/prod-smoke.js && node tests/browser/prod-visitor-check.js",
     "triage": "node scripts/error-log-triage.js --upload",
+    "check:audit-labels": "node scripts/check-audit-action-labels.js",
     "backup": "node scripts/backup-db.js",
     "restore": "node scripts/restore-db.js",
     "triage:report": "node scripts/error-log-triage.js --no-resolve --upload --dry-run"

@@ -73,7 +73,11 @@
 
 - `npm test`：**177 項全綠**（v2.18.0 為 156；本版新增 `tests/competition-state.test.js` 10 項、`tests/competition-state-api.test.js` 6 項、`tests/audit-actions.test.js`、`tests/audit-actions-api.test.js`、`tests/audit-logout-api.test.js`）。關鍵斷言：五種狀態的判定、報名開始／截止／開賽／結束四個邊界、單日賽事不能提早結束、手動關閉報名優先、額滿仍算報名中但不可報名、舊 `registration_deadline` 當天 23:59 有效、`?state=` 篩選、五種不可報名情境都要回 400 且**資料庫不得留下任何資料**、報名時間存得進也清得掉、不合法字串不寫入、稽核「宣告↔實寫」一致、登出與發送推播真的寫稽核。
 - `npm run check:browser`：**115 項全綠**（v2.18.0 為 85；新增 `competition-state-check.js` **30 項**，真實 Chrome 手機尺寸）：六種狀態的徽章、狀態篩選列數量與點擊、鎖住的報名按鈕寫出原因、`aria-pressed` 無障礙狀態、表單即時預覽（尚未開放 → 報名中 → 報名已截止）、儲存後資料庫真的有報名時間且舊欄位同步、**邊界用「30 秒前剛截止／30 秒後才開始」的賽事真的在瀏覽器裡自動切換**、無前端例外。
-- `npm run check:prod`：線上煙霧測試全綠（發佈後執行）。
+- `npm run check:prod`：**54 項全綠**（HTTP 煙霧 48＋訪客視角 6），線上版本字串確認 v2.19.0。
+- **線上實測（真實 production，只讀）**：
+  - `GET /api/competitions` 回傳的狀態與真實資料相符（例：2026-10-24 那場 → `registration_open`／可報名；2026-09-20 那場 → `ongoing`／不可報名；已手動關閉報名的 → `registration_closed`）。
+  - `npm run check:audit-labels`（新增）：線上稽核日誌的動作下拉選單 **48 個動作全部都有中文標籤**（0 個只有英文的孤兒動作）——
+    這正是使用者附圖指出的問題（截圖中 `CLEANUP_ERROR_LOGS`、`DELETE_ADMIN`、`EXPORT_BACKUP` 只有英文），現在 `CLEANUP_ERROR_LOGS → 清理錯誤日誌`、`DELETE_ADMIN → 刪除帳號（舊名稱）`、`EXPORT_BACKUP → 匯出資料備份` 都對上了。線上稽核紀錄 170 筆。
 
 ## 已知限制
 
