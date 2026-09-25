@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><title>比賽管理系統 — 功能總覽與規劃</title>
+<style>body{font-family:-apple-system,"PingFang TC",Arial,sans-serif;line-height:1.6;max-width:1000px;margin:0 auto;padding:24px}
+table{border:1px solid #cbd5e1;border-collapse:collapse;width:100%;margin:10px 0 18px}
+th{border:1px solid #cbd5e1;background:#f1f5f9;text-align:left;padding:6px 8px;font-size:14px}
+td{border:1px solid #cbd5e1;padding:6px 8px;font-size:13px;vertical-align:top}
+h1{font-size:24px}h2{font-size:19px;border-bottom:2px solid #e2e8f0;padding-bottom:4px;margin-top:28px}
+h3{font-size:16px;margin-top:20px}code{background:#f1f5f9;padding:1px 4px;border-radius:3px;font-size:12px}
+blockquote{background:#f8fafc;border-left:4px solid #94a3b8;margin:0 0 18px;padding:8px 14px;font-size:13px}
+hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
+<body>
+<h1>🏆 比賽管理系統 — 功能總覽與規劃</h1>
+<p>文件版本：2026-09-25（對應網站 v2.12.2）</p>
+<p>線上網址：https://competition-manager-hazel.vercel.app</p>
+<p>程式碼：https://github.com/RimuruTempest0417/competition-manager</p>
+<p>本文件已重新整理：修正原本過時或標示錯誤的狀態、補上 v2.7.0～v2.12.2 的實際完成內容、新增「資料庫 Migration」「版本歷程」「測試方式」「已知限制」與「建議下一步」。</p>
+<p>狀態用語：已完成／進行中／未開始。</p>
+<h2>一、使用者介面（瀏覽器端）</h2>
+<h3>1.1 檢視與搜尋</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">功能</th><th style="background:#f1f5f9;text-align:left">使用者角色</th><th style="background:#f1f5f9;text-align:left">當前狀態</th><th style="background:#f1f5f9;text-align:left">詳細說明</th></tr>
+<tr><td>Keywords 搜尋 + 日期篩選</td><td>所有用戶</td><td>已完成</td><td>支援名稱、地點、簡介關鍵字搜尋與特定日期篩選。</td></tr>
+<tr><td>顯示發佈者</td><td>所有用戶</td><td>已完成</td><td>卡片顯示發佈者帳號與角色徽章。</td></tr>
+<tr><td>賽事分類與標籤系統</td><td>所有用戶</td><td>已完成 (v2.7.0)</td><td>10 種分類（含 emoji 與專屬色系）＋自由標籤（最多 10 個）。可分類／標籤／日期／關鍵字聯合篩選；分類清單由後端 GET /api/meta 提供單一真實來源。</td></tr>
+<tr><td>日曆檢視模式</td><td>所有用戶</td><td>已完成 (v2.7.0)</td><td>列表頁「📋 列表 / 📅 日曆」切換，月曆格線顯示每日賽程（依分類上色、跨日賽事展開到每一天、超過 3 場顯示「+N 更多」）。純手寫無外部套件、檢視選擇會被記住。</td></tr>
+<tr><td>比賽狀態標籤與排序</td><td>所有用戶</td><td>已完成</td><td>依日期自動顯示「報名中 / 即將開賽 / 已結束」，並顯示倒數天數。</td></tr>
+<tr><td>美化 UI</td><td>所有用戶</td><td>已完成 (v2.11.0)</td><td>深淺色主題（自動＋手動三態切換 v2.6.0）、色票變數化；並完成手機介面優化：標題列單行化、篩選列手機改兩欄、彈窗改用 dvh 動態高度、觸控目標 ≥36px、輸入框 16px（避免 iOS 聚焦放大）、保留 iPhone 安全區域，390×844 與 360×640 實測橫向溢出 0px。</td></tr>
+<tr><td>可安裝成手機 App（PWA）</td><td>所有用戶</td><td>已完成 (v2.11.0)</td><td>新增 manifest.json 與自製 App 圖示（192／512／maskable／apple-touch-icon），可「加入主畫面」以獨立視窗全螢幕使用。Android／桌面 Chrome 會出現「加到主畫面」按鈕。</td></tr>
+<tr><td>深連結直達賽事</td><td>所有用戶</td><td>已完成 (v2.11.0)</td><td>推播通知與分享連結帶 ?comp=&lt;id&gt;，開啟後自動切回列表、捲動並高亮該賽事；另支援 ?view=myregs／?view=notify。</td></tr>
+</table>
+<h3>1.2 線上報名與組隊（v2.9.0 新增）</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">功能</th><th style="background:#f1f5f9;text-align:left">使用者角色</th><th style="background:#f1f5f9;text-align:left">當前狀態</th><th style="background:#f1f5f9;text-align:left">詳細說明</th></tr>
+<tr><td>報名參加比賽</td><td>所有用戶（需登入）</td><td>已完成 (v2.9.0)</td><td>卡片「📝 報名」按鈕；未登入點擊會先開啟登入／註冊視窗。報名開放與否由後端權威判斷（未開放、報名截止日已過、賽事已結束、名額已滿、重複報名各有明確理由）。</td></tr>
+<tr><td>我的報名</td><td>所有用戶（需登入）</td><td>已完成 (v2.9.0)</td><td>選單「📝 我的報名」：查看自己的報名（賽事日期／地點／隊伍／備註）並可自行取消（軟刪除，取消後可重新報名）。</td></tr>
+<tr><td>組隊比賽</td><td>所有用戶</td><td>已完成 (v2.9.0)</td><td>賽事可勾選「👥 組隊比賽」並設定每隊人數上限；報名時必須填寫隊伍名稱。</td></tr>
+<tr><td>編排比賽隊伍</td><td>管理員以上</td><td>已完成 (v2.9.0)</td><td>卡片「👥 報名／隊伍」開啟編排視窗：建立隊伍、把報名者編入／移動隊伍、檢視未編排名單；編排會檢查「同一場賽事」與隊伍人數上限。</td></tr>
+<tr><td>新增／刪除隊伍與隊員編排</td><td>超級管理員以上</td><td>已完成 (v2.9.0)</td><td>可刪除隊伍（隊員自動退回未編排）與移除隊員。權限於後端驗證，前端亦依角色隱藏按鈕（一般用戶完全看不到管理按鈕）。</td></tr>
+<tr><td>報名名單匯出 CSV</td><td>管理員以上</td><td>已完成 (v2.11.0)</td><td>隊伍編排視窗可匯出該場報名名單（姓名／隊伍／備註／報名時間），方便現場報到與計分。</td></tr>
+<tr><td>剩餘名額顯示</td><td>所有用戶</td><td>已完成 (v2.11.0)</td><td>卡片顯示「👥 3 / 20 人」＋「剩 17 個名額」，額滿顯示「🔒 名額已滿」。</td></tr>
+<tr><td>報名截止與名額上限</td><td>管理員以上（設定）</td><td>已完成 (v2.9.0)</td><td>賽事新增「報名截止日」與「名額上限」；額滿或截止後按鈕自動變為「🔒 已額滿／🔒 報名已截止」並停用送出。取代原本手動勾選「報名中」的需求。</td></tr>
+<tr><td>編輯報名情況 / 編輯報名人員</td><td>管理員 / 超級管理員</td><td>已完成 (v2.9.0)</td><td>即上列「編排比賽隊伍」與「新增／刪除隊伍與隊員編排」。</td></tr>
+</table>
+<h3>1.3 通知與訂閱</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">功能</th><th style="background:#f1f5f9;text-align:left">使用者角色</th><th style="background:#f1f5f9;text-align:left">當前狀態</th><th style="background:#f1f5f9;text-align:left">詳細說明</th></tr>
+<tr><td>訊息提醒（本機通知）</td><td>所有用戶</td><td>已完成 (v2.8.0)</td><td>卡片「🔕 訂閱提醒」；開賽前 24 小時內跳出提醒。網頁開啟時檢查（開啟、切回分頁、每 5 分鐘）。</td></tr>
+<tr><td>推播訂閱服務（Web Push）</td><td>所有用戶</td><td>已完成 (v2.10.0)</td><td>「🔔 通知設定 → 📲 推播訂閱」：即使完全關閉網頁也能收到「新賽事發布」與「開賽前 24 小時」推播。伺服器每日由 Vercel Cron 發送；金鑰自動產生並存於資料庫，私鑰不進程式碼。</td></tr>
+<tr><td>電子郵件通知 / 訂閱賽事</td><td>所有用戶</td><td>未開始</td><td>需要外部寄信服務（如 Resend／SendGrid）與帳號金鑰，尚未實作。詳見「建議下一步」。</td></tr>
+<tr><td>Supabase Realtime 即時同步</td><td>所有用戶</td><td>未開始</td><td>目前以手動重新載入取得最新資料；Realtime 需前端持有金鑰與 WebSocket 連線，與現行「前端不直接連資料庫」的架構衝突，需先評估。</td></tr>
+</table>
+<h3>1.4 分享與海報</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">功能</th><th style="background:#f1f5f9;text-align:left">使用者角色</th><th style="background:#f1f5f9;text-align:left">當前狀態</th><th style="background:#f1f5f9;text-align:left">詳細說明</th></tr>
+<tr><td>一鍵複製比賽資訊 / 分享連結</td><td>所有用戶</td><td>已完成</td><td>卡片「📋 複製文字」自動生成格式化賽事簡介並複製到剪貼簿。</td></tr>
+<tr><td>海報一鍵生成（自動）</td><td>所有用戶</td><td>已完成</td><td>「🖼️ 分享海報」以 Canvas 繪製宣傳海報，可複製或下載 PNG。</td></tr>
+<tr><td>手動上傳海報（取代自動生成）</td><td>管理員以上（上傳）／所有用戶（檢視）</td><td>已完成 (v2.10.0)</td><td>發佈／編輯表單可上傳 JPG／PNG／WebP（前端先縮圖，最長邊 1600px），卡片顯示「🖼️ 自訂海報」徽章，分享海報視窗改顯示上傳的圖；未上傳時仍用自動生成款式。</td></tr>
+<tr><td>加入行事曆（行程檔 / Google 日曆）</td><td>所有用戶（需登入）</td><td>已完成 (v2.11.0)</td><td>「我的報名」每筆可下載標準 .ics 行程檔（含賽事前一天提醒）或一鍵加入 Google 日曆，純前端產生、無外部依賴。</td></tr>
+</table>
+<h3>1.5 管理與發佈</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">功能</th><th style="background:#f1f5f9;text-align:left">使用者角色</th><th style="background:#f1f5f9;text-align:left">當前狀態</th><th style="background:#f1f5f9;text-align:left">詳細說明</th></tr>
+<tr><td>手動發佈與選填欄位</td><td>管理員</td><td>已完成</td><td>網頁表單發佈賽事，地點、日期、時間彈性選填。</td></tr>
+<tr><td>24 小時制時間驗證（HH:mm）</td><td>管理員</td><td>已完成</td><td>網頁表單輸入防呆正則驗證。</td></tr>
+<tr><td>新增結束時間</td><td>管理員</td><td>已完成</td><td>支援 end_date / end_time。</td></tr>
+<tr><td>修改已發佈數據</td><td>管理員</td><td>已完成</td><td>卡片「編輯」彈出視窗更新內容。</td></tr>
+<tr><td>手動刪除比賽（軟刪除）</td><td>管理員</td><td>已完成</td><td>卡片刪除按鈕，僅標記 is_deleted，前端自動過濾。</td></tr>
+<tr><td>回復已刪除比賽</td><td>管理員</td><td>已完成</td><td>資源回收桶可還原。</td></tr>
+<tr><td>永久刪除比賽</td><td>超級管理員</td><td>已完成</td><td>資源回收桶內永久刪除。</td></tr>
+<tr><td>一鍵匯入 / 匯出 CSV</td><td>管理員</td><td>已完成 (v2.8.0)</td><td>「📥 CSV 匯入 / 匯出」：下載範本、批次匯入（Excel 另存的 CSV 或直接複製的 Tab 分隔內容，欄位順序不拘、表頭中英文皆可）、匯出備份（UTF-8 含 BOM）。匯入前先預覽，重複（同名同日）自動跳過並回報列號。</td></tr>
+</table>
+<h3>1.6 安全與權限</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">功能</th><th style="background:#f1f5f9;text-align:left">使用者角色</th><th style="background:#f1f5f9;text-align:left">當前狀態</th><th style="background:#f1f5f9;text-align:left">詳細說明</th></tr>
+<tr><td>網頁端身份切換（登入）</td><td>所有用戶</td><td>已完成</td><td>網頁右上角登入入口。</td></tr>
+<tr><td>普通用戶（user）自行註冊</td><td>所有用戶</td><td>已完成 (v2.9.0)</td><td>登入視窗「註冊新帳號」，註冊成功即自動登入。普通用戶只能報名與管理自己的報名，看不到發佈與管理工具。</td></tr>
+<tr><td>向 super admin 發送請求</td><td>所有用戶</td><td>已完成</td><td>發送任意文字訊息。</td></tr>
+<tr><td>修改自己密碼</td><td>所有用戶（需登入）</td><td>已完成</td><td>於 v2.9.0 起改用 crypto.scrypt 加鹽雜湊儲存；v2.12.1 起舊帳號只要登入一次就會自動升級為雜湊（不必再手動改密碼），並可用批次腳本一次處理尚未登入的舊帳號。</td></tr>
+<tr><td>帳號管理面板</td><td>超級管理員</td><td>已完成</td><td>前端動態新增與刪除其他管理員帳號。</td></tr>
+<tr><td>錯誤日誌與監控</td><td>超級管理員以上</td><td>已完成 (v2.12.0)</td><td>日誌介面支援嚴重程度（錯誤／警告／資訊）、關鍵字搜尋、只看未處理、標記已處理（記錄處理人）、匯出 CSV、清理 N 天前；並在開啟時檢查「日誌系統本身」是否寫入失敗。已修復「系統出錯卻沒寫入日誌」：寫入失敗不再靜默，且補齊 13 條原本沒有記錄的錯誤路徑。</td></tr>
+<tr><td>推播發送紀錄</td><td>管理員以上</td><td>已完成 (v2.12.0)</td><td>「📤 推播紀錄」顯示每日排程實際發送的推播（賽事、類型、成功數量、時間）。</td></tr>
+<tr><td>角色權限分層</td><td>—</td><td>已完成 (v2.11.0 強化)</td><td>user（報名）→ admin（發佈／編輯／檢視報名名單／編排隊伍）→ super_admin（永久刪除、刪除隊伍與移除隊員）→ web_owner（最高權限）。實際角色一律以資料庫當下內容為準。</td></tr>
+<tr><td>使用者管理（帳號建立與管理）</td><td>管理員以上</td><td>已完成 (v2.12.0)</td><td>「👥 使用者管理」可建立帳號、重設密碼、改帳號名稱、停用／啟用、刪除。角色階梯：管理員可建立普通用戶（user）與測試帳號；超級管理員可再建立管理員；網站擁有者不限。只有網站擁有者能調整他人角色。保護機制：不能改自己的角色、不能停用／刪除自己、不能刪除網站擁有者、至少保留一位網站擁有者、不能管理同級或更高權限者。前端選單不提供越權選項，且後端一律重新驗證（前端被繞過也會被擋）。</td></tr>
+<tr><td>帳號安全</td><td>管理員以上（設定）／所有用戶（登入）</td><td>已完成 (v2.12.0)</td><td>登入連續失敗 5 次鎖定 15 分鐘、停用帳號不得登入、記錄最後登入時間、無效權杖留下警告級紀錄（同一 IP 每分鐘最多一筆）。</td></tr>
+<tr><td>選單權限單一來源</td><td>—</td><td>已完成 (v2.11.0)</td><td>修正「先登入管理員再登出，選單仍留有 CSV 匯入／匯出」的問題：改為單一權限表 CM_MENU_PERMISSIONS（guest／user／test／admin／super_admin／web_owner）統一控制，並在 CSV 相關函式（開啟視窗、下載範本、匯出、匯入）加上 isAdminUser() 雙重防護。</td></tr>
+</table>
+<h2>二、後端、基礎設施與安全</h2>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">分類 / 範疇</th><th style="background:#f1f5f9;text-align:left">技術目標 / 機制</th><th style="background:#f1f5f9;text-align:left">當前狀態</th><th style="background:#f1f5f9;text-align:left">詳細說明</th></tr>
+<tr><td>底層架構</td><td>Express RESTful API 基礎建設</td><td>已完成</td><td>GET / POST / PUT / DELETE 端點與 JSON 資料處理、錯誤處理中間件。</td></tr>
+<tr><td>雲端基礎設施</td><td>Supabase (PostgreSQL) 雲端資料庫</td><td>已完成</td><td>取代 SQLite，資料跨裝置永久保存。</td></tr>
+<tr><td>部署</td><td>Vercel 自動化部署與環境變數注入</td><td>已完成</td><td>SUPABASE_URL / SUPABASE_KEY / JWT_SECRET 皆由環境變數注入，不進 Git。（早期 Render 站台已停更。）</td></tr>
+<tr><td>排程</td><td>Vercel Cron 每日推播</td><td>已完成 (v2.10.0)</td><td>vercel.json 設定每日呼叫 GET /api/cron/reminders 發送推播（push_log 去重、失效訂閱自動停用）。</td></tr>
+<tr><td>排程安全</td><td>cron 端點授權</td><td>已完成 (v2.11.1)</td><td>修正原本「未設定 CRON_SECRET 就只做限流、等於任何人可觸發」的漏洞：未設定時 production 一律回 503（並提示去設定環境變數），有設定時以 crypto.timingSafeEqual 固定時間比較。待辦：在 Vercel 加入 CRON_SECRET，否則每日推播排程維持停用。</td></tr>
+<tr><td>自動化維運</td><td>過期數據自動排查</td><td>進行中</td><td>push_log 已可去重與清理；賽事歸檔／過期清理尚未實作，但排程基礎設施已具備，可直接掛在同一支 cron。</td></tr>
+<tr><td>外部數據接入</td><td>自動化網路爬蟲（Scraper Service)</td><td>未開始</td><td>需背景爬蟲服務與目標網站授權評估。</td></tr>
+<tr><td>權限與驗證</td><td>JWT 身份驗證</td><td>已完成</td><td>Token 有效期 12 小時，payload 僅 sub / username / role（不含密碼）。</td></tr>
+<tr><td>權限與驗證</td><td>後端 API 權限中間件</td><td>已完成 (v2.9.0 擴充)</td><td>authenticateToken + requireAdmin / requireSuperAdmin（ADMIN_ROLES／SUPER_ADMIN_ROLES 白名單），所有寫入端點皆有把關。</td></tr>
+<tr><td>密碼安全</td><td>密碼雜湊儲存</td><td>已完成 (v2.12.1)</td><td>crypto.scrypt 加鹽雜湊（lib/passwords.js，伺服器與腳本共用）+ timingSafeEqual 比對。v2.12.1 前舊帳號的密碼其實是明碼存在資料庫裡（已全面升級為雜湊）：登入成功時自動升級、批次腳本 scripts/hash-legacy-passwords.js（寫入前自我驗證、寫入後複驗、不輸出任何密碼）、/api/admin/error-logs/health 可查尚待升級數量。</td></tr>
+<tr><td>稽核</td><td>操作日誌與紀錄</td><td>已完成</td><td>登入／登出與關鍵資料變更（含報名、隊伍編排、海報上傳）皆寫入 audit_logs，自動解析 User-Agent 裝置類型。</td></tr>
+<tr><td>稽核</td><td>Bug 回報</td><td>已完成</td><td>前端可回報錯誤，寫入 error_logs。</td></tr>
+<tr><td>資料完整性</td><td>軟刪除防誤刪機制</td><td>已完成</td><td>is_deleted 欄位；管理員刪除僅標記，前端 GET 自動過濾。</td></tr>
+<tr><td>資料安全</td><td>資料庫層級存取控制</td><td>已完成（有取捨）</td><td>見下方「已知限制」：目前 SUPABASE_KEY 是 anon key，僅存在伺服器端；新資料表關閉 RLS、由後端 API 把關。建議日後改用 service_role key 並開啟 RLS + policy。</td></tr>
+<tr><td>安全標頭</td><td>CSP / X-Frame-Options / nosniff / HSTS / Referrer-Policy</td><td>已完成</td><td>CSP 維持 script-src &#x27;self&#x27;、style-src &#x27;self&#x27;、img-src &#x27;self&#x27; data: blob:——v2.10.0 的手動海報以同源端點提供，因此沒有放寬任何 CSP 指令、也未引入任何 CDN。</td></tr>
+<tr><td>前端</td><td>無框架、原生 JS + 本地 Tailwind</td><td>已完成</td><td>不使用任何 CDN 或第三方前端套件（符合嚴格 CSP）。</td></tr>
+<tr><td>安全性</td><td>漏洞總檢查與修復</td><td>已完成 (v2.12.0)</td><td>逐項盤點 44 條路由（授權覆蓋、水平越權、mass assignment、注入、XSS、JWT、密碼儲存、檔案上傳、安全標頭），修復 7 項：錯誤日誌靜默、403 誤判為登入逾期、公開端點無節流、CSV 公式注入、錯誤訊息外洩、API 可被快取、日誌系統自身失敗不可見。完整報告：docs/安全性檢查-v2.12.0.md。</td></tr>
+<tr><td>安全性</td><td>密碼明碼儲存（v2.12.1 後續檢查發現並修復）</td><td>已完成 (v2.12.1)</td><td>v2.12.0 報告發布後追查日誌寫入問題時，發現早期帳號的密碼是明碼存在資料庫（8 個帳號全部）。已修：登入成功自動升級為 scrypt 雜湊、批次腳本一次處理尚未登入的舊帳號、健康端點可查尚待升級數量、雜湊實作抽為共用模組。殘留風險：明碼曾存在於資料庫與任何讀過該表的備份，系統無法得知是否已外流 → 建議提醒使用者更換在其他網站重複使用的密碼。</td></tr>
+<tr><td>前端</td><td>iOS／PWA 裝置能力判斷</td><td>已完成 (v2.11.0)</td><td>CMNotify.pushSupportState() 分辨 ios-needs-homescreen（iOS 需先加入主畫面）／denied（權限被拒）／unsupported／ok，UI 依結果顯示可操作指引而非一句「不支援」；iPadOS 13+ 以 maxTouchPoints 辨識（UA 會偽裝成 Mac）。</td></tr>
+<tr><td>依賴</td><td>後端僅 web-push 為新增依賴</td><td>已完成 (v2.10.0)</td><td>僅伺服器端使用，不影響 CSP。</td></tr>
+</table>
+<h2>三、資料庫 Migration（必須手動執行）</h2>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">檔案</th><th style="background:#f1f5f9;text-align:left">內容</th><th style="background:#f1f5f9;text-align:left">必要性</th></tr>
+<tr><td>2026-09-23-v2.7.0-competition-category-tags.sql</td><td>competitions 加入 category、tags</td><td>已執行 ✅</td></tr>
+<tr><td>2026-09-24-v2.9.0-users-registration-teams.sql</td><td>新增 registrations、competition_teams、push_subscriptions、push_log；competitions 加入 is_team_event、team_size、registration_deadline、max_registrations；放寬 admin_users.role</td><td>已執行 ✅（但其中的 enable row level security 必須靠下一支修正）</td></tr>
+<tr><td>2026-09-25-v2.12.0-user-management.sql</td><td>admin_users 加 is_active／last_login_at／updated_at；error_logs 加 severity／resolved／resolved_at／resolved_by（＋索引）</td><td>建議執行（未執行時伺服器自動降級、既有功能不受影響；只有「停用帳號」「最後登入時間」「日誌標記已處理」會提示需要此檔案）</td></tr>
+<tr><td>2026-09-24-v2.10.0-poster-and-push.sql</td><td>新增 competition_posters、app_settings；competitions 加入 poster_updated_at；關閉上述新表的 RLS 並補上 GRANT</td><td>已執行 ✅（2026-09-24 完成；RLS 已解除，報名寫入恢復正常，VAPID 金鑰已自動產生）</td></tr>
+</table>
+<p>執行方式：Supabase Dashboard → SQL Editor → 貼上整份檔案 → Run。SQL 皆為 idempotent（可重複執行）。</p>
+<h2>四、版本歷程</h2>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">版本</th><th style="background:#f1f5f9;text-align:left">內容</th></tr>
+<tr><td>v2.4.x</td><td>分享海報、軟刪除、資源回收桶、稽核日誌</td></tr>
+<tr><td>v2.5.0</td><td>深淺色模式自動適配（prefers-color-scheme）</td></tr>
+<tr><td>v2.6.0</td><td>主題三態手動切換（跟隨系統→淺色→深色）＋色票 CSS 變數重構</td></tr>
+<tr><td>v2.7.0</td><td>賽事分類與標籤系統、日曆檢視模式</td></tr>
+<tr><td>v2.8.0</td><td>訊息提醒（Web Notification）、一鍵匯入／匯出 CSV、專案清理</td></tr>
+<tr><td>v2.9.0</td><td>普通用戶註冊、線上報名（需登入）、組隊比賽、隊伍編排、報名截止與名額上限、密碼雜湊</td></tr>
+<tr><td>v2.10.0</td><td>手動上傳海報（取代自動生成）、Web Push 推播訂閱、cron 排程、RLS 修正</td></tr>
+<tr><td>v2.11.0</td><td>手機介面優化、可安裝成 App（PWA）與 iOS 推播支援、深連結直達賽事、我的報名加入行事曆（.ics／Google 日曆）、報名名單匯出 CSV、剩餘名額顯示；修正「未登入仍可下載 CSV」與「我的報名顯示 migration 訊息」</td></tr>
+<tr><td>v2.11.1</td><td>安全性修正：cron 端點在未設定 CRON_SECRET 時必須拒絕（不可被任意觸發）</td></tr>
+<tr><td>v2.12.0</td><td>使用者管理（管理員以上可建立與管理帳號、網站擁有者可調整角色）、錯誤日誌修復與強化、推播發送紀錄、帳號安全強化（登入鎖定／停用帳號／最後登入）、漏洞總檢查與 7 項安全修復</td></tr>
+<tr><td>v2.12.1</td><td>密碼儲存安全強化：修正「早期帳號密碼為明碼儲存」，登入時自動升級為 scrypt 雜湊，並提供批次升級腳本與可觀測數量；雜湊實作抽為共用模組 lib/passwords.js</td></tr>
+<tr><td>v2.12.2</td><td>修正「調整他人角色時一點選單就跳確認、權限改不動」：角色下拉原本掛在 click 上，會以舊角色值觸發確認框並送出舊值；改為只處理 change，並新增「真實操作順序」迴歸測試</td></tr>
+</table>
+<h2>五、測試與驗證方式</h2>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">類型</th><th style="background:#f1f5f9;text-align:left">內容</th></tr>
+<tr><td>單元測試</td><td>npm test：分類／標籤正規化、CSV 解析、報名規則、海報格式、推播候選條件等純函式。</td></tr>
+<tr><td>API 端到端測試</td><td>內建「假 Supabase（PostgREST）」服務，以真實 Express app + 真實 JWT 跑授權、驗證、去重、稽核——完全不碰正式資料庫。</td></tr>
+<tr><td>Migration 未執行測試</td><td>獨立測試檔驗證「沒有新欄位時舊功能不受影響、新端點明確回 503」。</td></tr>
+<tr><td>瀏覽器實測</td><td>headless Chrome 驅動真實 UI：報名、隊伍編排、海報上傳／分享／移除、推播狀態、通知流程。</td></tr>
+<tr><td>回歸測試</td><td>每次發版都重跑 v2.7.0／v2.8.0／v2.9.0 的瀏覽器實測，確認舊功能未被破壞。</td></tr>
+<tr><td>線上驗證</td><td>部署後比對線上與本地檔案雜湊、檢查 CSP 與安全標頭、檢查新端點的降級行為。</td></tr>
+<tr><td>手機尺寸實測</td><td>headless Chrome 以 390×844（iPhone 14）與 360×640（iPhone SE） 驗證：橫向溢出、觸控目標高度、彈窗是否超出視窗、輸入框字級、篩選列排版、深色模式。</td></tr>
+<tr><td>目前規模</td><td>npm test 94 項全綠（含 v2.12.1 的密碼雜湊與明碼升級測試）；手機實測 51 項（含 v2.12.2 的「先點選單再選值」真實操作順序、取消回復、提權阻擋、錯誤日誌篩選與標記、推播紀錄、手機版面）；v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗；正式站煙霧測試 70 項全數通過（含靜態檔雜湊與線上一致、CSP 未放寬、PWA 圖示、cron 正確拒絕亂打的權杖、帳號與日誌權限、資料庫已無明碼密碼）。</td></tr>
+</table>
+<h2>六、已知限制（誠實說明）</h2>
+<ul><li>~~CRON_SECRET 尚未設定~~ <strong>已設定並驗證</strong>（2026-09-25 實測：未帶權杖回 401、不再是 503），每日自動推播已啟用（Vercel Cron 每日 01:00 UTC ＝ 澳門時間 09:00）。</li></ul>
+<ul><li>資料庫金鑰等級：目前使用 anon key（只存在伺服器端，前端從不直連資料庫）。要更嚴謹應改用 service_role key + 開啟 RLS 與 policy。</li></ul>
+<ul><li>推播的前提：需要 HTTPS（Vercel 已提供）與使用者允許通知權限；iOS Safari 必須先「加入主畫面」再從主畫面開啟才能接收推播（iOS 16.4+），v2.11.0 已在通知設定視窗提供逐步指引。</li></ul>
+<ul><li>推播檢查頻率：伺服器端為 Vercel Cron 每日一次（Hobby 方案限制）；開賽前 24 小時的提醒因此以「每日」為粒度。網頁開啟時的本機檢查仍為每 5 分鐘一次。</li></ul>
+<ul><li>~~資料庫尚未執行 v2.12.0 migration~~ 已執行（v2.12.1 起伺服器回報 severity／resolved 均存在），「停用帳號」「最後登入時間」「日誌標記已處理」全部可用。</li></ul>
+<ul><li>節流與登入鎖定是記憶體計數：部署在 Vercel serverless，多實例時各自計算、重啟歸零。足以阻擋單一來源的腳本濫用，但無法阻擋分散式攻擊。</li></ul>
+<ul><li>公開的隊伍名單：GET /api/competitions/:id/teams 讓任何登入者看到該場隊伍與成員帳號（刻意設計，方便參賽者確認隊伍）；若需更嚴謹可限制為「該場參賽者」。</li></ul>
+<ul><li>部分非帳號端點仍回傳原始錯誤訊息：賽事／報名／隊伍的 500 回應（需登入或管理員權限），優先度較低；細節已完整寫入錯誤日誌。</li></ul>
+<ul><li>電子郵件通知尚未實作：需要外部寄信服務帳號。</li></ul>
+<ul><li>Realtime 即時同步尚未實作：與「前端不直接連資料庫」的現行架構衝突。</li></ul>
+<ul><li>自動化爬蟲尚未實作。</li></ul>
+<h2>七、建議下一步（依優先順序）</h2>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">優先</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">說明</th></tr>
+<tr><td>1</td><td>~~在 Vercel 設定 CRON_SECRET~~</td><td><strong>已完成</strong>（2026-09-25 驗證：端點回 401 而非 503，自動推播已啟用）。</td></tr>
+<tr><td>1b</td><td>~~執行 2026-09-25-v2.12.0-user-management.sql~~</td><td>已完成（2026-09-25）。</td></tr>
+<tr><td>1c</td><td>提醒使用者更換在其他網站重複使用的密碼</td><td>密碼曾以明碼儲存於資料庫，系統無法得知是否已外流；已全面升級為雜湊，但若同一組密碼也用於其他網站，仍建議更換。</td></tr>
+<tr><td>2</td><td>在實機上驗證 iOS 推播</td><td>iPhone 用 Safari 開啟 → 分享 → 加入主畫面 → 從主畫面開啟 → 通知設定 → 開啟推播訂閱（目前資料庫已有 2 筆推播訂閱）。</td></tr>
+<tr><td>3</td><td>電子郵件通知 / 訂閱賽事</td><td>以 Resend／SendGrid 免費額度實作：訪客輸入 Email 訂閱分類，新賽事或開賽前自動寄信；可直接掛在現有 cron。</td></tr>
+<tr><td>4</td><td>過期賽事自動歸檔</td><td>已有 cron 排程，可定期把 date 過久的賽事標記歸檔或清理 push_log。</td></tr>
+<tr><td>5</td><td>升級資料庫金鑰與 RLS policy</td><td>改用 service_role key（僅伺服器端）並為各表加上精確 policy。</td></tr>
+<tr><td>6</td><td>自動化爬蟲接入外部賽事</td><td>需先確認目標網站條款與格式。</td></tr>
+<tr><td>7</td><td>賽事即時同步（Realtime 或輪詢）</td><td>目前以手動重新載入為主；可先做輕量輪詢。</td></tr>
+</table>
+<h2>八、未來更新方向（Roadmap）</h2>
+<blockquote><p>本節是滾動式規劃：每次發版後我會更新勾選狀態、補上新發現，並把「你已確認要做」的項目往前排。</p><p><strong>工作節奏（新的規則）</strong>：每完成一版，我都會停下來等你檢閱，你說「好」或給進一步指令後才繼續下一版。</p></blockquote>
+<h3>8.1 每版的工作流程</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">步驟</th><th style="background:#f1f5f9;text-align:left">內容</th></tr>
+<tr><td>1</td><td>實作 → 測試（單元 / 整合 / 手機實測）→ 部署 → 發 GitHub Release</td></tr>
+<tr><td>2</td><td>更新本文件（功能總覽、版本歷程、本節勾選狀態與新發現）</td></tr>
+<tr><td>3</td><td><strong>停下來</strong>：回報完成內容與驗證數據，等你檢閱</td></tr>
+<tr><td>4</td><td>你回「好」或給新指令後，才開始下一個項目</td></tr>
+</table>
+<p>工作量定義：<strong>小</strong>＝單一版本可完成；<strong>中</strong>＝可能拆 2～3 版；<strong>大</strong>＝需拆成多版逐步進行。</p>
+<h3>8.2 P0 — 安全與基礎（建議優先）</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">狀態</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">為什麼要做</th><th style="background:#f1f5f9;text-align:left">具體做法</th><th style="background:#f1f5f9;text-align:left">需要你提供</th><th style="background:#f1f5f9;text-align:left">工作量</th></tr>
+<tr><td>☐</td><td>資料庫金鑰升級（anon → service_role）並開啟 RLS</td><td>目前 anon key 搭配「RLS 關閉」是最大結構性風險：任何拿到金鑰的人可讀寫全部資料表（含帳號雜湊）</td><td>改用 service_role key（只放 Vercel 環境變數與本機 .env，絕不進前端）→ 為各表開啟 RLS 並建立精確 policy → 驗證前台／cron／腳本皆正常</td><td>Supabase 專案的 service_role key（Settings → API）</td><td>中</td></tr>
+<tr><td>☐</td><td>登入鎖定改為「帳號 + IP」雙重計數</td><td>目前以帳號為鍵，別人可惡意連續失敗來鎖住你的帳號</td><td>失敗計數同時記錄 IP；兩者都超過門檻才鎖定；鎖定訊息說明原因</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>管理員以上兩步驟驗證（TOTP）</td><td>管理員權限可改帳號、刪資料，只靠密碼仍嫌薄弱</td><td>以 Node 內建 crypto 手寫 TOTP（不引入外部套件），管理員可自行綁定手機驗證器，附一次性備援碼</td><td>你的手機（Google Authenticator 等）</td><td>中</td></tr>
+<tr><td>☐</td><td>稽核日誌介面強化</td><td>稽核紀錄已寫入但只能瀏覽，事後追查不方便</td><td>加入篩選（人／動作／時間）、匯出 CSV、保留天數清理</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>錯誤日誌主動告警</td><td>目前要主動打開後台才看到</td><td>管理員登入時若有近 24 小時未處理的「錯誤」級日誌則顯示提示橫幅；可選推播通知管理員</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>資料備份與還原</td><td>誤刪賽事或報名資料目前無法回復</td><td>以 cron 端點定期匯出 JSON（賽事／報名／隊伍）並提供下載；提供「從 JSON 還原」的管理端按鈕</td><td>無（可用 Supabase 免費層既有空間）</td><td>中</td></tr>
+</table>
+<h3>8.3 P1 — 賽事與報名核心（系統價值的延伸）</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">狀態</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">為什麼要做</th><th style="background:#f1f5f9;text-align:left">具體做法</th><th style="background:#f1f5f9;text-align:left">需要你提供</th><th style="background:#f1f5f9;text-align:left">工作量</th></tr>
+<tr><td>☐</td><td>賽事狀態機（草稿 → 開放報名 → 報名截止 → 進行中 → 已結束）</td><td>目前狀態全靠日期推算，無法表達「報名延長」「臨時取消」</td><td>新增 status 欄位與轉換規則；自動依時間推進，管理員可手動覆寫；狀態影響前台標籤與可否報名</td><td>無</td><td>中</td></tr>
+<tr><td>☐</td><td>報名審核流程 + 候補名單</td><td>額滿只能拒絕，無法處理「先報名後核准」與遞補</td><td>賽事可設定「需審核」；報名狀態 pending/approved/rejected；額滿自動進入候補，有人取消時遞補並通知</td><td>無</td><td>大</td></tr>
+<tr><td>☐</td><td>成績與結果記錄</td><td>系統目前止於報名，賽後成果無處可放</td><td>管理員可輸入名次／成績／備註；前台在已結束賽事顯示結果表</td><td>無</td><td>中</td></tr>
+<tr><td>☐</td><td>賽事複製與週期性賽事</td><td>每月／每週例賽要重複填一次</td><td>一鍵複製既有賽事（不含報名）；可設定固定週期自動建立</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>場地、地圖與工作人員</td><td>目前地點只有文字，現場人員分工也無處記錄</td><td>地點加上地圖連結；新增工作人員指派（帳號 + 角色：裁判／記錄／攝影）</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>賽事規程附件（PDF）</td><td>規則文件目前只能放外部連結</td><td>沿用海報機制（存資料庫、自家端點供應）支援 PDF 附件與下載</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>報名名單列印版</td><td>現場檢錄需要紙本</td><td>產生列印樣式（A4、分隊排列、可含二維碼）並提供列印按鈕</td><td>無</td><td>小</td></tr>
+</table>
+<h3>8.4 P2 — 通知與溝通</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">狀態</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">為什麼要做</th><th style="background:#f1f5f9;text-align:left">具體做法</th><th style="background:#f1f5f9;text-align:left">需要你提供</th><th style="background:#f1f5f9;text-align:left">工作量</th></tr>
+<tr><td>☐</td><td>Email 通知</td><td>推播只覆蓋已訂閱且允許通知的人；報名確認與審核結果適合用 Email</td><td>接 Resend／SendGrid 免費額度；報名成功、審核結果、開賽提醒寄信；沿用現有 cron 排程</td><td>寄信服務 API key（免費層即可）與寄件者名稱</td><td>中</td></tr>
+<tr><td>☐</td><td>推播時間與事件可設定</td><td>目前固定每日 01:00（UTC）一次，且只有開賽前提醒</td><td>可設定每日發送時間與時區；新增「報名截止前」「開賽前 1 小時」等事件型提醒</td><td>無</td><td>中</td></tr>
+<tr><td>☐</td><td>推播失敗可視與重送</td><td>目前只看得到成功筆數，失敗時不知原因</td><td>push_log 記錄錯誤碼與失敗數；管理端可對失敗項目重送</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>站內公告 / 訊息中心</td><td>重要公告目前只能靠推播或口頭</td><td>管理員可發布公告（可設定對象：全部／管理員／特定分類訂閱者），使用者登入後在訊息中心看到</td><td>無</td><td>中</td></tr>
+</table>
+<h3>8.5 P3 — 使用者體驗與資料</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">狀態</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">為什麼要做</th><th style="background:#f1f5f9;text-align:left">具體做法</th><th style="background:#f1f5f9;text-align:left">需要你提供</th><th style="background:#f1f5f9;text-align:left">工作量</th></tr>
+<tr><td>☐</td><td>使用者個人資料頁</td><td>每次報名都要重填姓名、單位、聯絡方式</td><td>個人資料（顯示名稱、單位、聯絡電話、大頭貼）；報名表單自動帶入</td><td>無</td><td>中</td></tr>
+<tr><td>☐</td><td>「我的賽事」儀表板</td><td>目前只有「我的報名」清單</td><td>一次看到報名狀態、隊伍、待處理事項、即將開賽倒數</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>使用者自助註冊（可選開關）</td><td>目前靠邀請碼、由管理員建立</td><td>開放自助註冊 + 管理員審核；可在設定中關閉</td><td>無</td><td>中</td></tr>
+<tr><td>☐</td><td>無障礙與鍵盤操作</td><td>手機／桌機操作流暢度仍有進步空間</td><td>ARIA 標籤、焦點管理、Esc 關閉彈窗、對比度檢核、跳至主要內容</td><td>無</td><td>中</td></tr>
+<tr><td>☐</td><td>多語介面（繁中 / 簡中 / 英文）</td><td>若有非中文使用者</td><td>前端字串表 + 語言切換（純手寫、無外部套件）</td><td>是否需要英文／簡中</td><td>大</td></tr>
+<tr><td>☐</td><td>深色主題與列印樣式打磨</td><td>列印與深色下的表格對比可再加強</td><td>深色表格／徽章調整；列印時強制淺色並隱藏操作按鈕</td><td>無</td><td>小</td></tr>
+</table>
+<h3>8.6 P4 — 營運、可觀測與技術債</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">狀態</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">為什麼要做</th><th style="background:#f1f5f9;text-align:left">具體做法</th><th style="background:#f1f5f9;text-align:left">需要你提供</th><th style="background:#f1f5f9;text-align:left">工作量</th></tr>
+<tr><td>☐</td><td>後台統計儀表板</td><td>目前沒有總覽數字</td><td>賽事數、報名人數、活躍使用者、錯誤趨勢、熱門分類統計圖</td><td>無</td><td>中</td></tr>
+<tr><td>☐</td><td>API 分頁與查詢優化</td><td>賽事／報名變多後列表會變慢</td><td>列表分頁、索引檢視、避免重複查詢</td><td>無</td><td>中</td></tr>
+<tr><td>☐</td><td>server.js 拆分為模組</td><td>單檔已超過 2,600 行，維護與測試成本上升</td><td>依領域拆成 routes/ 與 services/，行為不變、每批發一版</td><td>無</td><td>大</td></tr>
+<tr><td>☐</td><td>瀏覽器檢查腳本納入 repo</td><td>目前放在暫存目錄，會被 24 小時閒置清理刪除（今天就發生過）</td><td>移到 tests/browser/ 並在 README 寫用法；保留 v2.7.0～v2.12.2 的回歸腳本</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>海報縮圖與列表載入優化</td><td>大圖會拖慢手機列表</td><td>上傳時產生縮圖、列表延遲載入</td><td>無</td><td>中</td></tr>
+</table>
+<h3>8.7 暫緩或不建議（附理由）</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">決定</th><th style="background:#f1f5f9;text-align:left">理由</th></tr>
+<tr><td>引入前端框架（React / Vue）</td><td>不建議</td><td>與嚴格 CSP（script-src &#x27;self&#x27;）及「純手寫、無外部套件」的既有慣例衝突，目前規模不需要</td></tr>
+<tr><td>用 Supabase Storage 存海報</td><td>不建議</td><td>anon key 無法建立 bucket（已改為存資料庫、由自家端點供應，效果相同）</td></tr>
+<tr><td>對 anon key 開放 RLS policy</td><td>不建議</td><td>等於把資料庫直接暴露給任何拿到金鑰的人（正解見 P0 的 service_role 升級）</td></tr>
+<tr><td>手機原生 App（iOS / Android）</td><td>暫緩</td><td>PWA 已可加入主畫面全螢幕使用；維護兩套程式成本高</td></tr>
+<tr><td>線上繳費 / 金流串接</td><td>暫緩</td><td>需要金流帳號與法遵流程，若无實際收費需求不急</td></tr>
+<tr><td>自動化爬蟲接入外部賽事</td><td>暫緩</td><td>需先確認目標網站條款與資料格式（見第七節第 6 項）</td></tr>
+</table>
+<h3>8.8 我會持續發掘的方向</h3>
+<p>除了上面已列項目，我每次發版都會一併回報新發現並更新本節，來源包括：</p>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">來源</th><th style="background:#f1f5f9;text-align:left">我會注意什麼</th></tr>
+<tr><td>錯誤日誌後台</td><td>反覆出現的錯誤類型、前端裝置相容性問題</td></tr>
+<tr><td>手機實測截圖</td><td>按鈕位置、文字過長、觸控目標、深色對比</td></tr>
+<tr><td>程式碼巡檢</td><td>重複邏輯、缺乏測試的路徑、可簡化處</td></tr>
+<tr><td>你的實際使用</td><td>你提到的每一次「這裡怪怪的」都是最準的需求來源</td></tr>
+<tr><td>使用者規模</td><td>帳號／賽事／報名數成長後的效能與權限邊界</td></tr>
+</table>
+</body></html>
