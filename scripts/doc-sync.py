@@ -34,7 +34,22 @@ def services():
 
 
 def para_text(el):
-    return ''.join(e.get('textRun', {}).get('content', '') for e in el.get('paragraph', {}).get('elements', []))
+    """逐段組合文字；Google Docs 沒有 code 樣式，這裡用「等寬字型」還原成 Markdown 的 `反引號`，
+    讓 dump → 編輯 → upload 的往返不會一直把 `程式碼` 變成普通文字。"""
+    out = []
+    for e in el.get('paragraph', {}).get('elements', []):
+        run = e.get('textRun')
+        if not run:
+            continue
+        text = run.get('content', '')
+        font = (run.get('textStyle', {}).get('weightedFontFamily', {}) or {}).get('fontFamily', '')
+        if text.strip() and re.search(r'courier|mono|consolas|menlo', font, re.I):
+            lead = text[:len(text) - len(text.lstrip())]
+            trail = text[len(text.rstrip()):]
+            out.append(f'{lead}`{text.strip()}`{trail}')
+        else:
+            out.append(text)
+    return ''.join(out)
 
 
 def dump_markdown(doc):

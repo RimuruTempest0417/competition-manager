@@ -10,10 +10,10 @@ blockquote{background:#f8fafc;border-left:4px solid #94a3b8;margin:0 0 18px;padd
 hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <body>
 <h1>🏆 比賽管理系統 — 功能總覽與規劃</h1>
-<p>文件版本：2026-09-25（對應網站 v2.12.2）</p>
+<p>文件版本：2026-09-26（對應網站 v2.13.0）</p>
 <p>線上網址：https://competition-manager-hazel.vercel.app</p>
 <p>程式碼：https://github.com/RimuruTempest0417/competition-manager</p>
-<p>本文件已重新整理：修正原本過時或標示錯誤的狀態、補上 v2.7.0～v2.12.2 的實際完成內容、新增「資料庫 Migration」「版本歷程」「測試方式」「已知限制」與「建議下一步」。</p>
+<p>本文件已重新整理：修正原本過時或標示錯誤的狀態、補上 v2.7.0～v2.13.0 的實際完成內容、新增「資料庫 Migration」「版本歷程」「測試方式」「已知限制」與「建議下一步」。</p>
 <p>狀態用語：已完成／進行中／未開始。</p>
 <h2>一、使用者介面（瀏覽器端）</h2>
 <h3>1.1 檢視與搜尋</h3>
@@ -131,7 +131,8 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>v2.11.1</td><td>安全性修正：cron 端點在未設定 CRON_SECRET 時必須拒絕（不可被任意觸發）</td></tr>
 <tr><td>v2.12.0</td><td>使用者管理（管理員以上可建立與管理帳號、網站擁有者可調整角色）、錯誤日誌修復與強化、推播發送紀錄、帳號安全強化（登入鎖定／停用帳號／最後登入）、漏洞總檢查與 7 項安全修復</td></tr>
 <tr><td>v2.12.1</td><td>密碼儲存安全強化：修正「早期帳號密碼為明碼儲存」，登入時自動升級為 scrypt 雜湊，並提供批次升級腳本與可觀測數量；雜湊實作抽為共用模組 lib/passwords.js</td></tr>
-<tr><td>v2.12.2</td><td>修正「調整他人角色時一點選單就跳確認、權限改不動」：角色下拉原本掛在 click 上，會以舊角色值觸發確認框並送出舊值；改為只處理 change，並新增「真實操作順序」迴歸測試</td></tr>
+<tr><td><strong>v2.12.2</strong></td><td><strong>修正「調整他人角色時一點選單就跳確認、權限改不動」：角色下拉原本掛在 click 上，會以舊角色值觸發確認框並送出舊值；改為只處理 change，並新增「真實操作順序」迴歸測試</strong></td></tr>
+<tr><td><strong>v2.13.0</strong></td><td><strong>資料庫存取安全強化：金鑰改用 service_role（anon → service_role）、健康端點可觀測 <code>db_key_type</code>／<code>rls_ready</code>、新增 RLS 遷移檔與 ROLLBACK 語法、檢查腳本與文件工具進 repo（不再被暫存目錄清理刪除）</strong></td></tr>
 </table>
 <h2>五、測試與驗證方式</h2>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
@@ -143,18 +144,18 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>回歸測試</td><td>每次發版都重跑 v2.7.0／v2.8.0／v2.9.0 的瀏覽器實測，確認舊功能未被破壞。</td></tr>
 <tr><td>線上驗證</td><td>部署後比對線上與本地檔案雜湊、檢查 CSP 與安全標頭、檢查新端點的降級行為。</td></tr>
 <tr><td>手機尺寸實測</td><td>headless Chrome 以 390×844（iPhone 14）與 360×640（iPhone SE） 驗證：橫向溢出、觸控目標高度、彈窗是否超出視窗、輸入框字級、篩選列排版、深色模式。</td></tr>
-<tr><td>目前規模</td><td>npm test 94 項全綠（含 v2.12.1 的密碼雜湊與明碼升級測試）；手機實測 51 項（含 v2.12.2 的「先點選單再選值」真實操作順序、取消回復、提權阻擋、錯誤日誌篩選與標記、推播紀錄、手機版面）；v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗；正式站煙霧測試 70 項全數通過（含靜態檔雜湊與線上一致、CSP 未放寬、PWA 圖示、cron 正確拒絕亂打的權杖、帳號與日誌權限、資料庫已無明碼密碼）。</td></tr>
+<tr><td>目前規模</td><td>npm test <strong>97 項全綠</strong>（v2.13.0 新增 3 項金鑰與 RLS 準備狀態測試）；正式站煙霧測試 <strong>42 項全綠</strong>（<code>tests/browser/prod-smoke.js</code>：版本、安全性標頭、靜態檔雜湊、未登入拒絕、金鑰類型與明碼統計，只讀不寫）；手機實測 <strong>51 項</strong>（含 v2.12.2 的「先點選單再選值」真實操作順序、取消回復、提權阻擋、錯誤日誌篩選與標記、推播紀錄、手機版面）；v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗。</td></tr>
 </table>
 <h2>六、已知限制（誠實說明）</h2>
 <ul><li>~~CRON_SECRET 尚未設定~~ <strong>已設定並驗證</strong>（2026-09-25 實測：未帶權杖回 401、不再是 503），每日自動推播已啟用（Vercel Cron 每日 01:00 UTC ＝ 澳門時間 09:00）。</li></ul>
-<ul><li>資料庫金鑰等級：目前使用 anon key（只存在伺服器端，前端從不直連資料庫）。要更嚴謹應改用 service_role key + 開啟 RLS 與 policy。</li></ul>
+<ul><li>資料庫金鑰等級：<strong>v2.13.0 起改用 service_role key</strong>（只存在伺服器端，前端從不直連資料庫，正式站健康端點回報 <code>db_key_type: service_role</code>）。<strong>RLS 尚未開啟</strong>（下一版執行遷移檔即完成）；開啟後 anon key 將完全無法存取。</li></ul>
 <ul><li>推播的前提：需要 HTTPS（Vercel 已提供）與使用者允許通知權限；iOS Safari 必須先「加入主畫面」再從主畫面開啟才能接收推播（iOS 16.4+），v2.11.0 已在通知設定視窗提供逐步指引。</li></ul>
 <ul><li>推播檢查頻率：伺服器端為 Vercel Cron 每日一次（Hobby 方案限制）；開賽前 24 小時的提醒因此以「每日」為粒度。網頁開啟時的本機檢查仍為每 5 分鐘一次。</li></ul>
 <ul><li>~~資料庫尚未執行 v2.12.0 migration~~ 已執行（v2.12.1 起伺服器回報 severity／resolved 均存在），「停用帳號」「最後登入時間」「日誌標記已處理」全部可用。</li></ul>
 <ul><li>節流與登入鎖定是記憶體計數：部署在 Vercel serverless，多實例時各自計算、重啟歸零。足以阻擋單一來源的腳本濫用，但無法阻擋分散式攻擊。</li></ul>
 <ul><li>公開的隊伍名單：GET /api/competitions/:id/teams 讓任何登入者看到該場隊伍與成員帳號（刻意設計，方便參賽者確認隊伍）；若需更嚴謹可限制為「該場參賽者」。</li></ul>
 <ul><li>部分非帳號端點仍回傳原始錯誤訊息：賽事／報名／隊伍的 500 回應（需登入或管理員權限），優先度較低；細節已完整寫入錯誤日誌。</li></ul>
-<ul><li>電子郵件通知尚未實作：需要外部寄信服務帳號。</li></ul>
+<ul><li>電子郵件通知：<strong>決定不做</strong>（2026-09-25）；通知走站內訊息中心與 Web Push。</li></ul>
 <ul><li>Realtime 即時同步尚未實作：與「前端不直接連資料庫」的現行架構衝突。</li></ul>
 <ul><li>自動化爬蟲尚未實作。</li></ul>
 <h2>七、建議下一步（依優先順序）</h2>
@@ -164,9 +165,9 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>1b</td><td>~~執行 2026-09-25-v2.12.0-user-management.sql~~</td><td>已完成（2026-09-25）。</td></tr>
 <tr><td>1c</td><td>提醒使用者更換在其他網站重複使用的密碼</td><td>密碼曾以明碼儲存於資料庫，系統無法得知是否已外流；已全面升級為雜湊，但若同一組密碼也用於其他網站，仍建議更換。</td></tr>
 <tr><td>2</td><td>在實機上驗證 iOS 推播</td><td>iPhone 用 Safari 開啟 → 分享 → 加入主畫面 → 從主畫面開啟 → 通知設定 → 開啟推播訂閱（目前資料庫已有 2 筆推播訂閱）。</td></tr>
-<tr><td>3</td><td>電子郵件通知 / 訂閱賽事</td><td>以 Resend／SendGrid 免費額度實作：訪客輸入 Email 訂閱分類，新賽事或開賽前自動寄信；可直接掛在現有 cron。</td></tr>
+<tr><td>3</td><td>~~電子郵件通知 / 訂閱賽事~~</td><td><strong>不做</strong>（使用者 2026-09-25 決定）：通知改以站內訊息中心（Roadmap P2）與現有 Web Push 為主。</td></tr>
 <tr><td>4</td><td>過期賽事自動歸檔</td><td>已有 cron 排程，可定期把 date 過久的賽事標記歸檔或清理 push_log。</td></tr>
-<tr><td>5</td><td>升級資料庫金鑰與 RLS policy</td><td>改用 service_role key（僅伺服器端）並為各表加上精確 policy。</td></tr>
+<tr><td>5</td><td>升級資料庫金鑰與 RLS policy（進行中）</td><td>v2.13.0 已完成程式與遷移檔、Vercel 金鑰已生效；<strong>下一版執行 <code>migrations/2026-09-26-v2.13.0-enable-rls.sql</code> 開啟 RLS 並驗證</strong>。</td></tr>
 <tr><td>6</td><td>自動化爬蟲接入外部賽事</td><td>需先確認目標網站條款與格式。</td></tr>
 <tr><td>7</td><td>賽事即時同步（Realtime 或輪詢）</td><td>目前以手動重新載入為主；可先做輕量輪詢。</td></tr>
 </table>
@@ -184,7 +185,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <h3>8.2 P0 — 安全與基礎（建議優先）</h3>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><th style="background:#f1f5f9;text-align:left">狀態</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">為什麼要做</th><th style="background:#f1f5f9;text-align:left">具體做法</th><th style="background:#f1f5f9;text-align:left">需要你提供</th><th style="background:#f1f5f9;text-align:left">工作量</th></tr>
-<tr><td>☐</td><td>資料庫金鑰升級（anon → service_role）並開啟 RLS</td><td>目前 anon key 搭配「RLS 關閉」是最大結構性風險：任何拿到金鑰的人可讀寫全部資料表（含帳號雜湊）</td><td>改用 service_role key（只放 Vercel 環境變數與本機 .env，絕不進前端）→ 為各表開啟 RLS 並建立精確 policy → 驗證前台／cron／腳本皆正常</td><td>Supabase 專案的 service_role key（Settings → API）</td><td>中</td></tr>
+<tr><td>🔄</td><td>資料庫金鑰升級（anon → service_role）並開啟 RLS</td><td>目前 anon key 搭配「RLS 關閉」是最大結構性風險：任何拿到金鑰的人可讀寫全部資料表（含帳號雜湊）</td><td><strong>v2.13.0 已完成前半</strong>：程式支援 service_role（<code>resolveSupabaseKey</code>）、健康端點可看 <code>db_key_type</code>／<code>rls_ready</code>、遷移檔與 ROLLBACK 語法就緒；<strong>Vercel 已加入金鑰且生效</strong>（正式站回報 <code>service_role</code>、<code>rls_ready: true</code>）。<strong>待辦（下一版）</strong>：執行 <code>migrations/2026-09-26-v2.13.0-enable-rls.sql</code> 開啟 RLS 並驗證 anon 被擋下</td><td>已提供 ✅</td><td>中</td></tr>
 <tr><td>☐</td><td>登入鎖定改為「帳號 + IP」雙重計數</td><td>目前以帳號為鍵，別人可惡意連續失敗來鎖住你的帳號</td><td>失敗計數同時記錄 IP；兩者都超過門檻才鎖定；鎖定訊息說明原因</td><td>無</td><td>小</td></tr>
 <tr><td>☐</td><td>管理員以上兩步驟驗證（TOTP）</td><td>管理員權限可改帳號、刪資料，只靠密碼仍嫌薄弱</td><td>以 Node 內建 crypto 手寫 TOTP（不引入外部套件），管理員可自行綁定手機驗證器，附一次性備援碼</td><td>你的手機（Google Authenticator 等）</td><td>中</td></tr>
 <tr><td>☐</td><td>稽核日誌介面強化</td><td>稽核紀錄已寫入但只能瀏覽，事後追查不方便</td><td>加入篩選（人／動作／時間）、匯出 CSV、保留天數清理</td><td>無</td><td>小</td></tr>
@@ -205,10 +206,10 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <h3>8.4 P2 — 通知與溝通</h3>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><th style="background:#f1f5f9;text-align:left">狀態</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">為什麼要做</th><th style="background:#f1f5f9;text-align:left">具體做法</th><th style="background:#f1f5f9;text-align:left">需要你提供</th><th style="background:#f1f5f9;text-align:left">工作量</th></tr>
-<tr><td>☐</td><td>Email 通知</td><td>推播只覆蓋已訂閱且允許通知的人；報名確認與審核結果適合用 Email</td><td>接 Resend／SendGrid 免費額度；報名成功、審核結果、開賽提醒寄信；沿用現有 cron 排程</td><td>寄信服務 API key（免費層即可）與寄件者名稱</td><td>中</td></tr>
+<tr><td>✖</td><td>~~Email 通知~~</td><td>—</td><td><strong>不做</strong>（使用者 2026-09-25 決定）。通知一律走站內 + Web Push。</td><td>—</td><td>—</td></tr>
 <tr><td>☐</td><td>推播時間與事件可設定</td><td>目前固定每日 01:00（UTC）一次，且只有開賽前提醒</td><td>可設定每日發送時間與時區；新增「報名截止前」「開賽前 1 小時」等事件型提醒</td><td>無</td><td>中</td></tr>
 <tr><td>☐</td><td>推播失敗可視與重送</td><td>目前只看得到成功筆數，失敗時不知原因</td><td>push_log 記錄錯誤碼與失敗數；管理端可對失敗項目重送</td><td>無</td><td>小</td></tr>
-<tr><td>☐</td><td>站內公告 / 訊息中心</td><td>重要公告目前只能靠推播或口頭</td><td>管理員可發布公告（可設定對象：全部／管理員／特定分類訂閱者），使用者登入後在訊息中心看到</td><td>無</td><td>中</td></tr>
+<tr><td>☐</td><td>站內公告 / 訊息中心（優先度提高：取代 Email 通知的角色）</td><td>重要公告目前只能靠推播或口頭；既然不做 Email，站內訊息中心更重要</td><td>管理員可發布公告（可設定對象：全部／管理員／特定分類訂閱者），使用者登入後在訊息中心看到</td><td>無</td><td>中</td></tr>
 </table>
 <h3>8.5 P3 — 使用者體驗與資料</h3>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
