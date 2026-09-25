@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.17.0</title>
+    <title>比賽管理系統 v2.18.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -52,7 +52,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2 cm-app-title">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.17.0)</p>
+                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.18.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
@@ -100,6 +100,12 @@
                         <button id="auditLogBtn"
                             class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
                             📜 操作日誌
+                        </button>
+
+                        <!-- 超級管理員/Web Owner 專屬：資料備份與還原（v2.18.0） -->
+                        <button id="backupBtn"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition font-medium">
+                            💾 備份與還原
                         </button>
 
                         <!-- 超級管理員/Web Owner 專屬：錯誤日誌 -->
@@ -759,6 +765,61 @@
                         class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition disabled:opacity-40">較舊 →</button>
                 </div>
                 <button id="closeAuditModalBtn2"
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
+            </div>
+        </div>
+    </div>
+
+<!-- 彈出視窗：資料備份與還原（v2.18.0，超級管理員／網站擁有者） -->
+    <div id="backupModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800">💾 資料備份與還原</h3>
+                <button id="closeBackupModalBtn" class="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto space-y-4 pr-1">
+                <section class="space-y-2">
+                    <h4 class="text-sm font-bold text-slate-700">⬇ 下載備份</h4>
+                    <p class="text-[11px] text-slate-500">
+                        匯出成 JSON 檔（含賽事、報名、隊伍、帳號設定與海報）。備份檔含帳號雜湊與報名個資，請妥善保管、不要上傳到公開的地方。
+                    </p>
+                    <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-600">
+                        <label class="flex items-center gap-1 select-none">
+                            <input type="checkbox" id="backupIncludePosters" class="rounded border-slate-300" checked> 包含海報圖片
+                        </label>
+                        <label class="flex items-center gap-1 select-none">
+                            <input type="checkbox" id="backupIncludeLogs" class="rounded border-slate-300"> 包含稽核／錯誤日誌（檔案較大）
+                        </label>
+                    </div>
+                    <button id="backupDownloadBtn"
+                        class="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition">⬇ 下載備份 JSON</button>
+                </section>
+
+                <section class="space-y-2 border-t pt-3">
+                    <h4 class="text-sm font-bold text-slate-700">♻️ 還原備份</h4>
+                    <p class="text-[11px] text-slate-500">
+                        還原採「有就更新、沒有就新增」（依主鍵 upsert），<b>不會刪除</b>備份中沒有的資料。
+                        還原前一定會先做一次檢查（驗證 checksum 並列出筆數），確認後才會真的寫入。
+                    </p>
+                    <input type="file" id="backupFileInput" accept=".json,application/json"
+                        class="w-full text-[11px] border border-slate-300 rounded p-1.5">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="backupCheckBtn"
+                            class="px-3 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition">🔍 先檢查（不寫入）</button>
+                        <button id="backupRestoreBtn"
+                            class="px-3 py-1.5 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition disabled:opacity-40" disabled>♻️ 確認還原</button>
+                    </div>
+                </section>
+
+                <div id="backupStatus"
+                    class="hidden text-[11px] p-2.5 rounded-lg border bg-slate-50 border-slate-200 text-slate-700 whitespace-pre-wrap"></div>
+                <div id="backupResult" class="hidden text-[11px] space-y-2"></div>
+            </div>
+
+            <div class="flex justify-end pt-3 border-t">
+                <button id="closeBackupModalBtn2"
                     class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
             </div>
         </div>

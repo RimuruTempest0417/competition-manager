@@ -10,3 +10,7 @@ node_modules/
 
 # 忽略日誌檔
 *.log
+
+# 忽略本機備份檔（可能含帳號雜湊與報名個資，絕不可進版控）
+backups/
+cm-backup-*.json

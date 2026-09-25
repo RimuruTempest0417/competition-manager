@@ -1203,6 +1203,238 @@ app.post('/api/audit-logs/cleanup', requireSuperAdmin, async (req, res) => {
 });
 
 // ==========================================
+// 資料備份與還原（v2.18.0）
+// ------------------------------------------
+// 為什麼要做：這個系統唯一的資料安全網是 Supabase 自己。誤刪大量資料（例如手滑按了清理、
+// 或匯入覆蓋）沒有回頭路。備份與還原就是把「回頭路」補上。
+//
+// 設計取捨：
+//   1. 走自家 API（service_role 只在伺服器上）：本機不需要資料庫金鑰，開 RLS 後照樣可用，
+//      也順便讓「誰做了備份／還原」自動進稽核日誌。
+//   2. **匯出順序 = 還原順序**，且以外部鍵相依性排序（competitions 先於 registrations／posters／teams）。
+//   3. 還原採「upsert（有就更新、沒有就新增）」，**不刪除任何備份中沒有的資料**：
+//      刪除是不可逆的，這種事不該由「還原」順手做（要刪有資源回收桶與清理端點）。
+//   4. 備份帶 checksum（tables 內容的 sha256）與每表筆數；還原時會驗證，
+//      檔案被改過就拒絕（除非 --force），避免「以為還原了其實還原了半份壞資料」。
+//   5. 稽核日誌與錯誤日誌**預設不備份**（量大、且已有 CSV 匯出），要用再開。
+// ==========================================
+const BACKUP_TABLES = ['app_settings', 'admin_users', 'competitions', 'competition_posters',
+    'registrations', 'competition_teams', 'push_subscriptions', 'push_log'];
+const BACKUP_LOG_TABLES = ['audit_logs', 'error_logs'];
+const RESTORE_CONFLICT_KEYS = {
+    app_settings: 'key',
+    admin_users: 'id',
+    competitions: 'id',
+    competition_posters: 'competition_id',
+    registrations: 'id',
+    competition_teams: 'id',
+    push_subscriptions: 'endpoint',
+    push_log: 'id',
+    audit_logs: 'id',
+    error_logs: 'id'
+};
+const BACKUP_MAX_ROWS_PER_TABLE = 20000;
+const RESTORE_CHUNK_SIZE = 200;
+
+function resolveBackupTables({ includeLogs = false, includePosters = true, only = null } = {}) {
+    const allowed = BACKUP_TABLES.concat(includeLogs ? BACKUP_LOG_TABLES : []);
+    const chosen = allowed.filter((t) => (includePosters ? true : t !== 'competition_posters'));
+    if (!only) return { tables: chosen, unknown: [] };
+    const requested = only.filter((t) => RESTORE_CONFLICT_KEYS[t]);
+    const unknown = only.filter((t) => !RESTORE_CONFLICT_KEYS[t]);
+    // 只允許匯出「本來就開放的表」，避免有人拿 tables= 去撈別的資料
+    return { tables: chosen.filter((t) => requested.includes(t)), unknown };
+}
+
+// 正規化後的內容檢查碼：表名排序後序列化，因此 JSON 往返（parse→stringify）不會改變結果
+function canonicalTablesJson(tables) {
+    const sorted = {};
+    for (const key of Object.keys(tables || {}).sort()) sorted[key] = tables[key];
+    return JSON.stringify(sorted);
+}
+
+function backupChecksum(tables) {
+    return crypto.createHash('sha256').update(canonicalTablesJson(tables)).digest('hex');
+}
+
+// 驗證備份檔結構與完整性（純函式，方便測試）
+function verifyBackupIntegrity(backup) {
+    if (!backup || typeof backup !== 'object') return { ok: false, reason: '備份內容不是物件' };
+    if (!backup.tables || typeof backup.tables !== 'object') return { ok: false, reason: '缺少 tables 欄位' };
+    if (!backup.meta || typeof backup.meta !== 'object') return { ok: false, reason: '缺少 meta 欄位' };
+    const tableNames = Object.keys(backup.tables);
+    if (tableNames.length === 0) return { ok: false, reason: '備份中沒有任何資料表' };
+    for (const name of tableNames) {
+        if (!RESTORE_CONFLICT_KEYS[name]) return { ok: false, reason: `不認識的資料表：${name}` };
+        if (!Array.isArray(backup.tables[name])) return { ok: false, reason: `${name} 的內容不是陣列` };
+    }
+    const expected = backup.meta.checksum;
+    const actual = backupChecksum(backup.tables);
+    if (expected && expected !== actual) {
+        return { ok: false, reason: 'checksum 不符（檔案可能被修改過）', expected, actual };
+    }
+    return { ok: true, checksum: actual, tables: tableNames.length, checked: Boolean(expected) };
+}
+
+function countBackupRows(tables) {
+    return Object.values(tables || {}).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+}
+
+function chunkRows(rows, size = RESTORE_CHUNK_SIZE) {
+    const out = [];
+    for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+    return out;
+}
+
+// 備份下載（含 meta：版本、時間、每表筆數、checksum）
+app.get('/api/admin/backup', requireSuperAdmin, async (req, res) => {
+    const operator = req.currentUser;
+    try {
+        const includeLogs = req.query.include_logs === 'true';
+        const includePosters = req.query.include_posters !== 'false';
+        const only = req.query.tables ? String(req.query.tables).split(',').map((s) => s.trim()).filter(Boolean) : null;
+        const { tables, unknown } = resolveBackupTables({ includeLogs, includePosters, only });
+
+        const dump = {};
+        const tableMeta = {};
+        const missing = [];
+        const truncated = [];
+        for (const name of tables) {
+            // eslint-disable-next-line no-await-in-loop
+            const { data, error } = await supabase.from(name).select('*').limit(BACKUP_MAX_ROWS_PER_TABLE);
+            if (error) {
+                if (isMissingTableError(error)) { missing.push(name); continue; }
+                throw error;
+            }
+            dump[name] = data || [];
+            tableMeta[name] = { rows: dump[name].length };
+            if (dump[name].length >= BACKUP_MAX_ROWS_PER_TABLE) truncated.push(name);
+        }
+
+        const meta = {
+            app: 'competition-manager',
+            version: require('./package.json').version,
+            generated_at: new Date().toISOString(),
+            generated_by: operator.username,
+            tables: tableMeta,
+            total_rows: countBackupRows(dump),
+            checksum: backupChecksum(dump),
+            skipped: includePosters ? [] : ['competition_posters（本次未包含海報圖片）'],
+            missing_tables: missing,
+            truncated_tables: truncated,
+            unknown_tables: unknown
+        };
+
+        await logAudit(operator.username, 'EXPORT_BACKUP', null, {
+            tables: Object.keys(dump), rows: meta.total_rows, include_logs: includeLogs, include_posters: includePosters
+        }, req.userAgent);
+
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="cm-backup-${meta.generated_at.replace(/[:.]/g, '-')}.json"`);
+        res.json({ meta, tables: dump });
+    } catch (err) {
+        await logErrorToDb(req, 'export_backup_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// 還原（預設只檢查：dry_run=true 不寫任何資料）
+app.post('/api/admin/restore', requireSuperAdmin, async (req, res) => {
+    const operator = req.currentUser;
+    const body = req.body || {};
+    const backup = body.backup;
+    const dryRun = body.dry_run === true;
+    const force = body.force === true;
+    const only = Array.isArray(body.tables) && body.tables.length ? body.tables : null;
+
+    try {
+        const integrity = verifyBackupIntegrity(backup);
+        if (!integrity.ok && !force) {
+            return res.status(400).json({ success: false, error: `備份檔驗證失敗：${integrity.reason}`, integrity });
+        }
+
+        if (!dryRun && body.confirm !== 'RESTORE') {
+            return res.status(400).json({
+                success: false,
+                error: '還原需要明確確認：請在請求中帶入 confirm: "RESTORE"（介面會先做一次檢查再讓你確認）'
+            });
+        }
+
+        const plan = [];
+        for (const name of Object.keys(RESTORE_CONFLICT_KEYS)) {
+            const rows = backup.tables ? backup.tables[name] : null;
+            if (!Array.isArray(rows) || rows.length === 0) continue;
+            if (only && !only.includes(name)) continue;
+            plan.push({ table: name, rows: rows.length, conflict_key: RESTORE_CONFLICT_KEYS[name] });
+        }
+        const totalRows = plan.reduce((s, p) => s + p.rows, 0);
+
+        if (plan.length === 0) {
+            return res.json({ success: true, restored: 0, plan: [], dry_run: dryRun, message: '備份中沒有可還原的資料' });
+        }
+
+        if (dryRun) {
+            await logAudit(operator.username, 'RESTORE_BACKUP_DRY_RUN', null, { plan, force }, req.userAgent);
+            return res.json({
+                success: true, dry_run: true, plan, would_restore: totalRows,
+                integrity,
+                message: `檢查完成：將還原 ${plan.length} 張表、共 ${totalRows} 筆（未寫入任何資料）`
+            });
+        }
+
+        const perTable = {};
+        const failures = [];
+        for (const item of plan) {
+            const rows = backup.tables[item.table];
+            let done = 0;
+            for (const batch of chunkRows(rows)) {
+                // eslint-disable-next-line no-await-in-loop
+                const { error } = await supabase
+                    .from(item.table)
+                    // 注意：supabase-js 的選項名是 camelCase 的 onConflict（不是 PostgREST 的 on_conflict 參數名），
+                    // 寫錯會靜默退回「以主鍵為衝突目標」，遇到主鍵≠唯一鍵的表（如 push_subscriptions）就會撞 23505。
+                    .upsert(batch, { onConflict: RESTORE_CONFLICT_KEYS[item.table] });
+                if (error) {
+                    failures.push({ table: item.table, error: error.message || String(error) });
+                    break;
+                }
+                done += batch.length;
+            }
+            perTable[item.table] = done;
+        }
+
+        const restored = Object.values(perTable).reduce((s, n) => s + n, 0);
+        await logAudit(operator.username, 'RESTORE_BACKUP', null, {
+            restored, per_table: perTable, failures, force, backup_meta: {
+                generated_at: backup.meta && backup.meta.generated_at,
+                version: backup.meta && backup.meta.version,
+                total_rows: backup.meta && backup.meta.total_rows
+            }
+        }, req.userAgent);
+
+        if (failures.length) {
+            await logErrorToDb(req, 'restore_backup_partial_failure', new Error(
+                `還原未完全成功：${failures.map((f) => f.table).join('、')}`
+            ), { severity: 'error', context: { failures, perTable } });
+        }
+
+        res.json({
+            success: failures.length === 0,
+            restored,
+            per_table: perTable,
+            failures,
+            integrity,
+            message: failures.length
+                ? `已還原 ${restored} 筆，但有 ${failures.length} 張表失敗（詳見 failures）`
+                : `已還原 ${restored} 筆（有就更新、沒有就新增；未刪除任何既有資料）`
+        });
+    } catch (err) {
+        await logErrorToDb(req, 'restore_backup_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// ==========================================
 // 管理員帳號維護 API
 // ==========================================
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
@@ -3396,6 +3628,10 @@ module.exports = app;
 // 供單元測試使用的內部函式（Vercel 只取 app 本身，掛額外屬性不影響部署）。
 // 測試時請設 NODE_ENV=production，這樣 require 本檔才不會真的 app.listen 佔用 port。
 app.__test__ = {
+    verifyBackupIntegrity,
+    backupChecksum,
+    resolveBackupTables,
+    chunkRows,
     parseResolveIds,
     parseAuditFilters,
     auditMatchesQuery,

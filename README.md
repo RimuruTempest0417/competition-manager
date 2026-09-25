@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.17.0
+# 🏆 比賽管理系統 (Competition Manager) v2.18.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -172,6 +172,17 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.18.0 (2026-09-26) - 資料備份與還原
+
+- **問題**：系統唯一的資料安全網是 Supabase 自己。誤刪賽事或報名資料（手滑按了清理、匯入覆蓋）沒有回頭路。
+- **本版做了什麼**：
+  - `GET /api/admin/backup`：一次匯出全部核心表（賽事、報名、隊伍、海報、帳號、設定、推播）成 JSON，附 **meta（版本、時間、每表筆數）與 sha256 checksum**；可用 `include_logs`／`include_posters`／`tables=` 挑選。
+  - `npm run backup`：本機一鍵備份（走自家 API，不需資料庫金鑰），預設存到 `backups/` 並**自動保留最近 20 份**（`--keep` 可調）；`backups/` 已加入 `.gitignore`（備份含帳號雜湊與報名個資，絕不可進版控）。
+  - 介面「💾 備份與還原」：下載備份（可勾選是否含海報圖片／日誌）、上傳備份還原（**強制先做一次檢查**，畫面列出每張表將還原幾筆）。
+  - `npm run restore -- --file <備份> [--dry-run]`：先檢查再還原；`--tables=` 可只還原部分表。
+  - 還原語意：**upsert（有就更新、沒有就新增）、不刪除任何備份中沒有的資料**；沒有明確 `confirm` 一律拒絕；checksum 不符預設拒絕（`--force` 覆寫）；某張表失敗會誠實回報 partial failure 並寫入錯誤日誌。
+- **驗證**：`npm test` 156 項全綠（新增備份／還原 API 12 項＋部分失敗 1 項；含「dry-run 不可改動資料」「備份中沒有的資料不可被刪除」「upsert 用對主鍵」等關鍵斷言）；`npm run check:browser` 新增 22 項（真實 Chrome：下載的 JSON 內容與 checksum、檢查後才可按還原、還原真的生效、被改過的備份被拒絕）。
 
 ### v2.17.0 (2026-09-26) - 每次更新自動「讀取錯誤日誌 → 標記已處理」
 

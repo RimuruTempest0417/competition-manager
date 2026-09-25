@@ -31,7 +31,8 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('node:child_process');
-const jwt = require('jsonwebtoken');
+// v2.18.0：讀 .env 與簽權杖改用共用工具（scripts/lib/cm-api.js），避免三支腳本各寫一份
+const { loadEnv, ownerToken: signOwnerToken } = require('./lib/cm-api');
 
 const ROOT = path.join(__dirname, '..');
 const MD_PATH = path.join(ROOT, 'docs', '功能總覽與規劃.md');
@@ -53,18 +54,7 @@ const RESOLVE = !flag('--no-resolve');
 const RESOLVE_CHUNK = 500;
 const NOW = Date.now();
 
-/* ---------- 讀取設定 ---------- */
-function loadEnv() {
-    const envPath = path.join(ROOT, '.env');
-    const env = { ...process.env };
-    if (fs.existsSync(envPath)) {
-        for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
-            const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-            if (m && !env[m[1]]) env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '');
-        }
-    }
-    return env;
-}
+/* ---------- 讀取設定（loadEnv 由 scripts/lib/cm-api.js 提供） ---------- */
 
 /* ---------- 分類規則（純資料，方便測試與調整） ---------- */
 const RULES = [
@@ -238,20 +228,13 @@ function replaceSection(md, sectionText) {
 /* ---------- 身分（標記已處理時會記在 resolved_by 與稽核日誌） ---------- */
 const resolveIdentity = process.env.TRIAGE_USERNAME || 'rimuru';
 
-/* ---------- 取得權杖 ---------- */
+/* ---------- 取得權杖（共用工具；仍支援 --token 覆寫） ---------- */
 function ownerToken(env) {
-    const explicit = opt('--token', '');
-    if (explicit) return explicit;
-    if (!env.JWT_SECRET) return '';
-    return jwt.sign({
-        sub: Number(env.TRIAGE_USER_ID || 1),
-        username: env.TRIAGE_USERNAME || 'rimuru',
-        role: env.TRIAGE_ROLE || 'web_owner'
-    }, env.JWT_SECRET, { expiresIn: '10m' });
+    return signOwnerToken(env, { token: opt('--token', '') });
 }
 
 async function main() {
-    const env = loadEnv();
+    const env = loadEnv(ROOT);
     const token = ownerToken(env);
     if (!token) {
         console.error('❌ 找不到 JWT_SECRET（請確認 .env），也沒有用 --token 指定權杖');

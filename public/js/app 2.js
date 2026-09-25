@@ -692,13 +692,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('navMenuBtn')?.addEventListener('click', toggleNavDropdown);
     document.getElementById('menuBugReport')?.addEventListener('click', () => { openBugReportModal(); closeNavDropdown(); });
     document.getElementById('auditLogBtn')?.addEventListener('click', () => { openAuditLogModal(); closeNavDropdown(); });
-    // v2.18.0：資料備份與還原（放在這裡而不是 bindErrorLogControls：那個函式只在開啟錯誤日誌視窗時才會跑）
-    document.getElementById('backupBtn')?.addEventListener('click', () => { openBackupModal(); closeNavDropdown(); });
-    document.getElementById('closeBackupModalBtn')?.addEventListener('click', closeBackupModal);
-    document.getElementById('closeBackupModalBtn2')?.addEventListener('click', closeBackupModal);
-    document.getElementById('backupDownloadBtn')?.addEventListener('click', downloadBackup);
-    document.getElementById('backupCheckBtn')?.addEventListener('click', () => runRestoreFromFile(false));
-    document.getElementById('backupRestoreBtn')?.addEventListener('click', () => runRestoreFromFile(true));
     // v2.16.0：稽核日誌篩選／分頁／匯出／清理
     document.getElementById('auditSearchBtn')?.addEventListener('click', () => loadAuditLogs(readAuditFiltersFromUi()));
     document.getElementById('auditSearchInput')?.addEventListener('keydown', (e) => {
@@ -1042,11 +1035,11 @@ function focusCompetitionCard(compId) {
 // 只要有分支漏寫（例如訪客分支忘了隱藏 CSV 按鈕），登出後就會殘留管理員功能。
 const CM_MENU_PERMISSIONS = {
     guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false },
-    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false },
-    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false },
-    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false },
-    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true },
-    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true }
+    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false },
+    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true },
+    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true },
+    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true }
 };
 
 function applyMenuVisibility(role) {
@@ -1061,8 +1054,7 @@ function applyMenuVisibility(role) {
         ['createSection', perm.create],
         ['myRegsBtn', perm.myRegs],
         ['changePwdBtn', perm.changePwd],
-        ['twoFactorBtn', perm.twoFactor],
-        ['backupBtn', perm.backup]
+        ['twoFactorBtn', perm.twoFactor]
     ];
     map.forEach(([id, visible]) => {
         const el = document.getElementById(id);
@@ -3220,142 +3212,6 @@ function getActionBadgeStyle(action) {
         case 'DELETE_COMPETITION': return 'bg-amber-100 text-amber-700 border-amber-300';
         case 'RESTORE_COMPETITION': return 'bg-emerald-100 text-emerald-700 border-emerald-300';
         default: return 'bg-slate-100 text-slate-700 border-slate-300';
-    }
-}
-
-/* v2.18.0：資料備份與還原
-   - 下載備份：走自家 API（權杖在標頭，所以不能用 window.open，要用 fetch + Blob）
-   - 還原：一定要先「檢查」（dry-run，驗 checksum、列筆數），確認後才會真的寫入
-   - 還原是 upsert（有就更新、沒有就新增），**不會刪除**備份中沒有的資料 */
-let lastRestoreCheck = null;   // { signature, plan }：只允許還原「剛剛檢查過的同一個檔案」
-
-function openBackupModal() {
-    document.getElementById('backupModal').classList.remove('hidden');
-    document.getElementById('backupStatus').classList.add('hidden');
-    document.getElementById('backupResult').classList.add('hidden');
-    document.getElementById('backupRestoreBtn').disabled = true;
-    lastRestoreCheck = null;
-}
-
-function closeBackupModal() {
-    document.getElementById('backupModal').classList.add('hidden');
-}
-
-function setBackupStatus(text, tone = 'info') {
-    const el = document.getElementById('backupStatus');
-    const tones = {
-        info: 'bg-slate-50 border-slate-200 text-slate-700',
-        ok: 'bg-emerald-50 border-emerald-200 text-emerald-800',
-        warn: 'bg-amber-50 border-amber-200 text-amber-900',
-        error: 'bg-red-50 border-red-200 text-red-800'
-    };
-    el.className = `text-[11px] p-2.5 rounded-lg border whitespace-pre-wrap ${tones[tone] || tones.info}`;
-    el.textContent = text;
-    el.classList.remove('hidden');
-}
-
-async function downloadBackup() {
-    const btn = document.getElementById('backupDownloadBtn');
-    const includePosters = document.getElementById('backupIncludePosters').checked;
-    const includeLogs = document.getElementById('backupIncludeLogs').checked;
-    btn.disabled = true;
-    try {
-        setBackupStatus('正在產生備份…（資料量較大時需要幾秒）');
-        const params = new URLSearchParams();
-        if (includeLogs) params.set('include_logs', 'true');
-        if (!includePosters) params.set('include_posters', 'false');
-
-        const res = await customFetch('/api/admin/backup' + (params.toString() ? '?' + params.toString() : ''));
-        if (!res.ok) throw new Error('備份失敗（HTTP ' + res.status + '）');
-        const text = await res.text();
-        const meta = JSON.parse(text).meta || {};
-
-        const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `cm-backup-${String(meta.generated_at || new Date().toISOString()).replace(/[:.]/g, '-')}.json`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 30000);
-
-        const tableLines = Object.entries(meta.tables || {}).map(([name, info]) => `  • ${name}：${info.rows} 筆`);
-        setBackupStatus(`✅ 已下載備份（共 ${meta.total_rows} 筆，checksum ${String(meta.checksum).slice(0, 12)}…）\n${tableLines.join('\n')}`, 'ok');
-    } catch (err) {
-        setBackupStatus('❌ ' + err.message, 'error');
-    } finally {
-        btn.disabled = false;
-    }
-}
-
-async function readBackupFileText() {
-    const input = document.getElementById('backupFileInput');
-    const file = input.files && input.files[0];
-    if (!file) throw new Error('請先選擇備份檔（.json）');
-    return { name: file.name, text: await file.text() };
-}
-
-// dryRun=false 才會真的寫入；`text` 可直接傳入（瀏覽器檢查用同一個函式）
-async function runRestoreFromText(text, dryRun, label = '') {
-    let backup;
-    try {
-        backup = JSON.parse(text);
-    } catch (err) {
-        throw new Error('備份檔不是有效的 JSON');
-    }
-    const resultEl = document.getElementById('backupResult');
-    const res = await customFetch('/api/admin/restore', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(dryRun ? { backup, dry_run: true } : { backup, confirm: 'RESTORE' })
-    });
-    const data = await apiResult(res);
-
-    if (dryRun) {
-        lastRestoreCheck = { signature: `${label}|${text.length}|${backup.meta && backup.meta.checksum}`, plan: data.plan };
-        renderRestoreResult(data, true);
-        document.getElementById('backupRestoreBtn').disabled = false;
-        setBackupStatus(`🔍 檢查完成：將還原 ${(data.plan || []).length} 張表、共 ${data.would_restore} 筆。確認無誤請按「確認還原」。（尚未寫入任何資料）`, 'warn');
-    } else {
-        renderRestoreResult(data, false);
-        document.getElementById('backupRestoreBtn').disabled = true;
-        lastRestoreCheck = null;
-        setBackupStatus(data.success ? `✅ ${data.message}` : `⚠️ ${data.message}`, data.success ? 'ok' : 'error');
-    }
-    return data;
-}
-
-function renderRestoreResult(data, dryRun) {
-    const el = document.getElementById('backupResult');
-    const rows = (data.plan || []).map((item) => `
-        <tr class="border-b">
-            <td class="py-1 pr-3 font-mono">${escapeHtml(item.table)}</td>
-            <td class="py-1 pr-3 text-right">${item.rows}</td>
-            <td class="py-1 pr-3 font-mono text-slate-500">${escapeHtml(item.conflict_key)}</td>
-            ${dryRun ? '' : `<td class="py-1 text-right ${data.per_table && data.per_table[item.table] === item.rows ? 'text-emerald-700' : 'text-red-600'}">${data.per_table ? data.per_table[item.table] : 0}</td>`}
-        </tr>`).join('');
-    el.innerHTML = `
-        <p class="font-bold text-slate-700">${dryRun ? '將還原的內容' : '還原結果'}</p>
-        <table class="w-full text-slate-600">
-            <thead><tr class="border-b text-slate-500">
-                <th class="text-left py-1 pr-3">資料表</th><th class="text-right py-1 pr-3">筆數</th>
-                <th class="text-left py-1 pr-3">主鍵</th>${dryRun ? '' : '<th class="text-right py-1">已還原</th>'}
-            </tr></thead>
-            <tbody>${rows}</tbody>
-        </table>`;
-    el.classList.remove('hidden');
-}
-
-async function runRestoreFromFile(confirm) {
-    try {
-        const file = await readBackupFileText();
-        if (confirm) {
-            if (!lastRestoreCheck) throw new Error('請先按「先檢查（不寫入）」確認內容');
-            if (!confirm('確定要還原這份備份嗎？\n\n還原會依主鍵更新或新增資料（不會刪除既有資料）。')) return;
-        }
-        await runRestoreFromText(file.text, !confirm, file.name);
-    } catch (err) {
-        setBackupStatus('❌ ' + err.message, 'error');
     }
 }
 
