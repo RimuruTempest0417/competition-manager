@@ -3308,15 +3308,12 @@ function renderAuditPage(data) {
     }
     summaryEl.textContent = summary;
 
-    auditQuery.offset = data.offset;
     pageInfoEl.textContent = `第 ${Math.floor(data.offset / AUDIT_PAGE_SIZE) + 1} 頁`;
     document.getElementById('auditPrevBtn').disabled = data.offset <= 0;
     document.getElementById('auditNextBtn').disabled = !data.has_more;
 }
 
 async function loadAuditLogs(extra = {}) {
-    // 目前條件以伺服器回傳的 filters／offset 為準（分頁才不會用到舊條件）
-    auditQuery = Object.assign({}, auditQuery, extra);
     const listEl = document.getElementById('auditLogList');
     listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入日誌中...</p>';
     try {

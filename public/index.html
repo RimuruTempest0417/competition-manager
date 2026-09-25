@@ -710,8 +710,54 @@
                 </h3>
                 <button id="closeAuditModalBtn" class="text-slate-400 hover:text-slate-600">✕</button>
             </div>
+            <!-- v2.16.0：篩選列（使用者／動作／時間區間）＋匯出＋保留天數清理 -->
+            <div class="flex flex-wrap items-center gap-2 text-[11px]">
+                <input type="search" id="auditSearchInput" placeholder="搜尋使用者／動作／目標／詳情…"
+                    class="flex-1 min-w-[10rem] px-2.5 py-1.5 border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500">
+                <select id="auditActionSelect" class="px-2 py-1.5 border border-slate-300 rounded focus:outline-none">
+                    <option value="">全部動作</option>
+                </select>
+                <label class="flex items-center gap-1 text-slate-600">從
+                    <input type="date" id="auditDateFrom" class="px-2 py-1.5 border border-slate-300 rounded">
+                </label>
+                <label class="flex items-center gap-1 text-slate-600">到
+                    <input type="date" id="auditDateTo" class="px-2 py-1.5 border border-slate-300 rounded">
+                </label>
+                <button id="auditSearchBtn"
+                    class="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition">🔍 查詢</button>
+                <button id="auditClearBtn"
+                    class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition">清除條件</button>
+                <button id="auditExportBtn"
+                    class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition">⬇ 匯出 CSV</button>
+                <button id="auditCleanupBtn"
+                    class="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded transition">🧹 清理舊紀錄</button>
+            </div>
+
+            <div id="auditCleanupPanel" class="hidden text-[11px] bg-amber-50 border border-amber-200 rounded-lg p-2.5 space-y-2">
+                <p class="text-amber-900">保留最近幾天的紀錄？較舊的會被永久刪除（最少 30 天）。</p>
+                <div class="flex flex-wrap items-center gap-2">
+                    <input type="number" id="auditRetentionDays" value="365" min="30" max="3650"
+                        class="w-24 px-2 py-1.5 border border-amber-300 rounded">
+                    <button id="auditCleanupPreviewBtn"
+                        class="px-2.5 py-1.5 bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 rounded transition">先看會刪幾筆</button>
+                    <button id="auditCleanupRunBtn"
+                        class="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded transition disabled:opacity-50" disabled>確認刪除</button>
+                    <button id="auditCleanupCancelBtn"
+                        class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition">取消</button>
+                </div>
+                <p id="auditCleanupResult" class="text-amber-900"></p>
+            </div>
+
+            <div id="auditLogSummary" class="text-[11px] text-slate-500"></div>
             <div id="auditLogList" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs"></div>
-            <div class="flex justify-end pt-3 border-t">
+            <div class="flex items-center justify-between gap-2 pt-3 border-t">
+                <div class="flex items-center gap-2 text-[11px]">
+                    <button id="auditPrevBtn"
+                        class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition disabled:opacity-40">← 較新</button>
+                    <span id="auditPageInfo" class="text-slate-500"></span>
+                    <button id="auditNextBtn"
+                        class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition disabled:opacity-40">較舊 →</button>
+                </div>
                 <button id="closeAuditModalBtn2"
                     class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
             </div>

@@ -872,19 +872,242 @@ app.get('/api/admin/push-logs', requireAdmin, async (req, res) => {
 // ==========================================
 // 審計日誌 API
 // ==========================================
+// ==========================================
+// 稽核日誌（v2.16.0：篩選、分頁、CSV 匯出、保留天數清理）
+// ------------------------------------------
+// 為什麼要強化：稽核紀錄一直有在寫，但以前只能看最近 100 筆、不能篩選也不能匯出，
+// 出事後要追「某個人某段時間做了什麼」幾乎不可能。
+//
+// 設計取捨：
+//   - 時間區間用 `gt.created_at` / `lt.created_at`（字串比較對 ISO 時間正確），
+//     這樣假 Supabase 也能完整測到，不必依賴 gte/lte。
+//   - 關鍵字搜尋（q）在伺服器端以「最近 AUDIT_SEARCH_WINDOW 筆」為範圍做 JS 篩選：
+//     PostgREST 的 or() 在測試替身不支援，且稽核量不大，用固定視窗確定性最好（畫面上會標示範圍）。
+//   - 總數用 count: 'exact'（正式站拿得到）；拿不到時退回「至少 N 筆、可能還有更多」的誠實說法。
+// ==========================================
+const AUDIT_SEARCH_WINDOW = 1000;
+const AUDIT_EXPORT_MAX = 5000;
+const AUDIT_MIN_RETENTION_DAYS = 30;
+
+// 已知動作的中文名稱（目的是讓下拉選單好讀；未知動作一律原樣顯示，新動作不用改程式）
+const AUDIT_ACTION_LABELS = {
+    LOGIN_SUCCESS: '登入成功',
+    LOGIN_FAILED: '登入失敗',
+    LOGIN_DENIED_INACTIVE: '已停用帳號嘗試登入',
+    LOGIN_2FA_CHALLENGE: '登入要求兩步驟驗證',
+    LOGIN_2FA_FAILED: '兩步驟驗證失敗',
+    LOGOUT: '登出',
+    CHANGE_PASSWORD: '修改密碼',
+    PASSWORD_HASH_UPGRADED: '密碼升級為雜湊',
+    CREATE_COMPETITION: '建立賽事',
+    UPDATE_COMPETITION: '更新賽事',
+    DELETE_COMPETITION: '刪除賽事（可還原）',
+    PERMANENT_DELETE_COMPETITION: '永久刪除賽事',
+    RESTORE_COMPETITION: '還原賽事',
+    CREATE_USER: '建立帳號',
+    UPDATE_USER: '更新帳號',
+    DELETE_USER: '刪除帳號',
+    CREATE_TEAM: '建立隊伍',
+    UPDATE_TEAM: '更新隊伍',
+    DELETE_TEAM: '刪除隊伍',
+    ASSIGN_TEAM_MEMBER: '編排隊伍成員',
+    REGISTER_COMPETITION: '報名賽事',
+    CANCEL_REGISTRATION: '取消報名',
+    SEND_PUSH: '發送推播',
+    PURGE_AUDIT_LOGS: '清理稽核日誌',
+    '2FA_SETUP_STARTED': '開始設定兩步驟驗證',
+    '2FA_ENABLED': '啟用兩步驟驗證',
+    '2FA_DISABLED': '停用兩步驟驗證',
+    '2FA_RESET_BY_ADMIN': '管理員重設兩步驟驗證',
+    '2FA_RECOVERY_CODE_USED': '使用備援碼登入'
+};
+
+const auditActionLabel = (action) => AUDIT_ACTION_LABELS[action] || action || '（未知）';
+
+// 純函式：把查詢字串整理成安全的篩選條件（可單元測試，不碰資料庫）
+function parseAuditFilters(query = {}) {
+    const clampInt = (value, min, max, dflt) => {
+        const n = Number.parseInt(value, 10);
+        if (!Number.isFinite(n)) return dflt;
+        return Math.min(Math.max(n, min), max);
+    };
+    const asIso = (value) => {
+        if (!value) return null;
+        const raw = String(value).trim();
+        if (!raw) return null;
+        // 接受 YYYY-MM-DD（當天 00:00）或完整 ISO；其他一律忽略
+        const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+        const parsed = new Date(dateOnly ? `${raw}T00:00:00.000Z` : raw);
+        if (Number.isNaN(parsed.getTime())) return null;
+        return parsed.toISOString();
+    };
+    return {
+        limit: clampInt(query.limit, 1, 500, 100),
+        offset: clampInt(query.offset, 0, 1_000_000, 0),
+        q: String(query.q || '').trim().slice(0, 120),
+        username: String(query.username || '').trim().slice(0, 64),
+        action: String(query.action || '').trim().slice(0, 64),
+        from: asIso(query.from),
+        to: asIso(query.to)
+    };
+}
+
+// 關鍵字比對（純函式）：同時比對使用者、動作、目標與詳情
+function auditMatchesQuery(log, q) {
+    if (!q) return true;
+    const needle = String(q).toLowerCase();
+    return ['user_id', 'action', 'target_id', 'details']
+        .some((field) => String(log?.[field] ?? '').toLowerCase().includes(needle));
+}
+
+function auditLogsToCsvRows(logs) {
+    const rows = [['時間', '使用者', '動作', '動作說明', '目標', '詳情', '來源 IP／裝置']];
+    for (const log of logs || []) {
+        let details = '';
+        if (log.details !== null && log.details !== undefined) {
+            details = typeof log.details === 'object' ? JSON.stringify(log.details) : String(log.details);
+        }
+        rows.push([
+            log.created_at ? new Date(log.created_at).toISOString() : '',
+            log.user_id || '',
+            log.action || '',
+            auditActionLabel(log.action),
+            log.target_id || '',
+            details,
+            log.user_agent || ''
+        ]);
+    }
+    return rows;
+}
+
 app.get('/api/audit-logs', requireSuperAdmin, async (req, res) => {
     try {
-        const { data, error } = await supabase
-            .from('audit_logs')
-            .select('*')
+        const f = parseAuditFilters(req.query);
+
+        let query = supabase.from('audit_logs').select('*', { count: 'exact' });
+        if (f.username) query = query.eq('user_id', f.username);
+        if (f.action) query = query.eq('action', f.action);
+        if (f.from) query = query.gt('created_at', f.from);
+        if (f.to) query = query.lt('created_at', f.to);
+
+        // 一律從第 0 筆取到「本頁結尾 + 1」再自己在 JS 切頁：
+        // 正式站 PostgREST 會依 range 回傳、測試替身則回全部，這樣寫兩種環境行為完全一致，
+        // has_more 與分頁才不會因為環境不同而算錯（有人問過為什麼不直接用 range(offset, …)——就是這個原因）。
+        const useSearch = Boolean(f.q);
+        const windowSize = useSearch
+            ? AUDIT_SEARCH_WINDOW
+            : Math.min(f.offset + f.limit + 1, AUDIT_EXPORT_MAX);
+
+        const { data, error, count } = await query
             .order('created_at', { ascending: false })
-            .limit(100);
+            .range(0, windowSize - 1);
 
         if (error) throw error;
-        res.json(data || []);
+
+        const window = (data || []).slice(0, windowSize);
+        const filtered = useSearch ? window.filter((log) => auditMatchesQuery(log, f.q)) : window;
+        const page = filtered.slice(f.offset, f.offset + f.limit);
+        const hasMore = filtered.length > f.offset + f.limit;
+
+        // 下拉選單用的動作清單：已知動作 + 這次結果中出現的未知動作
+        const seen = new Set(window.map((l) => l.action).filter(Boolean));
+        const actions = Object.keys(AUDIT_ACTION_LABELS)
+            .concat([...seen].filter((a) => !AUDIT_ACTION_LABELS[a]))
+            .sort()
+            .map((value) => ({ value, label: auditActionLabel(value) }));
+
+        res.json({
+            success: true,
+            logs: page,
+            returned: page.length,
+            limit: f.limit,
+            offset: f.offset,
+            has_more: hasMore,
+            total: count === null || count === undefined ? null : count,
+            search_window: useSearch ? AUDIT_SEARCH_WINDOW : null,
+            search_matches: useSearch ? filtered.length : null,
+            filters: f,
+            actions
+        });
     } catch (err) {
         await logErrorToDb(req, 'fetch_audit_logs_error', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// CSV 匯出（套用同一組篩選；表格公式注入防護由 CMCSV.stringify 負責）
+app.get('/api/audit-logs/export', requireSuperAdmin, async (req, res) => {
+    try {
+        const f = parseAuditFilters(Object.assign({}, req.query, { limit: AUDIT_EXPORT_MAX, offset: 0 }));
+
+        let query = supabase.from('audit_logs').select('*');
+        if (f.username) query = query.eq('user_id', f.username);
+        if (f.action) query = query.eq('action', f.action);
+        if (f.from) query = query.gt('created_at', f.from);
+        if (f.to) query = query.lt('created_at', f.to);
+
+        const fetchLimit = f.q ? AUDIT_SEARCH_WINDOW : AUDIT_EXPORT_MAX;
+        const { data, error } = await query
+            .order('created_at', { ascending: false })
+            .range(0, fetchLimit - 1);
+        if (error) throw error;
+
+        const filtered = (data || []).filter((log) => auditMatchesQuery(log, f.q)).slice(0, AUDIT_EXPORT_MAX);
+        const csv = CMCSV.stringify(auditLogsToCsvRows(filtered), { bom: true });
+
+        await logAudit(req.currentUser.username, 'EXPORT_AUDIT_LOGS', null, {
+            count: filtered.length,
+            filters: { q: f.q || null, username: f.username || null, action: f.action || null, from: f.from, to: f.to }
+        }, req.userAgent);
+
+        const stamp = new Date().toISOString().slice(0, 10);
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="audit-logs-${stamp}.csv"`);
+        res.send(csv);
+    } catch (err) {
+        await logErrorToDb(req, 'export_audit_logs_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// 保留天數清理（需要 super_admin／web_owner；dry_run 可先預覽筆數）
+app.post('/api/audit-logs/cleanup', requireSuperAdmin, async (req, res) => {
+    try {
+        const requested = Number.parseInt(req.body?.days, 10);
+        const days = Number.isFinite(requested) ? requested : 365;
+        if (days < AUDIT_MIN_RETENTION_DAYS) {
+            return res.status(400).json({
+                error: `為了安全，保留天數不得少於 ${AUDIT_MIN_RETENTION_DAYS} 天（避免一時手誤刪掉所有稽核紀錄）`
+            });
+        }
+
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+        if (req.body?.dry_run === true) {
+            const { data, error } = await supabase.from('audit_logs').select('id').lt('created_at', cutoff);
+            if (error) throw error;
+            return res.json({ success: true, dry_run: true, would_delete: (data || []).length, cutoff, days });
+        }
+
+        const { data, error } = await supabase
+            .from('audit_logs')
+            .delete({ count: 'exact' })
+            .lt('created_at', cutoff)
+            .select('id');   // 要 select 才會回傳被刪除的列，才知道刪了幾筆
+        if (error) throw error;
+
+        const deleted = Array.isArray(data) ? data.length : 0;
+        await logAudit(req.currentUser.username, 'PURGE_AUDIT_LOGS', null, { days, cutoff, deleted }, req.userAgent);
+        // 要 await：不然回應送出時這筆警告可能還沒落地，事後就查不到了
+        await logErrorToDb(req, 'audit_logs_purged', new Error(
+            `稽核日誌清理：刪除 ${deleted} 筆早於 ${cutoff} 的紀錄（保留 ${days} 天）`), {
+            severity: 'warn', context: { days, deleted }
+        });
+
+        res.json({ success: true, deleted, cutoff, days });
+    } catch (err) {
+        await logErrorToDb(req, 'cleanup_audit_logs_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
     }
 });
 
@@ -2849,6 +3072,26 @@ app.get('/api/cron/reminders', async (req, res) => {
 
     try {
         const result = await runPushDigest(new Date());
+        // v2.16.0：稽核日誌保留天數清理（**預設不啟用**：只有設了 AUDIT_RETENTION_DAYS 才會刪東西）
+        result.audit_purged = null;   // 欄位固定存在，未啟用時明確回 null
+        const retention = Number.parseInt(process.env.AUDIT_RETENTION_DAYS, 10);
+        if (Number.isFinite(retention) && retention >= AUDIT_MIN_RETENTION_DAYS) {
+            const cutoff = new Date(Date.now() - retention * 24 * 60 * 60 * 1000).toISOString();
+            const { data: purged, error: purgeError } = await supabase
+                .from('audit_logs')
+                .delete({ count: 'exact' })
+                .lt('created_at', cutoff)
+                .select('id');
+            if (purgeError) {
+                await logErrorToDb(req, 'cron_audit_retention_error', purgeError);
+                result.audit_purged = null;
+            } else {
+                result.audit_purged = Array.isArray(purged) ? purged.length : 0;
+                if (result.audit_purged > 0) {
+                    await logAudit('system', 'PURGE_AUDIT_LOGS', null, { days: retention, cutoff, deleted: result.audit_purged, source: 'cron' }, 'cron');
+                }
+            }
+        }
         res.json(Object.assign({ ok: true, ranAt: new Date().toISOString() }, result));
     } catch (err) {
         if (isMissingTableError(err) || /migration/.test(err.message || '')) {
@@ -3062,6 +3305,9 @@ module.exports = app;
 // 供單元測試使用的內部函式（Vercel 只取 app 本身，掛額外屬性不影響部署）。
 // 測試時請設 NODE_ENV=production，這樣 require 本檔才不會真的 app.listen 佔用 port。
 app.__test__ = {
+    parseAuditFilters,
+    auditMatchesQuery,
+    auditLogsToCsvRows,
     COMPETITION_CATEGORIES,
     normalizeCategory,
     normalizeTags,
