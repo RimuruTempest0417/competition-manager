@@ -35,10 +35,14 @@ function loadEnv() {
         }
     }
     const url = env.SUPABASE_URL;
-    const key = env.SUPABASE_KEY || env.SUPABASE_ANON_KEY;
+    // v2.13.0：優先用 service_role key（啟用 RLS 後 anon key 會被完全擋下）
+    const key = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY || env.SUPABASE_KEY || env.SUPABASE_ANON_KEY;
     if (!url || !key) {
-        console.error('❌ 找不到 SUPABASE_URL / SUPABASE_KEY（請確認 .env 或環境變數）');
+        console.error('❌ 找不到 SUPABASE_URL / SUPABASE_SERVICE_KEY（請確認 .env 或環境變數）');
         process.exit(2);
+    }
+    if (!(env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY)) {
+        console.warn('⚠️ 目前使用 anon key；若資料庫已啟用 RLS，本腳本會被拒絕，請改用 SUPABASE_SERVICE_KEY。');
     }
     return { url: url.replace(/\/+$/, ''), key };
 }

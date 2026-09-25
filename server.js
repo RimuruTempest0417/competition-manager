@@ -34,13 +34,28 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 1. 初始化 Supabase 雲端資料庫連線
+// v2.13.0：金鑰優先序 —— service_role（可繞過 RLS，僅限伺服器端）→ 舊的 SUPABASE_KEY（anon）。
+// 前端從不直連資料庫，Service Role Key 也絕不可出現在 public/ 或任何前端檔案中。
+// 可用名稱：SUPABASE_SERVICE_ROLE_KEY（Supabase 官方命名）、SUPABASE_SERVICE_KEY（本專案慣用簡稱）。
+function resolveSupabaseKey(env) {
+    const e = env || {};
+    return e.SUPABASE_SERVICE_ROLE_KEY || e.SUPABASE_SERVICE_KEY || e.SUPABASE_KEY || '';
+}
+
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
+const supabaseKey = resolveSupabaseKey(process.env);
+const supabaseKeyType = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY
+    ? 'service_role'
+    : (process.env.SUPABASE_KEY ? 'anon' : 'none');
 
 const hasSupabaseConfig = Boolean(supabaseUrl && supabaseKey);
 
 if (!hasSupabaseConfig) {
     console.error('❌ 錯誤：未設定 SUPABASE_URL 或 SUPABASE_KEY，請檢查 .env 檔案！');
+} else if (supabaseKeyType === 'anon') {
+    // 開啟 RLS 之後 anon key 會被完全擋下，屆時一定要先換成 service_role key
+    console.warn('⚠️ 目前使用 anon key 連線資料庫。若之後啟用 RLS（migrations/2026-09-26-v2.13.0-enable-rls.sql），' +
+        '請先在環境變數加入 SUPABASE_SERVICE_KEY（或 SUPABASE_SERVICE_ROLE_KEY）並重新部署，否則所有資料操作都會失敗。');
 }
 
 const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseKey || 'placeholder-key');
@@ -688,6 +703,8 @@ app.get('/api/admin/error-logs/health', requireSuperAdmin, async (req, res) => {
     res.json({
         success: true,
         supabase_configured: hasSupabaseConfig,
+        db_key_type: supabaseKeyType,
+        rls_ready: supabaseKeyType === 'service_role',
         recent_write_failures: ERROR_LOG_FAILURES.slice(-10).reverse(),
         failure_count: ERROR_LOG_FAILURES.length,
         schema: {
@@ -2596,6 +2613,7 @@ app.__test__ = {
     hashPassword,
     verifyPassword,
     needsPasswordUpgrade,
+    resolveSupabaseKey,
     allowRegisterAttempt,
     USERNAME_RE,
     PASSWORD_RE,

@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v2.12.2
+# 🏆 比賽管理系統 (Competition Manager) v2.13.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -172,6 +172,19 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v2.13.0 (2026-09-26) - 資料庫存取安全強化（service_role 金鑰 + 啟用 RLS 的準備）
+
+- **問題**：目前使用 anon key 且 RLS 關閉，任何取得金鑰的人都能直接讀寫全部資料表（含 `admin_users` 的密碼雜湊、`error_logs` 內容）。這是目前唯一的結構性風險。
+- **本版做了什麼（程式與遷移檔就緒，切換留給下一版）**：
+  - 金鑰解析改為明確優先序並抽成可測試的 `resolveSupabaseKey()`：`SUPABASE_SERVICE_ROLE_KEY` → `SUPABASE_SERVICE_KEY` → `SUPABASE_KEY`（僅伺服器端讀取，前端從不接觸金鑰）。
+  - 啟動時若仍使用 anon key 會印出警告，提醒「啟用 RLS 前必須先換成 service_role」。
+  - `GET /api/admin/error-logs/health` 新增 `db_key_type` 與 `rls_ready`，讓「能不能安全開啟 RLS」變成可觀測（只回類型，絕不回傳金鑰）。
+  - 新增 `migrations/2026-09-26-v2.13.0-enable-rls.sql`：對 10 張表啟用 RLS 並撤銷 `anon` / `authenticated` 權限（`service_role` 會繞過 RLS，因此伺服器不受影響）。檔案開頭寫明**執行順序**與緊急回復（ROLLBACK）語法。
+  - `scripts/hash-legacy-passwords.js` 同步改用 service_role key（啟用 RLS 後 anon key 會被擋下）。
+- **為什麼切換不放在這一版**：啟用 RLS 前必須先確認 Vercel 已重新部署且伺服器讀到 service_role 金鑰，否則前台會整站讀不到資料。因此本版先交付程式與遷移檔，待你在 Vercel 與本機 `.env` 加入 `SUPABASE_SERVICE_KEY` 後，下一版才執行遷移與驗證。
+- **測試**：`npm test` **97/97**（新增 `tests/supabase-key.test.js` 3 項：金鑰優先序、anon 時 `rls_ready=false`、service_role 時 `rls_ready=true` 且不含金鑰內容）。
+- **新增工具（進 repo，不再放暫存目錄）**：`tests/browser/prod-smoke.js`（正式站 HTTP 煙霧測試 40+ 項，只讀不寫）、`scripts/doc-sync.py`（Google Doc 雙向同步）、`scripts/md-to-docs-html.py`。
 
 ### v2.12.2 (2026-09-25) - 修正：調整他人角色時「一點選單就跳確認、權限改不動」
 
