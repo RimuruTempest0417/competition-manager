@@ -10,7 +10,7 @@ blockquote{background:#f8fafc;border-left:4px solid #94a3b8;margin:0 0 18px;padd
 hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <body>
 <h1>🏆 比賽管理系統 — 功能總覽與規劃</h1>
-<p>文件版本：2026-09-26（對應網站 v2.17.0）</p>
+<p>文件版本：2026-09-26（對應網站 v2.18.0）</p>
 <p>線上網址：https://competition-manager-hazel.vercel.app</p>
 <p>程式碼：https://github.com/RimuruTempest0417/competition-manager</p>
 <p>本文件已重新整理：修正原本過時或標示錯誤的狀態、補上 v2.7.0～v2.13.0 的實際完成內容、新增「資料庫 Migration」「版本歷程」「測試方式」「已知限制」與「建議下一步」。</p>
@@ -139,6 +139,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>v2.15.0</td><td>管理員兩步驟驗證（TOTP，手寫不引套件、RFC 官方測試向量驗證、登入兩段式、備援碼只存雜湊、防重放、暴力嘗試計入鎖定、上級可重設）、正式站「訪客視角」檢查（真實 Chrome 確認資料真的渲染，補上 HTTP 煙霧測試看不到的盲點）</td></tr>
 <tr><td>v2.16.0</td><td>稽核日誌強化：依使用者／動作／時間區間／關鍵字篩選、分頁瀏覽、匯出 CSV（公式注入防護＋BOM）、保留天數清理（最少 30 天、可先預覽、預設不自動刪；設 <code>AUDIT_RETENTION_DAYS</code> 才由每日排程順便清）、每筆匯出與清理都留下稽核</td></tr>
 <tr><td>v2.17.0</td><td>每次更新巡檢後<strong>自動把讀到的錯誤日誌標記為已處理</strong>：新增批次標記端點（單次上限 500 筆、一定留稽核、未執行 migration 時回 503 降級）、<code>npm run triage</code> 讀取→分析→標記一次完成、錯誤日誌視窗加「🏷️ 全部標記已處理」按鈕、標記不等於刪除（可切換檢視）、首頁提示只針對下一批新錯誤</td></tr>
+<tr><td>v2.18.0</td><td><strong>資料備份與還原</strong>：全表 JSON 匯出（含 meta、每表筆數、sha256 checksum、可選含日誌／海報）、介面「💾 備份與還原」下載與還原、<code>npm run backup</code>／<code>npm run restore</code>（本機保留最近 20 份自動清理）、還原強制先檢查（dry-run）且要明確 confirm、upsert 語意<strong>不刪除</strong>任何既有資料、checksum 不符預設拒絕、部分失敗誠實回報、備份檔已加入 .gitignore（含帳號雜湊與個資）</td></tr>
 <tr><td><strong>v2.15.0</strong></td><td><strong>管理員兩步驟驗證（TOTP，手寫不引套件）：登入分兩段、同一組碼不可重放、8 組一次性備援碼（只存雜湊）、停用需密碼＋驗證碼、上級可重設下級 2FA；另加上「訪客視角」正式站瀏覽器檢查與未執行 migration 時的自動停用</strong></td></tr>
 </table>
 <h2>五、測試與驗證方式</h2>
@@ -151,7 +152,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>回歸測試</td><td>每次發版都重跑 v2.7.0～v2.13.0 的瀏覽器實測，確認舊功能未被破壞；另有「錯誤日誌巡檢」自動把線上真實錯誤轉成待修復清單並在分析後標記已處理。</td></tr>
 <tr><td>線上驗證</td><td>部署後比對線上與本地檔案雜湊、檢查 CSP 與安全標頭、檢查新端點的降級行為。</td></tr>
 <tr><td>手機尺寸實測</td><td>headless Chrome 以 390×844（iPhone 14）與 360×640（iPhone SE） 驗證：橫向溢出、觸控目標高度、彈窗是否超出視窗、輸入框字級、篩選列排版、深色模式。</td></tr>
-<tr><td>目前規模</td><td>npm test <strong>143 項全綠</strong>（v2.17.0 新增批次標記 API 7 項＋migration 降級 1 項＋巡檢標記 4 項）；瀏覽器檢查 <strong>63 項全綠</strong>（<code>npm run check:browser</code>：提示橫幅 13＋兩步驟驗證 15＋稽核日誌介面 22＋錯誤日誌標記 13，皆為真實 Chrome 手機尺寸）；正式站 <code>npm run check:prod</code>＝HTTP 煙霧測試 <strong>48 項</strong>＋訪客視角檢查 <strong>6 項</strong>（真實 Chrome：賽事卡片是否真的渲染、前端例外、手機橫向溢出、版本字串）；v2.16.0 130 項、v2.15.0 118 項、v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗。</td></tr>
+<tr><td>目前規模</td><td>npm test <strong>156 項全綠</strong>（v2.18.0 新增備份／還原 API 12 項＋部分失敗回報 1 項）；瀏覽器檢查 <strong>85 項全綠</strong>（<code>npm run check:browser</code>：提示橫幅 13＋兩步驟驗證 15＋稽核日誌介面 22＋錯誤日誌標記 13＋備份與還原 22，皆為真實 Chrome 手機尺寸）；正式站 <code>npm run check:prod</code>＝HTTP 煙霧測試 <strong>48 項</strong>＋訪客視角檢查 <strong>6 項</strong>（真實 Chrome：賽事卡片是否真的渲染、前端例外、手機橫向溢出、版本字串）；v2.17.0 143 項、v2.16.0 130 項、v2.15.0 118 項、v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗。</td></tr>
 </table>
 <h2>六、已知限制（誠實說明）</h2>
 <ul><li>~~CRON_SECRET 尚未設定~~ <strong>已設定並驗證</strong>（2026-09-25 實測：未帶權杖回 401、不再是 503），每日自動推播已啟用（Vercel Cron 每日 01:00 UTC ＝ 澳門時間 09:00）。</li></ul>
@@ -201,7 +202,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>☑</td><td>稽核日誌介面強化</td><td>稽核紀錄已寫入但只能瀏覽，事後追查不方便</td><td><strong>v2.16.0 完成</strong>：使用者／動作／時間區間／關鍵字篩選、分頁（每頁 100 筆）、匯出 CSV（含公式注入防護與 BOM）、保留天數清理（最少 30 天、可先預覽、預設不自動刪；設 <code>AUDIT_RETENTION_DAYS</code> 才由每日排程順便清）</td><td>無</td><td>小</td></tr>
 <tr><td>✅</td><td>錯誤日誌主動告警</td><td>目前要主動打開後台才看到</td><td><strong>v2.14.0 完成</strong>：超級管理員以上登入即顯示提示橫幅（未處理錯誤數、近 24 小時新增、最新時間）、導覽選單顯示計數、可一鍵開啟日誌或「稍後再看」（有新錯誤才再提示）</td><td>無</td><td>小</td></tr>
 <tr><td>✅</td><td>錯誤日誌自動巡檢 → 自動產生待修復清單 → <strong>分析後自動標記已處理</strong></td><td>錯誤發生後要人工翻日誌才知道，也不會自動進入規劃；讀完沒有收尾，清單會一直累積舊訊息</td><td><strong>v2.14.0 完成</strong>讀取／分類／產生待修復清單並自動更新本文件第九節與 <code>docs/錯誤日誌分析.md</code>；<strong>v2.17.0 完成</strong>巡檢後自動標記已處理（批次端點、單次上限 500 筆、留稽核、可 <code>--no-resolve</code>）</td><td>無</td><td>小</td></tr>
-<tr><td>☐</td><td>資料備份與還原</td><td>誤刪賽事或報名資料目前無法回復</td><td>以 cron 端點定期匯出 JSON（賽事／報名／隊伍）並提供下載；提供「從 JSON 還原」的管理端按鈕</td><td>無（可用 Supabase 免費層既有空間）</td><td>中</td></tr>
+<tr><td>☑</td><td>資料備份與還原</td><td>誤刪賽事或報名資料目前無法回復</td><td><strong>v2.18.0 完成</strong>：<code>GET /api/admin/backup</code> 匯出全部核心表 JSON（含 meta、每表筆數、sha256 checksum）、介面「💾 備份與還原」可下載與還原、<code>npm run backup</code>／<code>npm run restore</code> 指令（本機保留最近 20 份、自動清理）、還原要先 dry-run 檢查並帶 confirm、採 upsert 且<strong>不刪除</strong>任何資料、未執行 migration 或缺表會誠實回報。<strong>未啟用自動排程</strong>（需要時可用 Hermes 排程＋上傳 Google Drive，見「建議下一步」）</td><td>無</td><td>中</td></tr>
 </table>
 <h3>8.3 P1 — 賽事與報名核心（系統價值的延伸）</h3>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
@@ -262,15 +263,19 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>使用者規模</td><td>帳號／賽事／報名數成長後的效能與權限邊界</td></tr>
 </table>
 <h2>九、自動偵測到的問題（待修復清單）</h2>
-<blockquote><p>本節由 <code>scripts/error-log-triage.js</code> 自動產生並覆寫（最後更新：2026/9/25 22:47:34）。資料來源：線上錯誤日誌（透過自家 API 讀取）。</p><p>狀態欄的「新增」代表我還沒看到你決定優先度；「已排入 Roadmap」代表第八節已有對應項目。</p></blockquote>
-<blockquote><p>🏷️ 本輪巡檢已把讀到的 4 筆未處理紀錄標記為已處理（rimuru）。首頁提示橫幅只會針對「下一批新錯誤」再提醒。</p></blockquote>
+<blockquote><p>本節由 <code>scripts/error-log-triage.js</code> 自動產生並覆寫（最後更新：2026/9/25 23:02:28）。資料來源：線上錯誤日誌（透過自家 API 讀取）。</p><p>狀態欄的「新增」代表我還沒看到你決定優先度；「已排入 Roadmap」代表第八節已有對應項目。</p></blockquote>
+<blockquote><p>🏷️ 本輪巡檢已把讀到的 0 筆未處理紀錄標記為已處理（rimuru）。首頁提示橫幅只會針對「下一批新錯誤」再提醒。</p></blockquote>
 <h3>9.1 需要處理的問題</h3>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><th style="background:#f1f5f9;text-align:left">狀態</th><th style="background:#f1f5f9;text-align:left">優先</th><th style="background:#f1f5f9;text-align:left">錯誤類型</th><th style="background:#f1f5f9;text-align:left">次數</th><th style="background:#f1f5f9;text-align:left">未處理</th><th style="background:#f1f5f9;text-align:left">近 24 小時</th><th style="background:#f1f5f9;text-align:left">最後發生</th><th style="background:#f1f5f9;text-align:left">建議動作</th><th style="background:#f1f5f9;text-align:left">範例訊息</th></tr>
 <tr><td>已排入 Roadmap</td><td>高</td><td><code>unhandled_server_error</code></td><td>1</td><td>0</td><td>0</td><td>2026/9/24 01:36:44</td><td>看範例訊息定位來源；若重複出現，加入單元測試防回歸</td><td>Unexpected token &#x27;b&#x27;, &quot;{&quot;username&quot;: broken&quot; is not valid JSON</td></tr>
 <tr><td>已排入 Roadmap</td><td>中</td><td><code>js_runtime_issue</code></td><td>1</td><td>0</td><td>0</td><td>2026/9/24 01:15:06</td><td>依裝置與訊息判斷前端相容性問題</td><td>Script error.</td></tr>
-<tr><td>已排入 Roadmap</td><td>低</td><td><code>malformed_json_body</code></td><td>3</td><td>3</td><td>3</td><td>2026/9/25 22:41:02</td><td>正常不需修；同一來源大量出現代表有人在探測，再考慮封鎖</td><td>Unexpected token &#x27;b&#x27;, &quot;{&quot;username&quot;: broken&quot; is not valid JSON</td></tr>
-<tr><td>已排入 Roadmap</td><td>低</td><td><code>auth_invalid_token</code></td><td>1</td><td>1</td><td>1</td><td>2026/9/25 21:42:54</td><td>多半是使用者停留過久，屬正常；若同一來源大量出現再處理</td><td>jwt expired</td></tr>
 </table>
-<p><strong>統計</strong>：共 4 種錯誤類型、6 筆紀錄，其中未處理 4 筆。</p>
+<h3>9.2 低優先／僅供觀察</h3>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">錯誤類型</th><th style="background:#f1f5f9;text-align:left">次數</th><th style="background:#f1f5f9;text-align:left">最後發生</th><th style="background:#f1f5f9;text-align:left">說明</th></tr>
+<tr><td><code>malformed_json_body</code></td><td>4</td><td>2026/9/25</td><td>用戶端請求錯誤（v2.14.0 已分流為 4xx）（多為正常現象，累積過多再處理）</td></tr>
+<tr><td><code>auth_invalid_token</code></td><td>1</td><td>2026/9/25</td><td>權杖無效／過期（多為正常現象，累積過多再處理）</td></tr>
+</table>
+<p><strong>統計</strong>：共 4 種錯誤類型、7 筆紀錄，其中未處理 0 筆。</p>
 </body></html>
