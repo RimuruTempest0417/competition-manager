@@ -1089,3 +1089,9 @@ canvas {
         word-break: break-word;
     }
 }
+
+/* ===== v2.15.0 兩步驟驗證：密鑰與備援碼用等寬字型，避免抄錯字元 ===== */
+.cm-secret {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0.06em;
+}

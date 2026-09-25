@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.14.0</title>
+    <title>比賽管理系統 v2.15.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -52,7 +52,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2 cm-app-title">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.14.0)</p>
+                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.15.0)</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
@@ -124,6 +124,12 @@
                         <button id="pushLogsBtn"
                             class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
                             📤 推播紀錄
+                        </button>
+
+                        <!-- 管理員以上：兩步驟驗證（v2.15.0） -->
+                        <button id="twoFactorBtn"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                            🔐 兩步驟驗證
                         </button>
 
                         <div id="menuDivider" class="hidden border-t border-slate-100 my-1"></div>
@@ -543,7 +549,7 @@
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
             <h3 id="loginModalTitle" class="text-lg font-bold text-slate-800">登入 Login</h3>
-            <div class="space-y-3">
+            <div id="loginCredentialsFields" class="space-y-3">
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">帳號</label>
                     <input type="text" id="loginUsername" placeholder="account"
@@ -553,6 +559,25 @@
                     <label class="block text-xs font-semibold text-slate-600 mb-1">密碼</label>
                     <input type="password" id="loginPassword" placeholder="password"
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                </div>
+            </div>
+
+            <!-- v2.15.0：兩步驟驗證（密碼正確後才會顯示） -->
+            <div id="login2faFields" class="hidden space-y-3">
+                <p class="text-xs text-slate-600 leading-relaxed">
+                    帳號 <span id="login2faAccount" class="font-semibold"></span> 已啟用兩步驟驗證。
+                    請輸入驗證器 App 顯示的 6 位數驗證碼（或改用備援碼）。
+                </p>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 mb-1">驗證碼</label>
+                    <input type="text" id="login2faCode" inputmode="text" autocomplete="one-time-code"
+                        placeholder="123456" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm tracking-widest">
+                </div>
+                <div class="flex items-center justify-between text-xs">
+                    <button type="button" id="login2faUseRecovery"
+                        class="text-blue-600 hover:underline font-medium">改用備援碼</button>
+                    <button type="button" id="login2faBack"
+                        class="text-slate-500 hover:underline">回上一頁重新輸入帳密</button>
                 </div>
             </div>
             <!-- v2.9.0：普通用戶註冊（同一視窗切換） -->
@@ -582,6 +607,95 @@
                     class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">取消</button>
                 <button id="submitLoginBtn"
                     class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">登入</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈出視窗 1.5：兩步驟驗證（v2.15.0，管理員以上） -->
+    <div id="twoFactorModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 cm-modal-panel flex flex-col">
+            <div class="flex items-center justify-between">
+                <h3 class="text-lg font-bold text-slate-800">🔐 兩步驟驗證</h3>
+                <button id="closeTwoFactorModalBtn" type="button"
+                    class="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+            </div>
+
+            <p id="twoFactorStatus" class="text-xs p-2.5 rounded-lg border bg-slate-50 border-slate-200 text-slate-600">
+                載入中…
+            </p>
+
+            <div class="flex-1 overflow-y-auto space-y-4 pr-1">
+                <!-- 尚未啟用：設定流程 -->
+                <div id="twoFactorSetupSection" class="hidden space-y-3">
+                    <button id="twoFactorStartBtn" type="button"
+                        class="w-full px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium">
+                        開始設定（產生密鑰）
+                    </button>
+
+                    <div id="twoFactorSetupDetail" class="hidden space-y-3">
+                        <p class="text-xs text-slate-600 leading-relaxed">
+                            ① 在驗證器 App（Google／Microsoft Authenticator、1Password 等）選擇「手動輸入金鑰」，
+                            帳號名稱隨意填，貼上下面這串密鑰：
+                        </p>
+                        <div class="flex items-start gap-2">
+                            <code id="twoFactorSecret"
+                                class="cm-secret text-xs break-all flex-1 bg-slate-100 p-2 rounded border border-slate-200"></code>
+                            <button id="twoFactorCopyBtn" type="button"
+                                class="text-xs px-2.5 py-1.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-700 transition">複製</button>
+                        </div>
+                        <p class="text-xs text-slate-500 break-all">
+                            ② 之後要重新綁定時，也可用這個連結（App 支援掃碼或貼連結時）：
+                            <span id="twoFactorUri" class="text-slate-600"></span>
+                        </p>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1">③ 輸入 App 顯示的 6 位數驗證碼</label>
+                            <input type="text" id="twoFactorEnableCode" inputmode="numeric" autocomplete="one-time-code"
+                                placeholder="123456"
+                                class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm tracking-widest">
+                        </div>
+                        <button id="twoFactorEnableBtn" type="button"
+                            class="w-full px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition font-medium">
+                            啟用兩步驟驗證
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 已啟用：狀態與停用 -->
+                <div id="twoFactorEnabledSection" class="hidden space-y-3">
+                    <div class="text-xs p-2.5 rounded-lg border bg-emerald-50 border-emerald-200 text-emerald-800 leading-relaxed">
+                        已啟用 ✅ 之後登入需要「密碼 + 驗證器 App 的 6 位數」。
+                        <span id="twoFactorConfirmedAt" class="block mt-1 text-emerald-700"></span>
+                        <span id="twoFactorRecoveryLeft" class="block mt-1 text-emerald-700"></span>
+                    </div>
+                    <div class="border-t border-slate-200 pt-3 space-y-2">
+                        <p class="text-xs font-semibold text-slate-700">停用兩步驟驗證</p>
+                        <p class="text-xs text-slate-500">需要你的密碼，以及一組驗證碼（或備援碼）。</p>
+                        <input type="password" id="twoFactorDisablePassword" placeholder="你的密碼"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                        <input type="text" id="twoFactorDisableCode" placeholder="驗證碼或備援碼"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                        <button id="twoFactorDisableBtn" type="button"
+                            class="w-full px-4 py-2 text-sm bg-rose-600 text-white rounded-lg hover:bg-rose-700 transition font-medium">
+                            停用
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 備援碼（只顯示一次） -->
+                <div id="twoFactorRecoverySection" class="hidden space-y-2">
+                    <div class="text-xs p-2.5 rounded-lg border bg-amber-50 border-amber-200 text-amber-900 leading-relaxed">
+                        ⚠️ 這些備援碼<strong>只會顯示這一次</strong>。手機遺失或換機時，每一組可以用來登入一次。
+                        請現在抄下來或存進密碼管理器。
+                    </div>
+                    <div id="twoFactorRecoveryList" class="cm-secret text-xs grid grid-cols-2 gap-1.5"></div>
+                    <button id="twoFactorRecoveryDoneBtn" type="button"
+                        class="w-full px-4 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition font-medium">
+                        我已抄好，關閉
+                    </button>
+                </div>
+
+                <p id="twoFactorMessage" class="hidden text-xs p-2.5 rounded-lg border"></p>
             </div>
         </div>
     </div>

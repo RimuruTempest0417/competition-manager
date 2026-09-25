@@ -149,6 +149,8 @@ function dismissErrorAlert() {
 }
 
 function handleLogout() {
+    pendingTwoFactor = null;
+    setLoginStep('credentials');
     currentUser = null;
     localStorage.removeItem('competition_user');
     localStorage.removeItem('auth_token');
@@ -694,6 +696,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('adminMgmtBtn')?.addEventListener('click', () => { openAdminModal(); closeNavDropdown(); });
     document.getElementById('pushLogsBtn')?.addEventListener('click', () => { openPushLogsModal(); closeNavDropdown(); });
     document.getElementById('changePwdBtn')?.addEventListener('click', () => { openChangePasswordModal(); closeNavDropdown(); });
+    // v2.15.0：兩步驟驗證設定
+    document.getElementById('twoFactorBtn')?.addEventListener('click', () => { openTwoFactorModal(); });
+    document.getElementById('closeTwoFactorModalBtn')?.addEventListener('click', closeTwoFactorModal);
+    document.getElementById('twoFactorStartBtn')?.addEventListener('click', startTwoFactorSetup);
+    document.getElementById('twoFactorEnableBtn')?.addEventListener('click', enableTwoFactor);
+    document.getElementById('twoFactorDisableBtn')?.addEventListener('click', disableTwoFactor);
+    document.getElementById('twoFactorRecoveryDoneBtn')?.addEventListener('click', () => {
+        document.getElementById('twoFactorRecoverySection')?.classList.add('hidden');
+        document.getElementById('twoFactorRecoveryList').innerHTML = '';
+        setTwoFactorMessage('備援碼已從畫面移除。如果還沒抄下來，可以停用後重新啟用再產生一次。', 'info');
+    });
+    document.getElementById('twoFactorEnableCode')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') enableTwoFactor();
+    });
+    document.getElementById('twoFactorCopyBtn')?.addEventListener('click', async () => {
+        const secret = document.getElementById('twoFactorSecret')?.textContent || '';
+        try {
+            await navigator.clipboard.writeText(secret);
+            setTwoFactorMessage('密鑰已複製到剪貼簿。', 'success');
+        } catch (err) {
+            setTwoFactorMessage('無法自動複製，請長按上方密鑰手動複製。', 'error');
+        }
+    });
     document.getElementById('errorAlertOpenBtn')?.addEventListener('click', () => { openErrorLogsModal(); });
     document.getElementById('errorAlertDismissBtn')?.addEventListener('click', dismissErrorAlert);
     document.getElementById('authBtn')?.addEventListener('click', () => { toggleAuth(); closeNavDropdown(); });
@@ -733,8 +758,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('cancelLoginBtn')?.addEventListener('click', closeLoginModal);
     // 同一個按鈕依模式執行「登入」或「註冊」
     document.getElementById('submitLoginBtn')?.addEventListener('click', () => {
+        // v2.15.0：第二階段（兩步驟驗證）由同一個按鈕送出
+        if (pendingTwoFactor) return submitTwoFactorLogin();
         return loginMode === 'register' ? performRegister() : performLogin();
     });
+    document.getElementById('login2faCode')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submitTwoFactorLogin();
+    });
+    document.getElementById('login2faUseRecovery')?.addEventListener('click', () => {
+        loginTwoFactorRecoveryMode = !loginTwoFactorRecoveryMode;
+        const btn = document.getElementById('login2faUseRecovery');
+        const codeEl = document.getElementById('login2faCode');
+        if (btn) btn.innerText = loginTwoFactorRecoveryMode ? '改用驗證碼' : '改用備援碼';
+        if (codeEl) {
+            codeEl.placeholder = loginTwoFactorRecoveryMode ? 'XXXX-XXXX-XXXX' : '123456';
+            codeEl.classList.toggle('tracking-widest', !loginTwoFactorRecoveryMode);
+            codeEl.value = '';
+            codeEl.focus();
+        }
+    });
+    document.getElementById('login2faBack')?.addEventListener('click', () => { setLoginStep('credentials'); });
     document.getElementById('toggleRegisterBtn')?.addEventListener('click', toggleLoginMode);
     document.getElementById('authBtn')?.addEventListener('click', () => { setLoginMode('login'); setLoginNotice(''); });
     document.getElementById('loginPassword')?.addEventListener('keydown', (e) => {
@@ -965,12 +1008,12 @@ function focusCompetitionCard(compId) {
 // 為什麼要這樣寫：過去每個角色分支各自列 classList.add('hidden')，
 // 只要有分支漏寫（例如訪客分支忘了隱藏 CSV 按鈕），登出後就會殘留管理員功能。
 const CM_MENU_PERMISSIONS = {
-    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: false, changePwd: false },
-    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: true,  changePwd: true },
-    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: true,  myRegs: true,  changePwd: true },
-    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true },
-    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true },
-    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true }
+    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: false, changePwd: false, twoFactor: false },
+    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false },
+    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true },
+    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true },
+    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true }
 };
 
 function applyMenuVisibility(role) {
@@ -984,7 +1027,8 @@ function applyMenuVisibility(role) {
         ['pushLogsBtn', perm.pushLogs],
         ['createSection', perm.create],
         ['myRegsBtn', perm.myRegs],
-        ['changePwdBtn', perm.changePwd]
+        ['changePwdBtn', perm.changePwd],
+        ['twoFactorBtn', perm.twoFactor]
     ];
     map.forEach(([id, visible]) => {
         const el = document.getElementById(id);
@@ -2882,6 +2926,45 @@ function closeLoginModal() {
     document.getElementById('loginModal').classList.add('hidden');
 }
 
+/* v2.15.0：兩步驟驗證的登入第二階段狀態（只存在記憶體，不落地） */
+let pendingTwoFactor = null;
+let loginTwoFactorRecoveryMode = false;
+
+function setLoginStep(step) {
+    const credentials = document.getElementById('loginCredentialsFields');
+    const second = document.getElementById('login2faFields');
+    const submit = document.getElementById('submitLoginBtn');
+    const isSecond = step === '2fa';
+    credentials?.classList.toggle('hidden', isSecond);
+    second?.classList.toggle('hidden', !isSecond);
+    document.getElementById('registerFields')?.classList.toggle('hidden', isSecond || !document.getElementById('registerFields')?.dataset.showing);
+    if (submit) submit.innerText = isSecond ? '驗證' : (loginMode === 'register' ? '註冊並登入' : '登入');
+    if (!isSecond) {
+        pendingTwoFactor = null;
+        loginTwoFactorRecoveryMode = false;
+        const codeEl = document.getElementById('login2faCode');
+        if (codeEl) codeEl.value = '';
+        const useBtn = document.getElementById('login2faUseRecovery');
+        if (useBtn) useBtn.innerText = '改用備援碼';
+    }
+}
+
+function completeLogin(data) {
+    currentUser = data.user;
+    localStorage.setItem('auth_token', data.token);
+    localStorage.setItem('competition_user', JSON.stringify(currentUser));
+    setLoginStep('credentials');
+    closeLoginModal();
+    updateUIByRole();
+    // v2.14.0：登入回應已附上未處理錯誤統計，直接顯示（沒有附帶資料時再自己查一次）
+    if (data.alerts) renderErrorAlert(data.alerts);
+    else refreshErrorAlert();
+    // v2.15.0：用備援碼登入要提醒使用者補發新的備援碼
+    if (data.used_recovery_code) {
+        alert(`已用備援碼登入，剩下 ${data.remaining_recovery_codes} 組。\n建議到「🔐 兩步驟驗證」重新產生備援碼。`);
+    }
+}
+
 async function performLogin() {
     const username = document.getElementById('loginUsername').value;
     const password = document.getElementById('loginPassword').value;
@@ -2899,17 +2982,199 @@ async function performLogin() {
         }
 
         const data = await res.json();
-        currentUser = data.user;
-        localStorage.setItem('auth_token', data.token);
-        localStorage.setItem('competition_user', JSON.stringify(currentUser));
-        closeLoginModal();
-        updateUIByRole();
-        // v2.14.0：登入回應已附上未處理錯誤統計，直接顯示（沒有附帶資料時再自己查一次）
-        if (data.alerts) renderErrorAlert(data.alerts);
-        else refreshErrorAlert();
+
+        // v2.15.0：這個帳號啟用了兩步驟驗證 → 進入第二階段（此時還沒有登入憑證）
+        if (data.requires_2fa) {
+            pendingTwoFactor = data.challenge_token;
+            const accountEl = document.getElementById('login2faAccount');
+            if (accountEl) accountEl.textContent = data.username || username;
+            setLoginStep('2fa');
+            document.getElementById('login2faCode')?.focus();
+            return;
+        }
+
+        completeLogin(data);
     } catch (err) {
         alert(err.message);
     }
+}
+
+/* v2.15.0：第二階段送出（驗證碼或備援碼） */
+async function submitTwoFactorLogin() {
+    const codeEl = document.getElementById('login2faCode');
+    const code = (codeEl?.value || '').trim();
+    if (!pendingTwoFactor) {
+        alert('登入流程已失效，請重新輸入帳號密碼。');
+        setLoginStep('credentials');
+        return;
+    }
+    if (!code) {
+        alert('請輸入驗證碼。');
+        return;
+    }
+
+    try {
+        const res = await customFetch('/api/auth/login/2fa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ challenge_token: pendingTwoFactor, code })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(data.error || '驗證失敗，請重新輸入');
+        }
+        pendingTwoFactor = null;
+        completeLogin(data);
+    } catch (err) {
+        alert(err.message);
+        if (codeEl) codeEl.value = '';
+    }
+}
+
+/* ---------- v2.15.0：兩步驟驗證設定視窗 ---------- */
+function setTwoFactorMessage(text, kind = 'info') {
+    const el = document.getElementById('twoFactorMessage');
+    if (!el) return;
+    if (!text) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+    }
+    el.className = 'text-xs p-2.5 rounded-lg border ' + (kind === 'error'
+        ? 'bg-rose-50 border-rose-200 text-rose-700'
+        : kind === 'success'
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            : 'bg-slate-50 border-slate-200 text-slate-600');
+    el.textContent = text;
+}
+
+function renderTwoFactorStatus(info) {
+    const statusEl = document.getElementById('twoFactorStatus');
+    const setupSection = document.getElementById('twoFactorSetupSection');
+    const enabledSection = document.getElementById('twoFactorEnabledSection');
+
+    if (!info || info.schema_ready === false) {
+        if (statusEl) {
+            statusEl.className = 'text-xs p-2.5 rounded-lg border bg-amber-50 border-amber-200 text-amber-900 leading-relaxed';
+            statusEl.textContent = '這項功能尚未啟用：需要先執行 migrations/2026-09-26-v2.15.0-admin-2fa.sql（在 Supabase SQL Editor 貼上執行一次即可，不影響其他功能）。';
+        }
+        setupSection?.classList.add('hidden');
+        enabledSection?.classList.add('hidden');
+        return;
+    }
+
+    if (statusEl) {
+        statusEl.className = 'text-xs p-2.5 rounded-lg border ' + (info.enabled
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            : 'bg-slate-50 border-slate-200 text-slate-600');
+        statusEl.textContent = info.enabled
+            ? `目前狀態：已啟用${info.confirmed_at ? `（綁定於 ${new Date(info.confirmed_at).toLocaleString()}）` : ''}`
+            : '目前狀態：未啟用（登入只需要密碼）。建議管理員帳號啟用，避免密碼外洩就等於整個後台外洩。';
+    }
+
+    setupSection?.classList.toggle('hidden', info.enabled === true);
+    enabledSection?.classList.toggle('hidden', info.enabled !== true);
+    if (info.enabled) {
+        const atEl = document.getElementById('twoFactorConfirmedAt');
+        if (atEl) atEl.textContent = info.confirmed_at ? `綁定時間：${new Date(info.confirmed_at).toLocaleString()}` : '';
+        const leftEl = document.getElementById('twoFactorRecoveryLeft');
+        if (leftEl) leftEl.textContent = `尚未使用的備援碼：${info.remaining_recovery_codes} 組`;
+    }
+}
+
+async function loadTwoFactorStatus() {
+    try {
+        const res = await customFetch('/api/auth/2fa/status');
+        if (!res.ok) throw new Error('無法取得狀態');
+        const info = await res.json();
+        renderTwoFactorStatus(info);
+    } catch (err) {
+        setTwoFactorMessage(err.message, 'error');
+    }
+}
+
+async function openTwoFactorModal() {
+    closeNavDropdown();
+    setTwoFactorMessage('');
+    document.getElementById('twoFactorSetupDetail')?.classList.add('hidden');
+    document.getElementById('twoFactorRecoverySection')?.classList.add('hidden');
+    document.getElementById('twoFactorModal')?.classList.remove('hidden');
+    await loadTwoFactorStatus();
+}
+
+async function startTwoFactorSetup() {
+    setTwoFactorMessage('');
+    try {
+        const res = await customFetch('/api/auth/2fa/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '無法產生密鑰');
+        document.getElementById('twoFactorSecret').textContent = data.secret;
+        document.getElementById('twoFactorUri').textContent = data.otpauth_uri;
+        document.getElementById('twoFactorSetupDetail')?.classList.remove('hidden');
+        document.getElementById('twoFactorEnableCode')?.focus();
+        setTwoFactorMessage(data.hint || '', 'info');
+    } catch (err) {
+        setTwoFactorMessage(err.message, 'error');
+    }
+}
+
+async function enableTwoFactor() {
+    const code = (document.getElementById('twoFactorEnableCode')?.value || '').trim();
+    if (!code) return setTwoFactorMessage('請輸入 App 顯示的驗證碼。', 'error');
+    setTwoFactorMessage('');
+    try {
+        const res = await customFetch('/api/auth/2fa/enable', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '啟用失敗');
+
+        const list = document.getElementById('twoFactorRecoveryList');
+        if (list) {
+            list.innerHTML = '';
+            for (const c of data.recovery_codes || []) {
+                const span = document.createElement('span');
+                span.className = 'bg-slate-100 border border-slate-200 rounded px-2 py-1';
+                span.textContent = c;
+                list.appendChild(span);
+            }
+        }
+        document.getElementById('twoFactorRecoverySection')?.classList.remove('hidden');
+        document.getElementById('twoFactorSetupDetail')?.classList.add('hidden');
+        setTwoFactorMessage(data.warning || '已啟用兩步驟驗證。', 'success');
+        await loadTwoFactorStatus();
+    } catch (err) {
+        setTwoFactorMessage(err.message, 'error');
+    }
+}
+
+async function disableTwoFactor() {
+    const password = document.getElementById('twoFactorDisablePassword')?.value || '';
+    const code = (document.getElementById('twoFactorDisableCode')?.value || '').trim();
+    if (!password || !code) return setTwoFactorMessage('停用需要你的密碼，以及一組驗證碼或備援碼。', 'error');
+    setTwoFactorMessage('');
+    try {
+        const res = await customFetch('/api/auth/2fa/disable', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password, code })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '停用失敗');
+        document.getElementById('twoFactorDisablePassword').value = '';
+        document.getElementById('twoFactorDisableCode').value = '';
+        document.getElementById('twoFactorEnableCode').value = '';
+        setTwoFactorMessage(data.message || '已停用兩步驟驗證。', 'success');
+        await loadTwoFactorStatus();
+    } catch (err) {
+        setTwoFactorMessage(err.message, 'error');
+    }
+}
+
+function closeTwoFactorModal() {
+    document.getElementById('twoFactorModal')?.classList.add('hidden');
+    document.getElementById('twoFactorRecoverySection')?.classList.add('hidden');
+    document.getElementById('twoFactorRecoveryList').innerHTML = '';
+    setTwoFactorMessage('');
 }
 
 function getActionBadgeStyle(action) {
@@ -3342,6 +3607,9 @@ function renderAdminList() {
                 </button>
                 <button data-action="delete-admin" data-id="${u.id}" data-username="${escapeHtml(u.username)}"
                     class="text-[11px] px-1.5 py-0.5 rounded bg-red-100 hover:bg-red-200 text-red-700 transition">刪除</button>
+                ${u.two_factor_enabled ? `
+                <button data-action="reset-2fa" data-id="${u.id}" data-username="${escapeHtml(u.username)}"
+                    class="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-800 transition">重設 2FA</button>` : ''}
               `
             : '';
 
@@ -3356,6 +3624,7 @@ function renderAdminList() {
                         <span class="font-bold text-slate-700 break-all">${escapeHtml(u.username)}</span>
                         ${getRoleBadge(u.role, u.username)}
                         ${u.is_active ? '' : '<span class="bg-red-100 text-red-700 text-[10px] px-1.5 py-0.5 rounded">已停用</span>'}
+                        ${u.two_factor_enabled ? '<span class="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded" title="已啟用兩步驟驗證">🔐 2FA</span>' : ''}
                         ${u.is_self ? '<span class="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0.5 rounded">你自己</span>' : ''}
                     </div>
                     <span class="text-[10px] text-slate-400">${escapeHtml(lastLogin)}</span>
@@ -3444,6 +3713,16 @@ async function handleAdminListAction(ev) {
             if (pw === null || pw === '') return;
             const data = await patchAdminUser(id, { password: pw });
             alert('✅ ' + (data.message || '密碼已重設'));
+            return;
+        }
+
+        if (action === 'reset-2fa') {
+            if (!confirm(`確定要重設「${username}」的兩步驟驗證？\n\n對方之後登入只需要密碼，請通知他盡快重新綁定。`)) return;
+            const res = await customFetch(`/api/admin/users/${id}/reset-2fa`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || '重設失敗');
+            alert('✅ ' + (data.message || '已重設兩步驟驗證'));
+            await fetchAdminList();
             return;
         }
 
