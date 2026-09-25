@@ -1,14 +1,15 @@
-/* v2.14.0：錯誤日誌自動巡檢的純函式測試
-   - classify：錯誤類型 → 中文說明、建議動作、優先度
+/* 錯誤日誌自動巡檢的測試
+   - classify：錯誤類型 → 中文說明、建議動作、優先度（v2.14.0）
    - groupErrorLogs：分組統計（次數、未處理、近 24 小時、首末時間、嚴重程度、範例訊息）
    - renderSection：產生的 Markdown（含「新增 / 已排入 Roadmap」判斷）
-   - replaceSection：以標題為界取代整節，且不動到後面的章節 */
+   - replaceSection：以標題為界取代整節，且不動到後面的章節
+   - collectResolvableIds／chunk／resolveErrorLogs：巡檢後「標記已處理」的挑選與分批呼叫（v2.17.0） */
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 
 const triage = require(path.join(__dirname, '..', 'scripts', 'error-log-triage.js'));
-const { classify, groupErrorLogs, renderSection, replaceSection, SECTION_HEADING } = triage;
+const { classify, groupErrorLogs, renderSection, replaceSection, SECTION_HEADING, collectResolvableIds, chunk, resolveErrorLogs } = triage;
 
 const NOW = new Date('2026-09-26T12:00:00+08:00').getTime();
 const ago = (hours) => new Date(NOW - hours * 3600 * 1000).toISOString();
@@ -83,6 +84,70 @@ test('v2.14.0 產生章節：狀態標示與 Roadmap 比對', () => {
     // 沒有任何日誌
     const emptySection = renderSection([], '', NOW);
     assert.match(emptySection, /目前沒有任何錯誤日誌紀錄/);
+});
+
+/* ---------- v2.17.0：巡檢後自動「標記已處理」 ---------- */
+
+test('v2.17.0 挑選可標記的 id：只取未處理、去重、跳過缺 id 的紀錄', () => {
+    const logs = [
+        { id: 1, resolved: false },
+        { id: 2, resolved: true },      // 已處理過 → 不必再送
+        { id: 1, resolved: false },     // 重複
+        { id: 3 },                      // 沒有 resolved 欄位（舊資料）→ 視為未處理
+        { resolved: false },            // 沒有 id → 跳過
+        null, undefined
+    ];
+    assert.deepStrictEqual(collectResolvableIds(logs), [1, 3]);
+    assert.deepStrictEqual(collectResolvableIds([]), []);
+    assert.deepStrictEqual(collectResolvableIds(null), []);
+});
+
+test('v2.17.0 分批：超過單次上限會切開', () => {
+    assert.deepStrictEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+    assert.deepStrictEqual(chunk([], 2), []);
+    assert.strictEqual(chunk(Array.from({ length: 1200 }, (_, i) => i + 1), 500).length, 3);
+});
+
+test('v2.17.0 呼叫標記端點：帶正確權杖與 id、彙總結果', async () => {
+    const calls = [];
+    const fakeFetch = async (url, init) => {
+        calls.push({ url, init, body: JSON.parse(init.body) });
+        return { ok: true, json: async () => ({ success: true, resolved: JSON.parse(init.body).ids.length }) };
+    };
+
+    const result = await resolveErrorLogs({
+        site: 'https://example.test', token: 'tok-123', ids: [1, 2, 3], fetchImpl: fakeFetch
+    });
+    assert.strictEqual(result.resolved, 3);
+    assert.strictEqual(result.batches, 1);
+    assert.strictEqual(calls[0].url, 'https://example.test/api/admin/error-logs/resolve');
+    assert.strictEqual(calls[0].init.method, 'POST');
+    assert.strictEqual(calls[0].init.headers.Authorization, 'Bearer tok-123');
+    assert.deepStrictEqual(calls[0].body, { ids: [1, 2, 3] });
+
+    // 超過 500 筆 → 切成兩批，兩次的 resolved 加總
+    const many = Array.from({ length: 501 }, (_, i) => i + 1);
+    const twoBatches = await resolveErrorLogs({ site: 'https://example.test', token: 't', ids: many, fetchImpl: fakeFetch });
+    assert.strictEqual(twoBatches.batches, 2);
+    assert.strictEqual(twoBatches.resolved, 501);
+});
+
+test('v2.17.0 標記失敗要拋錯（讓巡檢能 warn 而不中斷報告）', async () => {
+    const failing = async () => ({ ok: false, status: 503, json: async () => ({ error: '需要 migration' }) });
+    await assert.rejects(
+        () => resolveErrorLogs({ site: 'https://example.test', token: 't', ids: [1], fetchImpl: failing }),
+        /HTTP 503/
+    );
+});
+
+test('v2.17.0 第九節要記錄「本輪標記了幾筆」', () => {
+    const groups = groupErrorLogs([{ id: 1, error_type: 'unhandled_server_error', message: 'x', created_at: ago(1) }], NOW);
+    const withResolve = renderSection(groups, '', NOW, { resolved: 7, by: 'rimuru', batches: 1 });
+    assert.match(withResolve, /已把讀到的 7 筆未處理紀錄標記為已處理（rimuru）/);
+    assert.match(withResolve, /下一批新錯誤/);
+
+    const withoutResolve = renderSection(groups, '', NOW);
+    assert.ok(!/標記為已處理（/.test(withoutResolve), '沒有標記資訊時不該出現那句話');
 });
 
 test('v2.14.0 取代章節：保留前後章節、可重複執行', () => {

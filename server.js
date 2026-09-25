@@ -824,6 +824,97 @@ app.patch('/api/admin/error-logs/:id', requireSuperAdmin, async (req, res) => {
     }
 });
 
+/* v2.17.0：批次標記錯誤日誌為已處理
+   ------------------------------------------------------------
+   為什麼要批次：每次發版都會跑 `npm run triage`（scripts/error-log-triage.js）讀線上日誌做分析，
+   分析完那些紀錄就該「收工」——否則清單會一直累積同一批舊訊息，首頁提示橫幅也永遠亮著，
+   新的問題反而被舊雜訊蓋掉。這個端點讓巡檢腳本與介面能一次把「讀過的一批」標記為已處理。
+
+   安全設計：
+     - 只接受明確的 id 清單（最多 500 個／次），或 `all_unresolved: true`（內部上限 1000 筆），
+       不接受「刪除」語意、也不會動到其他紀錄。
+     - 一定留稽核（RESOLVE_ERROR_LOGS，含筆數與前 20 個 id），事後追得到是誰在什麼時候清的。
+     - 未執行 v2.12.0 migration（沒有 resolved 欄位）時回 503 並附檔案路徑，不會靜默失敗。
+*/
+const ERROR_LOG_RESOLVE_MAX = 500;
+const ERROR_LOG_RESOLVE_ALL_MAX = 1000;
+
+function parseResolveIds(input) {
+    if (!Array.isArray(input)) return { ids: null, error: 'ids 必須是陣列' };
+    if (input.length > ERROR_LOG_RESOLVE_MAX) {
+        return { ids: null, error: `單次最多標記 ${ERROR_LOG_RESOLVE_MAX} 筆（本次 ${input.length} 筆），請分批處理` };
+    }
+    const ids = [];
+    for (const raw of input) {
+        const n = typeof raw === 'number' ? raw : Number.parseInt(raw, 10);
+        if (!Number.isInteger(n) || n <= 0) return { ids: null, error: `id 必須是正整數（收到 ${JSON.stringify(raw)}）` };
+        ids.push(n);
+    }
+    return { ids: [...new Set(ids)], error: null };
+}
+
+app.post('/api/admin/error-logs/resolve', requireSuperAdmin, async (req, res) => {
+    const operator = req.currentUser;
+    const body = req.body || {};
+
+    try {
+        if (!(await columnExists('error_logs', 'resolved'))) {
+            return res.status(503).json({ error: USER_MIGRATION_HINT });
+        }
+
+        let ids = [];
+        if (body.all_unresolved === true) {
+            const { data, error } = await supabase
+                .from('error_logs')
+                .select('id')
+                .eq('resolved', false)
+                .limit(ERROR_LOG_RESOLVE_ALL_MAX);
+            if (error) throw error;
+            ids = (data || []).map((row) => row.id);
+        } else {
+            const parsed = parseResolveIds(body.ids);
+            if (parsed.error) return res.status(400).json({ error: parsed.error });
+            ids = parsed.ids;
+        }
+
+        if (ids.length === 0) {
+            return res.json({ success: true, resolved: 0, message: '沒有需要標記的紀錄', resolved_by: operator.username });
+        }
+
+        const nowIso = new Date().toISOString();
+        const updates = { resolved: true };
+        if (await columnExists('error_logs', 'resolved_at')) updates.resolved_at = nowIso;
+        if (await columnExists('error_logs', 'resolved_by')) updates.resolved_by = operator.username;
+
+        const { data, error } = await supabase
+            .from('error_logs')
+            .update(updates)
+            .in('id', ids)
+            .select('id');
+        if (error) throw error;
+
+        const changed = (data || []).length;
+        await logAudit(operator.username, 'RESOLVE_ERROR_LOGS', null, {
+            requested: ids.length,
+            resolved: changed,
+            all_unresolved: body.all_unresolved === true,
+            sample_ids: ids.slice(0, 20)
+        }, req.userAgent);
+
+        res.json({
+            success: true,
+            resolved: changed,
+            requested: ids.length,
+            resolved_at: nowIso,
+            resolved_by: operator.username,
+            message: `已標記 ${changed} 筆為已處理`
+        });
+    } catch (err) {
+        await logErrorToDb(req, 'resolve_error_logs_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
 // 清理舊的錯誤日誌（預設 30 天前）
 app.post('/api/admin/error-logs/cleanup', requireSuperAdmin, async (req, res) => {
     const operator = req.currentUser;
@@ -3305,6 +3396,7 @@ module.exports = app;
 // 供單元測試使用的內部函式（Vercel 只取 app 本身，掛額外屬性不影響部署）。
 // 測試時請設 NODE_ENV=production，這樣 require 本檔才不會真的 app.listen 佔用 port。
 app.__test__ = {
+    parseResolveIds,
     parseAuditFilters,
     auditMatchesQuery,
     auditLogsToCsvRows,

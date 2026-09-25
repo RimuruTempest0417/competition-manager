@@ -3215,6 +3215,29 @@ function getActionBadgeStyle(action) {
     }
 }
 
+/* v2.17.0：一鍵把目前未處理的錯誤日誌全部標記為已處理
+   與 `npm run triage`（巡檢腳本）走同一個端點；標記後首頁提示橫幅會立即更新
+   （只針對「下一批新錯誤」再提醒），這也是為什麼發版時跑一次巡檢就能把清單收乾淨。 */
+async function resolveAllErrorLogs() {
+    const unresolvedHere = (errorLogsCache || []).filter(l => !l.resolved).length;
+    const tip = '這會把所有「未處理」的錯誤日誌標記為已處理（紀錄不會被刪除，取消勾選「只看未處理」仍可查看）。';
+    if (!confirm(`${tip}\n\n目前這頁有 ${unresolvedHere} 筆未處理，要繼續嗎？`)) return;
+
+    try {
+        const res = await customFetch('/api/admin/error-logs/resolve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ all_unresolved: true })
+        });
+        const data = await apiResult(res);
+        alert('✅ ' + (data.message || `已標記 ${data.resolved} 筆為已處理`));
+        await fetchErrorLogs();
+        await refreshErrorAlert();
+    } catch (err) {
+        alert('❌ 標記失敗：' + err.message);
+    }
+}
+
 /* v2.16.0：稽核日誌強化——篩選（使用者／動作／時間）、分頁、CSV 匯出、保留天數清理。
    以前只能看最近 100 筆，出事後要查「某人某段時間做了什麼」幾乎不可能。 */
 const AUDIT_PAGE_SIZE = 100;
@@ -3443,6 +3466,8 @@ function bindErrorLogControls() {
     document.getElementById('errorLogRefreshBtn')?.addEventListener('click', () => fetchErrorLogs());
     document.getElementById('errorLogExportBtn')?.addEventListener('click', exportErrorLogsCsv);
     document.getElementById('errorLogCleanupBtn')?.addEventListener('click', cleanupErrorLogs);
+    // v2.17.0：一次把目前未處理的錯誤日誌全部標記為已處理（巡檢腳本也用同一個端點）
+    document.getElementById('errorLogResolveAllBtn')?.addEventListener('click', resolveAllErrorLogs);
     document.getElementById('errorLogSeverity')?.addEventListener('change', (e) => {
         errorLogFilters.severity = e.target.value;
         fetchErrorLogs();

@@ -3,7 +3,8 @@
 
    支援：
    - GET/POST/PATCH/DELETE /rest/v1/<table>
-   - 查詢參數 eq.<值> 過濾、order=<col>.asc|desc、select 中的欄位缺失模擬（42703）
+   - 查詢參數 eq.<值>／lt.／gt.／is.*／in.(a,b,c) 過濾、order=<col>.asc|desc、select 中的欄位缺失模擬（42703）
+  - 注意：**不支援 limit／offset 切片、不回 count 標頭、刪除要 .select() 才會回傳被刪的列**
    - maybeSingle()（Accept: application/vnd.pgrst.object+json）→ 0 筆回 406
    - select('*, competitions(...)') 的外鍵展開（僅 registrations → competitions）
    - 資料表缺失模擬（42P01）
@@ -28,6 +29,10 @@ function matches(row, params) {
             if (!(String(row[key]) < rawValue.slice(3))) return false;
         } else if (rawValue.startsWith('gt.')) {
             if (!(String(row[key]) > rawValue.slice(3))) return false;
+        } else if (rawValue.startsWith('in.')) {
+            // PostgREST 的 in.(1,2,3)：字串化的值比對（v2.17.0 批次標記錯誤日誌需要）
+            const list = rawValue.slice(3).replace(/^\(|\)$/g, '').split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
+            if (!list.includes(String(row[key]))) return false;
         }
     }
     return true;

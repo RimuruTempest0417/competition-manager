@@ -7,12 +7,18 @@
  *   3. 自動分類並給出「建議動作」，比對 Roadmap 現有內容，標示「已排入 Roadmap」或「新增（待決定）」
  *   4. 產出 docs/錯誤日誌分析.md（完整報告），並更新 docs/功能總覽與規劃.md 的
  *      「## 九、自動偵測到的問題（待修復清單）」整節
- *   5. 加 --upload 時，再把文件推上 Google Doc（呼叫 scripts/doc-sync.py）
+ *   5. **把剛剛讀到的那批（未處理的）紀錄標記為已處理**（v2.17.0）：
+ *      呼叫 POST /api/admin/error-logs/resolve，resolved_by 記為巡檢身分，
+ *      並在稽核日誌留下 RESOLVE_ERROR_LOGS。這樣清單不會一直累積同一批舊訊息，
+ *      首頁提示橫幅也才會回到「沒有未處理錯誤」——下一批新錯誤照樣會再提示。
+ *      （想只看不動資料就用 `--no-resolve`。）
+ *   6. 加 --upload 時，再把文件推上 Google Doc（呼叫 scripts/doc-sync.py）
  *
  * 用法：
- *   node scripts/error-log-triage.js                 # 產生／更新本機檔案並印出摘要
+ *   node scripts/error-log-triage.js                 # 讀取 → 分析 → 標記已處理 → 更新檔案
+ *   node scripts/error-log-triage.js --no-resolve    # 只讀取／分析，不標記已處理
  *   node scripts/error-log-triage.js --upload        # 同時更新 Google Doc
- *   node scripts/error-log-triage.js --dry-run       # 只印摘要，不寫任何檔案
+ *   node scripts/error-log-triage.js --dry-run       # 只印摘要，不寫任何檔案、不標記
  *   node scripts/error-log-triage.js --url http://127.0.0.1:3200
  *   node scripts/error-log-triage.js --token <JWT>   # 不自己簽發權杖時使用
  *
@@ -42,6 +48,9 @@ const opt = (name, dflt) => {
 const SITE = (opt('--url', process.env.TRIAGE_URL || 'https://competition-manager-hazel.vercel.app')).replace(/\/+$/, '');
 const DRY_RUN = flag('--dry-run');
 const UPLOAD = flag('--upload');
+// v2.17.0：預設「讀取後順手標記已處理」，--no-resolve 可只看不動
+const RESOLVE = !flag('--no-resolve');
+const RESOLVE_CHUNK = 500;
 const NOW = Date.now();
 
 /* ---------- 讀取設定 ---------- */
@@ -123,10 +132,45 @@ function groupErrorLogs(logs, nowMs = Date.now()) {
         .sort((a, b) => (b.unresolved - a.unresolved) || (b.count - a.count));
 }
 
+/* ---------- 標記已處理（v2.17.0） ---------- */
+// 只挑「還沒被處理」的紀錄，並去重；已處理的不必再送（也讓重跑變得安全／可重複）
+function collectResolvableIds(logs) {
+    const ids = [];
+    for (const log of logs || []) {
+        if (log && log.resolved !== true && log.id !== undefined && log.id !== null) ids.push(log.id);
+    }
+    return [...new Set(ids)];
+}
+
+function chunk(list, size) {
+    const out = [];
+    for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+    return out;
+}
+
+// 分批呼叫 API（單次上限 500，超過就切開）；回傳總共標記了幾筆
+async function resolveErrorLogs({ site, token, ids, fetchImpl = fetch, chunkSize = RESOLVE_CHUNK }) {
+    let resolved = 0;
+    const batches = chunk(ids, chunkSize);
+    for (const batch of batches) {
+        const res = await fetchImpl(`${site}/api/admin/error-logs/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ ids: batch })
+        });
+        if (!res.ok) {
+            throw new Error(`標記已處理失敗（HTTP ${res.status}）`);
+        }
+        const body = await res.json();
+        resolved += Number(body.resolved) || 0;
+    }
+    return { resolved, batches: batches.length };
+}
+
 const PRIORITY_ORDER = { 高: 0, 中: 1, 低: 2 };
 
 /* ---------- 產生 Markdown 章節（純函式） ---------- */
-function renderSection(groups, roadmapText = '', nowMs = Date.now()) {
+function renderSection(groups, roadmapText = '', nowMs = Date.now(), resolveInfo = null) {
     const stamp = new Date(nowMs).toLocaleString('zh-TW', { timeZone: 'Asia/Macau', hour12: false });
     const lines = [
         SECTION_HEADING,
@@ -135,6 +179,9 @@ function renderSection(groups, roadmapText = '', nowMs = Date.now()) {
         '> 狀態欄的「新增」代表我還沒看到你決定優先度；「已排入 Roadmap」代表第八節已有對應項目。',
         ''
     ];
+    if (resolveInfo) {
+        lines.push(`> 🏷️ 本輪巡檢已把讀到的 ${resolveInfo.resolved} 筆未處理紀錄標記為已處理（${resolveInfo.by}）。首頁提示橫幅只會針對「下一批新錯誤」再提醒。`, '');
+    }
 
     if (!groups.length) {
         lines.push('目前沒有任何錯誤日誌紀錄。✅', '');
@@ -188,6 +235,9 @@ function replaceSection(md, sectionText) {
     return before + sectionText.replace(/\s*$/, '') + '\n' + after;
 }
 
+/* ---------- 身分（標記已處理時會記在 resolved_by 與稽核日誌） ---------- */
+const resolveIdentity = process.env.TRIAGE_USERNAME || 'rimuru';
+
 /* ---------- 取得權杖 ---------- */
 function ownerToken(env) {
     const explicit = opt('--token', '');
@@ -224,8 +274,29 @@ async function main() {
     }
 
     if (DRY_RUN) {
-        console.log('\n（--dry-run：未寫入任何檔案）');
+        console.log('\n（--dry-run：未寫入任何檔案、也不會標記已處理）');
         return;
+    }
+
+    /* ---------- 標記已處理（v2.17.0） ----------
+       為什麼放在寫檔案「之前」：分析結果會記錄「本輪標記了幾筆」，
+       而且標記失敗時仍要把報告寫出來（報告本身就是那批紀錄的永久存檔）。 */
+    let resolveInfo = null;
+    const resolvableIds = collectResolvableIds(logs);
+    if (!RESOLVE) {
+        console.log(`\n🏷️  （--no-resolve：維持 ${resolvableIds.length} 筆未處理，未標記）`);
+    } else if (resolvableIds.length === 0) {
+        console.log('\n🏷️  沒有未處理的紀錄需要標記（上一輪已清）');
+        resolveInfo = { resolved: 0, by: resolveIdentity, batches: 0 };
+    } else {
+        try {
+            const result = await resolveErrorLogs({ site: SITE, token, ids: resolvableIds });
+            resolveInfo = { resolved: result.resolved, by: resolveIdentity, batches: result.batches };
+            console.log(`\n🏷️  已標記 ${result.resolved} 筆為已處理（resolved_by=${resolveIdentity}，分 ${result.batches} 批）`);
+        } catch (err) {
+            console.warn(`\n⚠️  標記已處理失敗：${err.message}（報告仍會照常產出；下次巡檢會再試）`);
+            resolveInfo = { resolved: 0, by: resolveIdentity, batches: 0, error: err.message };
+        }
     }
 
     // 完整報告
@@ -235,8 +306,9 @@ async function main() {
         `- 產生時間：${new Date(NOW).toLocaleString('zh-TW', { timeZone: 'Asia/Macau', hour12: false })}`,
         `- 來源：${SITE}/api/admin/error-logs`,
         `- 取得筆數：${logs.length}（上限 500）`,
+        `- 標記已處理：${resolveInfo ? `${resolveInfo.resolved} 筆（by ${resolveInfo.by}）` : '未執行'}`,
         '',
-        renderSection(groups, '', NOW)
+        renderSection(groups, '', NOW, resolveInfo)
     ].join('\n');
     fs.writeFileSync(REPORT_PATH, report);
     console.log(`\n💾 已寫入 ${path.relative(ROOT, REPORT_PATH)}`);
@@ -244,7 +316,7 @@ async function main() {
     // 更新主要規劃文件的第九節
     if (fs.existsSync(MD_PATH)) {
         const md = fs.readFileSync(MD_PATH, 'utf8');
-        const updated = replaceSection(md, renderSection(groups, md, NOW));
+        const updated = replaceSection(md, renderSection(groups, md, NOW, resolveInfo));
         fs.writeFileSync(MD_PATH, updated);
         console.log(`💾 已更新 ${path.relative(ROOT, MD_PATH)} 的「九、自動偵測到的問題」`);
     }
@@ -261,7 +333,7 @@ async function main() {
     }
 }
 
-module.exports = { groupErrorLogs, classify, renderSection, replaceSection, SECTION_HEADING };
+module.exports = { groupErrorLogs, classify, renderSection, replaceSection, SECTION_HEADING, collectResolvableIds, chunk, resolveErrorLogs };
 
 if (require.main === module) {
     main().catch((err) => { console.error('❌ 執行失敗：', err.message); process.exit(1); });
