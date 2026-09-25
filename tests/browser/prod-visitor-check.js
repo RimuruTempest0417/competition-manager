@@ -31,6 +31,7 @@ const check = (ok, label, extra = '') => {
     fs.mkdirSync(SHOT_DIR, { recursive: true });
     console.log(`\n🧪 正式站訪客視角檢查：${SITE}（預期版本 v${EXPECTED}）`);
     const browser = await Browser.launch({ width: 414, height: 896, mobile: true });
+    let exitCode = 1;
     try {
         await browser.goto(SITE, { waitMs: 2000 });
 
@@ -59,10 +60,13 @@ const check = (ok, label, extra = '') => {
         await browser.screenshot(shot);
         console.log(`\n   📸 截圖：${shot}`);
         console.log(`\n══════ 訪客視角檢查：${pass} 通過 / ${fail} 失敗 ══════`);
-        process.exit(fail === 0 ? 0 : 1);
+        exitCode = fail === 0 ? 0 : 1;
     } finally {
         await browser.close();
     }
+    // 一定要等 finally 把 Chrome 收掉再結束行程：在 try 裡直接 process.exit()
+    // 會讓 finally 的 await 來不及跑，留下一隻沒人管的 headless Chrome（v2.16.0 修）。
+    process.exit(exitCode);
 })().catch((err) => {
     console.error('❌ 檢查執行失敗：', err.message);
     process.exit(1);
