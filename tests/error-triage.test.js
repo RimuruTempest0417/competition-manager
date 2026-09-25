@@ -18,6 +18,8 @@ test('v2.14.0 錯誤分類：已知類型與未知類型', () => {
     assert.strictEqual(classify('login_error').label, '帳號流程錯誤');
     assert.match(classify('fetch_error_logs_error').label, /讀取資料失敗/);
     assert.strictEqual(classify('auth_invalid_token').priority, '低');
+    assert.strictEqual(classify('malformed_json_body').priority, '低', '用戶端請求錯誤只記錄、不排入修復');
+    assert.match(classify('request_body_too_large').label, /用戶端請求/);
     assert.match(classify('login_lockout').label, /安全事件/);
     assert.match(classify('push_send_error').label, /推播/);
     assert.match(classify('js_runtime_issue').label, /前端/);

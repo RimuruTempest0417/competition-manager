@@ -145,7 +145,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>回歸測試</td><td>每次發版都重跑 v2.7.0／v2.8.0／v2.9.0 的瀏覽器實測，確認舊功能未被破壞。</td></tr>
 <tr><td>線上驗證</td><td>部署後比對線上與本地檔案雜湊、檢查 CSP 與安全標頭、檢查新端點的降級行為。</td></tr>
 <tr><td>手機尺寸實測</td><td>headless Chrome 以 390×844（iPhone 14）與 360×640（iPhone SE） 驗證：橫向溢出、觸控目標高度、彈窗是否超出視窗、輸入框字級、篩選列排版、深色模式。</td></tr>
-<tr><td>目前規模</td><td>npm test <strong>103 項全綠</strong>（v2.14.0 新增錯誤日誌巡檢 4 項、登入鎖定雙計數 2 項、登入提示統計 1 項）；瀏覽器檢查 <strong>13 項全綠</strong>（<code>tests/browser/alert-banner-check.js</code>：真實 Chrome 手機尺寸驗證提示橫幅、稍後再看、新錯誤再提示、處理完不再提示、無前端例外）；正式站煙霧測試 <strong>45 項全綠</strong>（<code>tests/browser/prod-smoke.js</code>：版本、安全性標頭、靜態檔雜湊、未登入拒絕、金鑰類型與明碼統計，只讀不寫）；手機實測 <strong>51 項</strong>（含 v2.12.2 的「先點選單再選值」真實操作順序、取消回復、提權阻擋、錯誤日誌篩選與標記、推播紀錄、手機版面）；v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗。</td></tr>
+<tr><td>目前規模</td><td>npm test <strong>103 項全綠</strong>（v2.14.0 新增錯誤日誌巡檢 4 項、登入鎖定雙計數 2 項、登入提示統計 1 項）；瀏覽器檢查 <strong>13 項全綠</strong>（<code>tests/browser/alert-banner-check.js</code>：真實 Chrome 手機尺寸驗證提示橫幅、稍後再看、新錯誤再提示、處理完不再提示、無前端例外）；正式站煙霧測試 <strong>48 項全綠</strong>（<code>tests/browser/prod-smoke.js</code>：版本、安全性標頭、靜態檔雜湊、未登入拒絕、金鑰類型與明碼統計，只讀不寫）；手機實測 <strong>51 項</strong>（含 v2.12.2 的「先點選單再選值」真實操作順序、取消回復、提權阻擋、錯誤日誌篩選與標記、推播紀錄、手機版面）；v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗。</td></tr>
 </table>
 <h2>六、已知限制（誠實說明）</h2>
 <ul><li>~~CRON_SECRET 尚未設定~~ <strong>已設定並驗證</strong>（2026-09-25 實測：未帶權杖回 401、不再是 503），每日自動推播已啟用（Vercel Cron 每日 01:00 UTC ＝ 澳門時間 09:00）。</li></ul>
@@ -253,13 +253,14 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>使用者規模</td><td>帳號／賽事／報名數成長後的效能與權限邊界</td></tr>
 </table>
 <h2>九、自動偵測到的問題（待修復清單）</h2>
-<blockquote><p>本節由 <code>scripts/error-log-triage.js</code> 自動產生並覆寫（最後更新：2026/9/25 21:56:29）。資料來源：線上錯誤日誌（透過自家 API 讀取）。</p><p>狀態欄的「新增」代表我還沒看到你決定優先度；「已排入 Roadmap」代表第八節已有對應項目。</p></blockquote>
+<blockquote><p>本節由 <code>scripts/error-log-triage.js</code> 自動產生並覆寫（最後更新：2026/9/25 21:58:57）。資料來源：線上錯誤日誌（透過自家 API 讀取）。</p><p>狀態欄的「新增」代表我還沒看到你決定優先度；「已排入 Roadmap」代表第八節已有對應項目。</p></blockquote>
 <h3>9.1 需要處理的問題</h3>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><th style="background:#f1f5f9;text-align:left">狀態</th><th style="background:#f1f5f9;text-align:left">優先</th><th style="background:#f1f5f9;text-align:left">錯誤類型</th><th style="background:#f1f5f9;text-align:left">次數</th><th style="background:#f1f5f9;text-align:left">未處理</th><th style="background:#f1f5f9;text-align:left">近 24 小時</th><th style="background:#f1f5f9;text-align:left">最後發生</th><th style="background:#f1f5f9;text-align:left">建議動作</th><th style="background:#f1f5f9;text-align:left">範例訊息</th></tr>
-<tr><td>已處理／觀察中</td><td>高</td><td><code>unhandled_server_error</code></td><td>1</td><td>0</td><td>0</td><td>2026/9/24 01:36:44</td><td>看範例訊息定位來源；若重複出現，加入單元測試防回歸</td><td>Unexpected token &#x27;b&#x27;, &quot;{&quot;username&quot;: broken&quot; is not valid JSON</td></tr>
-<tr><td>已處理／觀察中</td><td>中</td><td><code>js_runtime_issue</code></td><td>1</td><td>0</td><td>0</td><td>2026/9/24 01:15:06</td><td>依裝置與訊息判斷前端相容性問題</td><td>Script error.</td></tr>
-<tr><td><strong>新增</strong></td><td>低</td><td><code>auth_invalid_token</code></td><td>1</td><td>1</td><td>1</td><td>2026/9/25 21:42:54</td><td>多半是使用者停留過久，屬正常；若同一來源大量出現再處理</td><td>jwt expired</td></tr>
+<tr><td>已排入 Roadmap</td><td>高</td><td><code>unhandled_server_error</code></td><td>1</td><td>0</td><td>0</td><td>2026/9/24 01:36:44</td><td>看範例訊息定位來源；若重複出現，加入單元測試防回歸</td><td>Unexpected token &#x27;b&#x27;, &quot;{&quot;username&quot;: broken&quot; is not valid JSON</td></tr>
+<tr><td>已排入 Roadmap</td><td>中</td><td><code>js_runtime_issue</code></td><td>1</td><td>0</td><td>0</td><td>2026/9/24 01:15:06</td><td>依裝置與訊息判斷前端相容性問題</td><td>Script error.</td></tr>
+<tr><td><strong>新增</strong></td><td>低</td><td><code>malformed_json_body</code></td><td>1</td><td>1</td><td>1</td><td>2026/9/25 21:58:40</td><td>正常不需修；同一來源大量出現代表有人在探測，再考慮封鎖</td><td>Unexpected token &#x27;b&#x27;, &quot;{&quot;username&quot;: broken&quot; is not valid JSON</td></tr>
+<tr><td>已排入 Roadmap</td><td>低</td><td><code>auth_invalid_token</code></td><td>1</td><td>1</td><td>1</td><td>2026/9/25 21:42:54</td><td>多半是使用者停留過久，屬正常；若同一來源大量出現再處理</td><td>jwt expired</td></tr>
 </table>
-<p><strong>統計</strong>：共 3 種錯誤類型、3 筆紀錄，其中未處理 1 筆。</p>
+<p><strong>統計</strong>：共 4 種錯誤類型、4 筆紀錄，其中未處理 2 筆。</p>
 </body></html>

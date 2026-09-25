@@ -186,7 +186,7 @@ competition-manager/
   - 比對 Roadmap 現有內容，自動標示「**新增**（待你決定優先度）／已排入 Roadmap／已處理」。
   - 自動更新 `docs/功能總覽與規劃.md` 的第九節與 `docs/錯誤日誌分析.md`；加 `--upload` 會一併同步 Google Doc。
 - **瀏覽器檢查工具進 repo**：`tests/browser/lib/cdp.js`（零外部依賴的 Chrome DevTools Protocol 驅動，用 Node 內建 WebSocket）＋ `tests/browser/alert-banner-check.js`（真實 Chrome、手機尺寸，驗證提示橫幅的出現／查看日誌／稍後再看／新錯誤再提示／處理完消失，並檢查沒有前端例外）。
-- **測試**：`npm test` **103/103**；瀏覽器檢查 **13/13**；正式站煙霧測試 **45/45**（新增摘要端點與登入提示欄位斷言）。
+- **測試**：`npm test` **103/103**；瀏覽器檢查 **13/13**；正式站煙霧測試 **48/48**（新增摘要端點、登入提示欄位與用戶端錯誤分流斷言）。
 
 ### v2.13.0 (2026-09-26) - 資料庫存取安全強化（service_role 金鑰 + 啟用 RLS 的準備）
 

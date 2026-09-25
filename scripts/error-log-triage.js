@@ -62,6 +62,7 @@ const RULES = [
     { match: /^unhandled_server_error$/, label: '未預期的伺服器錯誤', action: '看範例訊息定位來源；若重複出現，加入單元測試防回歸', priority: '高' },
     { match: /^fetch_(error_logs|competitions|registrations|teams|push)/, label: '讀取資料失敗', action: '檢查資料庫查詢與欄位探測邏輯（可能與 migration 狀態有關）', priority: '中' },
     { match: /login_lockout|login_ip_throttled/, label: '登入失敗鎖定（安全事件）', action: '多為有人在猜密碼；確認是否為正常使用者打錯，必要時封鎖來源', priority: '中' },
+    { match: /malformed_json_body|request_body_too_large/, label: '用戶端請求錯誤（v2.14.0 已分流為 4xx）', action: '正常不需修；同一來源大量出現代表有人在探測，再考慮封鎖', priority: '低' },
     { match: /^auth_invalid_token/, label: '權杖無效／過期', action: '多半是使用者停留過久，屬正常；若同一來源大量出現再處理', priority: '低' },
     { match: /login_error|register_user_error|change_password_error/, label: '帳號流程錯誤', action: '檢查登入／註冊／改密碼流程的例外處理', priority: '高' },
     { match: /password_hash_upgrade_error/, label: '密碼雜湊升級失敗', action: '檢查資料庫寫入權限與欄位狀態', priority: '高' },
