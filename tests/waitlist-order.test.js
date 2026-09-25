@@ -1,0 +1,179 @@
+/* v2.21.0：候補順位（手動調整）與指定遞補的規則規格書
+ *
+ * 這些規則是前後端共用的（public/js/competition-state.js），所以用純函式測試就等於
+ * 同時驗證「介面顯示的順位」與「後端遞補的人」是同一套答案。
+ * 一律傳入明確資料（不依賴當下時間），測試不會時好時壞。
+ */
+const test = require('node:test');
+const assert = require('node:assert');
+const CS = require('../public/js/competition-state.js');
+
+let seq = 0;
+const row = (id, status, createdAt, order) => ({
+    id,
+    status,
+    created_at: createdAt || `2026-09-01T0${(seq = (seq % 8) + 1)}:00:00Z`,
+    waitlist_order: order === undefined ? null : order,
+    is_deleted: false
+});
+
+const users = (rows) => rows.map((r) => r.id);
+
+test('候補順位：沒有手動排過時，先報名先排', () => {
+    const rows = [
+        row(3, 'waitlisted', '2026-09-01T03:00:00Z'),
+        row(1, 'waitlisted', '2026-09-01T01:00:00Z'),
+        row(2, 'waitlisted', '2026-09-01T02:00:00Z')
+    ];
+    assert.deepStrictEqual(users(CS.waitlistQueue(rows)), [1, 2, 3]);
+});
+
+test('候補順位：手動排定的數字優先於報名時間', () => {
+    const rows = [
+        row(1, 'waitlisted', '2026-09-01T01:00:00Z', 3),
+        row(2, 'waitlisted', '2026-09-01T02:00:00Z', 1),
+        row(3, 'waitlisted', '2026-09-01T03:00:00Z', 2)
+    ];
+    assert.deepStrictEqual(users(CS.waitlistQueue(rows)), [2, 3, 1]);
+});
+
+test('候補順位：只有部分人排過時，排過的在前面、其他人照報名時間', () => {
+    const rows = [
+        row(1, 'waitlisted', '2026-09-01T01:00:00Z', null),   // 最早報名，但沒被排過
+        row(2, 'waitlisted', '2026-09-01T05:00:00Z', 1),      // 管理員排到第一位
+        row(3, 'waitlisted', '2026-09-01T02:00:00Z', null)
+    ];
+    assert.deepStrictEqual(users(CS.waitlistQueue(rows)), [2, 1, 3]);
+});
+
+test('候補順位：0／負數／非數字一律視為「沒排過」（不會插到最前面）', () => {
+    const rows = [
+        row(1, 'waitlisted', '2026-09-01T01:00:00Z', 0),
+        row(2, 'waitlisted', '2026-09-01T02:00:00Z', -5),
+        row(3, 'waitlisted', '2026-09-01T03:00:00Z', 'abc'),
+        row(4, 'waitlisted', '2026-09-01T04:00:00Z', 2)
+    ];
+    assert.deepStrictEqual(users(CS.waitlistQueue(rows)), [4, 1, 2, 3]);
+});
+
+test('候補順位：只有候補的人算在名單裡（已核准／待審核／未錄取都不算）', () => {
+    const rows = [
+        row(1, 'confirmed', '2026-09-01T01:00:00Z', 1),
+        row(2, 'pending', '2026-09-01T02:00:00Z', 2),
+        row(3, 'rejected', '2026-09-01T03:00:00Z', 3),
+        row(4, 'waitlisted', '2026-09-01T04:00:00Z', null)
+    ];
+    assert.deepStrictEqual(users(CS.waitlistQueue(rows)), [4]);
+    assert.strictEqual(CS.waitlistPosition(rows, 1), null);
+    assert.strictEqual(CS.waitlistPosition(rows, 4), 1);
+});
+
+test('候補順位：waitlistPosition 算的是「畫面顯示的第幾位」', () => {
+    const rows = [
+        row(10, 'waitlisted', '2026-09-01T01:00:00Z', 2),
+        row(11, 'waitlisted', '2026-09-01T02:00:00Z', 1),
+        row(12, 'waitlisted', '2026-09-01T03:00:00Z', 3)
+    ];
+    assert.strictEqual(CS.waitlistPosition(rows, 11), 1);
+    assert.strictEqual(CS.waitlistPosition(rows, 10), 2);
+    assert.strictEqual(CS.waitlistPosition(rows, 12), 3);
+    assert.strictEqual(CS.waitlistPosition(rows, 999), null);
+});
+
+test('調整順位：給完整順序就回每個人該寫入的 waitlist_order（1 開始）', () => {
+    const rows = [
+        row(1, 'waitlisted', '2026-09-01T01:00:00Z'),
+        row(2, 'waitlisted', '2026-09-01T02:00:00Z'),
+        row(3, 'waitlisted', '2026-09-01T03:00:00Z')
+    ];
+    const plan = CS.planWaitlistOrder(rows, [3, 1, 2]);
+    assert.strictEqual(plan.ok, true);
+    assert.deepStrictEqual(plan.updates, [
+        { id: '3', waitlist_order: 1 },
+        { id: '1', waitlist_order: 2 },
+        { id: '2', waitlist_order: 3 }
+    ]);
+});
+
+test('調整順位：漏掉名單裡的人就整批拒絕（不寫半套結果）', () => {
+    const rows = [row(1, 'waitlisted'), row(2, 'waitlisted'), row(3, 'waitlisted')];
+    const plan = CS.planWaitlistOrder(rows, [3, 1]);
+    assert.strictEqual(plan.ok, false);
+    assert.match(plan.reason, /漏掉 1 筆/);
+    assert.deepStrictEqual(plan.updates, []);
+});
+
+test('調整順位：夾帶不在候補名單裡的 id 也整批拒絕', () => {
+    const rows = [
+        row(1, 'waitlisted', '2026-09-01T01:00:00Z'),
+        row(2, 'waitlisted', '2026-09-01T02:00:00Z'),
+        row(9, 'confirmed', '2026-09-01T03:00:00Z')   // 已核准的人
+    ];
+    const plan = CS.planWaitlistOrder(rows, [2, 1, 9]);
+    assert.strictEqual(plan.ok, false);
+    assert.match(plan.reason, /不在候補名單/);
+});
+
+test('調整順位：重複的 id 也整批拒絕', () => {
+    const rows = [row(1, 'waitlisted'), row(2, 'waitlisted')];
+    const plan = CS.planWaitlistOrder(rows, [1, 1]);
+    assert.strictEqual(plan.ok, false);
+    assert.match(plan.reason, /重複/);
+});
+
+test('指定遞補：名額還有就照賽事設定（不需審核→已核准、需審核→待審核）', () => {
+    const rows = [
+        row(1, 'confirmed', '2026-09-01T01:00:00Z'),
+        row(2, 'waitlisted', '2026-09-01T02:00:00Z'),
+        row(3, 'waitlisted', '2026-09-01T03:00:00Z')
+    ];
+    const plain = CS.planPromotion({ max_registrations: 3 }, rows, 3);
+    assert.strictEqual(plain.ok, true);
+    assert.strictEqual(plain.status, 'confirmed');
+    assert.strictEqual(plain.position, 2);
+
+    const reviewed = CS.planPromotion({ max_registrations: 3, requires_approval: true }, rows, 3);
+    assert.strictEqual(reviewed.ok, true);
+    assert.strictEqual(reviewed.status, 'pending');
+});
+
+test('指定遞補：名額已滿時拒絕（不能靠指定遞補超收）', () => {
+    const rows = [
+        row(1, 'confirmed', '2026-09-01T01:00:00Z'),
+        row(2, 'pending', '2026-09-01T02:00:00Z'),
+        row(3, 'waitlisted', '2026-09-01T03:00:00Z')
+    ];
+    const plan = CS.planPromotion({ max_registrations: 2 }, rows, 3);
+    assert.strictEqual(plan.ok, false);
+    assert.match(plan.reason, /名額已滿（2 人）/);
+    assert.strictEqual(plan.status, null);
+});
+
+test('指定遞補：不在候補名單裡的人不能遞補（已核准、未錄取、不存在都一樣）', () => {
+    const rows = [
+        row(1, 'confirmed', '2026-09-01T01:00:00Z'),
+        row(2, 'rejected', '2026-09-01T02:00:00Z'),
+        row(3, 'waitlisted', '2026-09-01T03:00:00Z')
+    ];
+    for (const id of [1, 2, 999]) {
+        const plan = CS.planPromotion({ max_registrations: 5 }, rows, id);
+        assert.strictEqual(plan.ok, false, `id=${id} 應該被拒絕`);
+        assert.match(plan.reason, /不在候補名單/);
+    }
+});
+
+test('指定遞補：不限名額（max=0）也可以遞補', () => {
+    const rows = [row(1, 'confirmed', '2026-09-01T01:00:00Z'), row(2, 'waitlisted', '2026-09-01T02:00:00Z')];
+    const plan = CS.planPromotion({ max_registrations: 0 }, rows, 2);
+    assert.strictEqual(plan.ok, true);
+    assert.strictEqual(plan.status, 'confirmed');
+});
+
+test('指定遞補：手動排定的順位會反映在「原第幾順位」', () => {
+    const rows = [
+        row(1, 'waitlisted', '2026-09-01T01:00:00Z', 2),
+        row(2, 'waitlisted', '2026-09-01T02:00:00Z', 1)
+    ];
+    const plan = CS.planPromotion({ max_registrations: 5 }, rows, 1);
+    assert.strictEqual(plan.position, 2);   // 被管理員排到第二位
+});

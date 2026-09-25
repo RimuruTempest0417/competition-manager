@@ -1075,6 +1075,7 @@ const AUDIT_ACTION_LABELS = {
     REGISTER_APPROVED: '核准報名（審核）',
     REGISTER_REJECTED: '拒絕報名（審核）',
     PROMOTE_WAITLIST: '手動遞補候補',
+    REORDER_WAITLIST: '調整候補順位',
     AUTO_PROMOTE_WAITLIST: '自動遞補候補',
     PURGE_AUDIT_LOGS: '清理稽核日誌',
     '2FA_SETUP_STARTED': '開始設定兩步驟驗證',
@@ -2691,6 +2692,24 @@ const REGISTRATION_REVIEW_HINT =
 
 let registrationReviewSchemaCache = null;
 
+/* v2.21.0：候補順位手動調整只多一個欄位（registrations.waitlist_order）。
+   欄位不存在時：調整順序的端點回 503 ＋ 指引，候補順位自動退回「先報名先排」（舊行為），
+   指定遞補照常可用（它不需要這個欄位）。探測結果同樣有行程內快取。 */
+const WAITLIST_ORDER_HINT =
+    '資料庫尚未執行 v2.21.0 migration（migrations/2026-09-26-v2.21.0-waitlist-order.sql）：' +
+    '調整候補順位需要 registrations.waitlist_order 欄位（未執行時順位一律依報名時間排序）。';
+
+let waitlistOrderSchemaCache = null;
+
+async function waitlistOrderSchemaReady() {
+    if (waitlistOrderSchemaCache !== null) return waitlistOrderSchemaCache;
+    waitlistOrderSchemaCache = await columnExists('registrations', 'waitlist_order');
+    if (!waitlistOrderSchemaCache) {
+        console.warn('⚠️ 尚未執行 v2.21.0 migration：候補順位手動調整停用（順位依報名時間排序）');
+    }
+    return waitlistOrderSchemaCache;
+}
+
 /* 審核／候補功能是否可用（欄位探測結果有行程內快取，同一個行程內不會中途翻轉） */
 async function registrationReviewSchemaReady() {
     if (registrationReviewSchemaCache !== null) return registrationReviewSchemaCache;
@@ -2707,7 +2726,9 @@ async function registrationReviewSchemaReady() {
 
 /* 一場賽事的報名列與狀態統計（審核、候補、名額全部靠這一份） */
 async function registrationSummary(competitionId) {
-    const cols = 'id,user_id,username,team_id,team_name,note,status,is_deleted,created_at';
+    const orderReady = await waitlistOrderSchemaReady();
+    const cols = 'id,user_id,username,team_id,team_name,note,status,is_deleted,created_at'
+        + (orderReady ? ',waitlist_order' : '');
     const { data, error } = await supabase
         .from('registrations')
         .select(cols)
@@ -2892,13 +2913,14 @@ app.get('/api/my/registrations', authenticateToken, async (req, res) => {
 
         // v2.20.0：附上狀態中文與「候補第幾位」（同一場賽事的候補一起排順位）
         const reviewReady = await registrationReviewSchemaReady();
+        const orderReady = reviewReady ? await waitlistOrderSchemaReady() : false;
         const queues = {};
         if (reviewReady) {
             const compIds = Array.from(new Set(rows.map((r) => String(r.competition_id))));
             for (const cid of compIds) {
                 const { data: all } = await supabase
                     .from('registrations')
-                    .select('id,user_id,status,created_at,is_deleted')
+                    .select(`id,user_id,status,created_at,is_deleted${orderReady ? ',waitlist_order' : ''}`)
                     .eq('competition_id', cid)
                     .eq('is_deleted', false);
                 queues[cid] = CMCompetitionState.waitlistQueue(all || []).map((r) => String(r.id));
@@ -3097,12 +3119,11 @@ app.post('/api/competitions/:id/registrations/promote', authenticateToken, async
         const next = CMCompetitionState.nextWaitlist(rows);
         if (!next) return res.status(400).json({ error: '目前沒有候補名單' });
 
-        const max = parseInt(comp.max_registrations, 10) || 0;
-        if (max > 0 && counts.slots >= max) {
-            return res.status(400).json({ error: `名額已滿（${max} 人）：請先取消或拒絕其他報名，再遞補候補` });
-        }
+        // v2.21.0：名額守門改用共用純函式（與「指定遞補」同一份判斷，兩邊不可能走鐘）
+        const plan = CMCompetitionState.planPromotion(comp, rows, next.id);
+        if (!plan.ok) return res.status(400).json({ error: plan.reason });
 
-        const nextStatus = CMCompetitionState.promotionStatus(comp);
+        const nextStatus = plan.status;
         const patchFields = {
             status: nextStatus,
             reviewed_at: new Date().toISOString(),
@@ -3113,7 +3134,7 @@ app.post('/api/competitions/:id/registrations/promote', authenticateToken, async
         if (updErr) throw updErr;
 
         await logAudit(req.user.username, 'PROMOTE_WAITLIST', comp.id,
-            `手動遞補候補: ${next.username}（第 1 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}）`, req.userAgent);
+            `手動遞補候補: ${next.username}（第 ${plan.position} 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}）`, req.userAgent);
 
         const push = await notifyUser(next.user_id, {
             title: '候補遞補通知',
@@ -3132,6 +3153,117 @@ app.post('/api/competitions/:id/registrations/promote', authenticateToken, async
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
         await logErrorToDb(req, 'promote_waitlist_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+/* v2.21.0：指定遞補（不照順位）——管理員可以挑候補名單裡的任何一位先遞補。
+   為什麼要有：實務上候補第一名可能聯絡不到、或根本不是需要的組別，硬要「照順位」反而卡住。
+   「名額已滿不能遞補」的判斷走共用純函式 planPromotion()，與「遞補下一位」同一份規則。 */
+app.post('/api/registrations/:id/promote', authenticateToken, async (req, res) => {
+    if (!ADMIN_ROLES.has(req.user.role)) {
+        return res.status(403).json({ error: '權限不足：只有管理員以上可以遞補候補' });
+    }
+
+    try {
+        if (!(await registrationReviewSchemaReady())) return res.status(503).json({ error: REGISTRATION_REVIEW_HINT });
+
+        const { data: reg, error: findErr } = await supabase
+            .from('registrations')
+            .select('id,competition_id,user_id,username,status,is_deleted')
+            .eq('id', req.params.id)
+            .maybeSingle();
+        if (findErr) throw findErr;
+        if (!reg || reg.is_deleted) return res.status(404).json({ error: '找不到這筆報名' });
+
+        const comp = await fetchCompetition(reg.competition_id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const { rows } = await registrationSummary(reg.competition_id);
+        const plan = CMCompetitionState.planPromotion(comp, rows, reg.id);
+        if (!plan.ok) return res.status(400).json({ error: plan.reason });
+
+        const patchFields = {
+            status: plan.status,
+            reviewed_at: new Date().toISOString(),
+            reviewed_by: req.user.username,
+            review_note: `指定遞補（原第 ${plan.position} 順位）`
+        };
+        const { error: updErr } = await supabase.from('registrations').update(patchFields).eq('id', reg.id);
+        if (updErr) throw updErr;
+
+        await logAudit(req.user.username, 'PROMOTE_WAITLIST', comp.id,
+            `指定遞補候補: ${reg.username}（第 ${plan.position} 順位 → ${CMCompetitionState.REG_STATUS_LABELS[plan.status]}，未照順位）`,
+            req.userAgent);
+
+        const push = await notifyUser(reg.user_id, {
+            title: '候補遞補通知',
+            body: `${comp.name}：你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[plan.status]}`,
+            url: '/?view=myregs',
+            tag: `cm-reg-promote-${reg.id}`
+        });
+        await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
+
+        res.json({
+            message: `已遞補 ${reg.username}（原第 ${plan.position} 順位）`,
+            registration: Object.assign({}, reg, patchFields),
+            status_label: CMCompetitionState.REG_STATUS_LABELS[plan.status],
+            notified: push.sent
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'promote_specific_waitlist_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* v2.21.0：調整候補順位（管理員手動排序）。
+   前端送「完整的 id 順序」；少一筆、多一筆或重複都會整批拒絕（planWaitlistOrder），
+   避免有人剛好同時被遞補／取消時，寫出「少數人被默默擠到後面」的半套結果。 */
+app.post('/api/competitions/:id/waitlist/reorder', authenticateToken, async (req, res) => {
+    const competitionId = req.params.id;
+
+    if (!ADMIN_ROLES.has(req.user.role)) {
+        return res.status(403).json({ error: '權限不足：只有管理員以上可以調整候補順位' });
+    }
+
+    try {
+        if (!(await registrationReviewSchemaReady())) return res.status(503).json({ error: REGISTRATION_REVIEW_HINT });
+        if (!(await waitlistOrderSchemaReady())) return res.status(503).json({ error: WAITLIST_ORDER_HINT });
+
+        const comp = await fetchCompetition(competitionId);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const order = Array.isArray(req.body && req.body.order) ? req.body.order : null;
+        if (!order || !order.length) return res.status(400).json({ error: '請提供完整的候補順序（order 陣列）' });
+
+        const { rows } = await registrationSummary(competitionId);
+        const plan = CMCompetitionState.planWaitlistOrder(rows, order);
+        if (!plan.ok) return res.status(400).json({ error: plan.reason });
+
+        for (const update of plan.updates) {
+            const { error } = await supabase.from('registrations').update({ waitlist_order: update.waitlist_order }).eq('id', update.id);
+            if (error) throw error;
+        }
+
+        const label = (id) => (rows.find((r) => String(r.id) === String(id)) || {}).username || `#${id}`;
+        const names = plan.updates.map((u, i) => `${i + 1}.${label(u.id)}`);
+        const shown = names.length > 8 ? `${names.slice(0, 8).join('、')}…等 ${names.length} 人` : names.join('、');
+
+        await logAudit(req.user.username, 'REORDER_WAITLIST', comp.id,
+            `調整候補順位（${plan.updates.length} 人）: ${shown}`, req.userAgent);
+
+        // 回傳更新後的候補名單（前端不必再查一次，也順便讓它看到後端算出來的順位）
+        const { rows: after } = await registrationSummary(competitionId);
+        const queue = CMCompetitionState.waitlistQueue(after);
+        res.json({
+            message: `已更新候補順位（${plan.updates.length} 人）`,
+            waitlist: queue.map((r, i) => Object.assign({}, r, { waitlist_position: i + 1 }))
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'reorder_waitlist_error', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -3275,11 +3407,12 @@ app.get('/api/competitions/:id/teams', authenticateToken, async (req, res) => {
 
     try {
         const reviewReady = await registrationReviewSchemaReady();
+        const orderReady = reviewReady ? await waitlistOrderSchemaReady() : false;
         const [teamsRes, regsRes] = await Promise.all([
             supabase.from('competition_teams').select('*').eq('competition_id', competitionId).eq('is_deleted', false).order('id', { ascending: true }),
             supabase.from('registrations')
                 .select(reviewReady
-                    ? 'id,username,user_id,team_id,team_name,status,created_at'
+                    ? `id,username,user_id,team_id,team_name,status,created_at${orderReady ? ',waitlist_order' : ''}`
                     : 'id,username,user_id,team_id,team_name')
                 .eq('competition_id', competitionId)
                 .eq('is_deleted', false)
@@ -3313,6 +3446,8 @@ app.get('/api/competitions/:id/teams', authenticateToken, async (req, res) => {
             waitlisted,
             counts: CMCompetitionState.countByStatus(regs),
             schema_ready: reviewReady,
+            // v2.21.0：候補順位可不可以手動調整（有欄位才行；沒欄位時前端不顯示上下移按鈕）
+            canReorderWaitlist: orderReady,
             totalRegistrations: regs.length,
             canArrange: ADMIN_ROLES.has(req.user.role),
             canDelete: SUPER_ADMIN_ROLES.has(req.user.role)

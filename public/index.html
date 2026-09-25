@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.20.0</title>
+    <title>比賽管理系統 v2.21.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -1096,7 +1096,10 @@
                 </div>
                 <div id="waitlistSection" class="hidden">
                     <div class="flex items-center justify-between gap-2 mb-2">
+                        <div>
                         <p class="text-xs font-bold text-blue-700 uppercase">🕒 候補名單 (<span id="waitlistCount">0</span>)</p>
+                        <p id="waitlistOrderNote" class="text-[11px] text-slate-500 mt-0.5"></p>
+                    </div>
                         <button id="promoteWaitlistBtn"
                             class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-1.5 rounded-lg transition shrink-0">
                             ⬆️ 遞補下一位

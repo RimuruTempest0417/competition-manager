@@ -231,17 +231,75 @@
         };
     }
 
-    /* 候補順位：先報名先排（created_at，其次 id） */
+    /* v2.21.0：管理員可以手動調整候補順位（waitlist_order，從 1 開始）。
+       規則刻意單純好預測：
+         - 兩筆都手動排過 → 照手動數字（小的在前）
+         - 只有一筆手動排過 → 手動那筆在前（新報名的人一律排到最後，不會插隊）
+         - 兩筆都沒排過 → 先報名先排（created_at，其次 id）
+       waitlist_order 欄位不存在（未執行 migration）時，全部走「先報名先排」→ 功能自動退回舊行為。 */
+    const waitlistOrderNum = (row) => {
+        const v = Number(row && row.waitlist_order);
+        return Number.isFinite(v) && v > 0 ? v : null;
+    };
+
     function waitlistQueue(rows) {
         return (rows || [])
             .filter((r) => r && !r.is_deleted && normalizeRegStatus(r.status) === 'waitlisted')
             .slice()
             .sort((a, b) => {
+                const oa = waitlistOrderNum(a);
+                const ob = waitlistOrderNum(b);
+                if (oa !== null && ob !== null && oa !== ob) return oa - ob;
+                if (oa !== null && ob === null) return -1;
+                if (oa === null && ob !== null) return 1;
                 const ta = String(a.created_at || '');
                 const tb = String(b.created_at || '');
                 if (ta !== tb) return ta < tb ? -1 : 1;
                 return (Number(a.id) || 0) - (Number(b.id) || 0);
             });
+    }
+
+    /* 某筆報名在候補名單裡是第幾位（不在名單裡回 null） */
+    function waitlistPosition(rows, id) {
+        const queue = waitlistQueue(rows);
+        const i = queue.findIndex((r) => String(r.id) === String(id));
+        return i < 0 ? null : i + 1;
+    }
+
+    /* 調整候補順位：管理員給一組「完整的 id 順序」，回傳每一筆要寫入的 waitlist_order。
+       只認目前真的在候補名單裡的 id；數量或成員對不上就整批拒絕（回 ok:false）——
+       寧可叫管理員重新整理，也不要寫出「少數人被擠到後面」的半套結果。 */
+    function planWaitlistOrder(rows, orderIds) {
+        const queue = waitlistQueue(rows);
+        const current = queue.map((r) => String(r.id));
+        const wanted = (orderIds || []).map((id) => String(id));
+        const missing = current.filter((id) => !wanted.includes(id));
+        const unknown = wanted.filter((id) => !current.includes(id));
+        const duplicated = wanted.length !== new Set(wanted).size;
+        if (missing.length || unknown.length || duplicated) {
+            const bits = [];
+            if (duplicated) bits.push('有重複的項目');
+            if (missing.length) bits.push(`漏掉 ${missing.length} 筆`);
+            if (unknown.length) bits.push(`${unknown.length} 筆不在候補名單裡`);
+            return { ok: false, reason: `候補名單已變動（${bits.join('、')}），請重新整理後再調整`, updates: [] };
+        }
+        return { ok: true, reason: '', updates: wanted.map((id, i) => ({ id, waitlist_order: i + 1 })) };
+    }
+
+    /* 指定遞補（不照順位）：回 { ok, reason, status, position }。
+       「名額已滿時不能遞補」的守門寫在這裡，端點與測試共用同一份判斷。 */
+    function planPromotion(comp, rows, targetId) {
+        const queue = waitlistQueue(rows);
+        const index = queue.findIndex((r) => String(r.id) === String(targetId));
+        if (index < 0) {
+            return { ok: false, reason: '這筆報名不在候補名單裡（可能已被遞補、取消或改成未錄取）', status: null, position: null };
+        }
+        const counts = countByStatus(rows);
+        const max = parseInt(comp && comp.max_registrations, 10) || 0;
+        if (max > 0 && counts.slots >= max) {
+            return { ok: false, reason: `名額已滿（${max} 人）：請先取消或拒絕其他報名，再遞補候補`, status: null, position: index + 1 };
+        }
+        return { ok: true, reason: '', status: promotionStatus(comp), position: index + 1 };
     }
 
     /* 有人讓出名額時，該遞補誰？（第一個候補，可排除剛取消的那筆） */
@@ -265,6 +323,8 @@
         LABELS, TONES, evaluate, registrationState, timeline, parseTimestamp, parseLocalDateTime, fmtDate, fmtDateTime,
         // v2.20.0：報名審核與候補
         REG_STATUS_LABELS, REG_STATUS_TONES, countByStatus, normalizeRegStatus, reviewFlags,
-        decideRegistration, waitlistQueue, nextWaitlist, promotionStatus
+        decideRegistration, waitlistQueue, nextWaitlist, promotionStatus,
+        // v2.21.0：指定遞補與候補順位手動調整
+        waitlistPosition, planWaitlistOrder, planPromotion, waitlistOrderNum
     };
 }));
