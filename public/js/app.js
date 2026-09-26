@@ -1083,6 +1083,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         else if (btn.dataset.action === 'remove-member') removeTeamMember(Number(btn.dataset.id));
     });
     // v2.20.0：審核與候補（這些按鈕在彈窗內，不在 #mainContent 的事件委派範圍）
+    // v3.6.2：現場報到（在彈窗內，所以要自己綁）
+    document.getElementById('onsiteToggleBtn')?.addEventListener('click', () => toggleOnsiteForm());
+    document.getElementById('onsiteCancelBtn')?.addEventListener('click', () => toggleOnsiteForm(false));
+    document.getElementById('onsiteSubmitBtn')?.addEventListener('click', submitOnsiteRegistration);
+    document.getElementById('attendanceReloadBtn')?.addEventListener('click', () => { if (currentTeamComp) loadTeams(currentTeamComp.id); });
+    document.getElementById('attendanceSearch')?.addEventListener('input', (e) => {
+        attendanceQuery = e.target.value || '';
+        renderAttendanceSection(lastTeamsData || {});
+    });
+    document.getElementById('attendanceList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        if (btn.dataset.action === 'check-in') setAttendance(Number(btn.dataset.id), true);
+        else if (btn.dataset.action === 'undo-check-in') setAttendance(Number(btn.dataset.id), false);
+    });
     document.getElementById('promoteWaitlistBtn')?.addEventListener('click', promoteWaitlist);
     document.getElementById('pendingList')?.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
@@ -2160,6 +2175,8 @@ async function exportCompetitionRegistrationsCsv() {
                 ? CMCompetitionState.REG_STATUS_LABELS[CMCompetitionState.normalizeRegStatus(r.status)]
                 : (r.status || '')) || '',
             候補順位: Number(r.waitlist_position) > 0 ? r.waitlist_position : '',
+            簽到: r.attended_at ? `已簽到 ${String(r.attended_at).slice(11, 16)}` : '未簽到',
+            現場代報名: r.onsite ? '是' : '',
             備註: r.note || '',
             報名時間: String(r.created_at || '').slice(0, 16).replace('T', ' ')
         }));
@@ -2230,6 +2247,10 @@ function renderTeams(data) {
     const unassigned = data.unassigned || [];
     const canDelete = !!data.canDelete;
 
+    // ---------- v3.6.2：現場報到 ----------
+    lastTeamsData = data;
+    renderAttendanceSection(data);
+
     // ---------- v2.20.0：報名審核與候補 ----------
     renderReviewSection(data);
 
@@ -2282,6 +2303,120 @@ function renderTeams(data) {
                             </div>`).join('')}
                     </div>
                 </div>`).join('');
+    }
+}
+
+/* v3.6.2：現場報到（Roadmap 8.7 ⑤）
+ *
+ * 使用者定的方式：先由管理員在名單上勾選簽到（方案 C），所以這裡就是一張可搜尋的名單＋簽到鈕。
+ * 現場名單只放「正取」——候補還沒拿到資格，簽到會讓名額對不上帳（後端也會擋）。
+ * 另外提供「現場代報名」，讓沒線上報名的人當場加進來（名額上限仍然有效）。 */
+let attendanceQuery = '';
+let lastTeamsData = null;
+
+function toggleOnsiteForm(show) {
+    const form = document.getElementById('onsiteForm');
+    if (!form) return;
+    const willShow = typeof show === 'boolean' ? show : form.classList.contains('hidden');
+    form.classList.toggle('hidden', !willShow);
+    if (willShow) document.getElementById('onsiteName')?.focus();
+}
+
+function renderAttendanceSection(data) {
+    const section = document.getElementById('attendanceSection');
+    const listEl = document.getElementById('attendanceList');
+    const summaryEl = document.getElementById('attendanceSummary');
+    const hintEl = document.getElementById('attendanceHint');
+    if (!section || !listEl) return;
+
+    // 資料庫還沒跑 v3.6.2 migration → 整塊不出現（而不是顯示一個按了會失敗的介面）
+    if (data.attendance_schema_ready === false) {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+
+    const approved = Array.isArray(data.approved) ? data.approved : [];
+    const stats = data.attendance || { expected: approved.length, attended: 0, onsite: 0 };
+    const missing = Math.max(0, stats.expected - stats.attended);
+    if (summaryEl) {
+        summaryEl.innerText = `已簽到 ${stats.attended}／應到 ${stats.expected}`
+            + (stats.onsite ? `｜現場代報名 ${stats.onsite}` : '')
+            + `｜未到 ${missing}`;
+    }
+    if (hintEl) {
+        hintEl.classList.toggle('hidden', missing <= 0);
+        hintEl.innerText = missing > 0 ? `還有 ${missing} 位正取尚未簽到（候補要簽到請先遞補為正取）` : '';
+    }
+
+    const q = attendanceQuery.trim().toLowerCase();
+    const rows = q ? approved.filter((r) => String(r.username || '').toLowerCase().includes(q)) : approved;
+    if (!rows.length) {
+        listEl.innerHTML = `<p class="text-xs text-slate-500">${approved.length
+            ? '沒有符合搜尋的參加者。'
+            : '這場還沒有正取報名者，可用「➕ 現場代報名」臨時加人。'}</p>`;
+        return;
+    }
+    listEl.innerHTML = rows.map((r) => {
+        const checked = Boolean(r.attended_at);
+        const time = checked ? String(r.attended_at).slice(11, 16) : '';
+        return `
+            <div class="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 ${checked ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'}">
+                <p class="text-xs text-slate-700 truncate">
+                    ${checked ? '✅' : '⬜'} ${escapeHtml(r.username)}
+                    ${r.onsite ? '<span class="text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded px-1 ml-1">現場</span>' : ''}
+                    ${r.team_name ? `<span class="text-[11px] text-slate-400 ml-1">（${escapeHtml(r.team_name)}）</span>` : ''}
+                    ${checked ? `<span class="text-[11px] text-slate-500 ml-1">${time} ${escapeHtml(r.attended_by || '')}</span>` : ''}
+                </p>
+                <button data-action="${checked ? 'undo-check-in' : 'check-in'}" data-id="${r.id}"
+                    class="text-xs shrink-0 px-2.5 py-1 rounded-lg border transition ${checked
+                        ? 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600'}">
+                    ${checked ? '取消簽到' : '簽到'}
+                </button>
+            </div>`;
+    }).join('');
+}
+
+async function setAttendance(id, attended) {
+    try {
+        const res = await customFetch(`/api/registrations/${id}/attendance`, {
+            method: 'POST',
+            body: JSON.stringify({ attended })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '更新簽到狀態失敗');
+        setTeamMsg(data.message || '已更新簽到狀態', 'success');
+        if (currentTeamComp) await loadTeams(currentTeamComp.id);
+    } catch (err) {
+        setTeamMsg(err.message || '更新簽到狀態失敗', 'error');
+    }
+}
+
+async function submitOnsiteRegistration() {
+    if (!currentTeamComp) return;
+    const nameEl = document.getElementById('onsiteName');
+    const noteEl = document.getElementById('onsiteNote');
+    const name = (nameEl && nameEl.value ? nameEl.value : '').trim();
+    if (!name) return setTeamMsg('請填寫參加者姓名或帳號。', 'error');
+    const btn = document.getElementById('onsiteSubmitBtn');
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = '送出中…'; }
+        const res = await customFetch(`/api/competitions/${currentTeamComp.id}/onsite-registration`, {
+            method: 'POST',
+            body: JSON.stringify({ username: name, note: (noteEl && noteEl.value ? noteEl.value : '').trim() })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '現場代報名失敗');
+        if (nameEl) nameEl.value = '';
+        if (noteEl) noteEl.value = '';
+        toggleOnsiteForm(false);
+        setTeamMsg(data.message || '已完成現場代報名', 'success');
+        await loadTeams(currentTeamComp.id);
+    } catch (err) {
+        setTeamMsg(err.message || '現場代報名失敗', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '送出報名'; }
     }
 }
 

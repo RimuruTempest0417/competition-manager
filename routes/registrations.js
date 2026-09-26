@@ -11,7 +11,7 @@ const { hashPassword, verifyPassword, needsPasswordUpgrade } = require('../lib/p
 // v2.15.0：兩步驟驗證（TOTP）—— 純手寫實作，只用 Node 內建 crypto，無外部套件
 
 module.exports = function registerRegistrationsRoutes(app, ctx) {
-    const { ADMIN_ROLES, setAuthCookie, clearAuthCookie, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady } = ctx;
+    const { ATTENDANCE_HINT, ADMIN_ROLES, setAuthCookie, clearAuthCookie, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, attendanceSchemaReady, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady } = ctx;
 app.get('/api/registration-counts', async (req, res) => {
     try {
         // v2.20.0：公開端點只回「佔名額的人數」與「候補人數」這種聚合數字，不含任何個人資訊
@@ -729,8 +729,10 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
     try {
         const reviewReady = await registrationReviewSchemaReady();
         const orderReady = reviewReady ? await waitlistOrderSchemaReady() : false;
+        const attendanceReady = await attendanceSchemaReady();          // v3.6.2：現場報到欄位
         const isAdmin = ADMIN_ROLES.has(req.user.role);
         const baseCols = 'id,competition_id,user_id,username,team_id,team_name,note,status,created_at';
+        const attendanceCols = attendanceReady ? ',attended_at,attended_by,onsite' : '';
 
         // v3.0.0：分頁（opt-in，沒帶 limit 就維持原本行為）。
         // 有 ?status= 時，狀態是「正規化之後」才比對（舊資料可能不合標準值），資料庫層無法可靠過濾，
@@ -741,7 +743,7 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
 
         let regQuery = supabase
             .from('registrations')
-            .select(reviewReady ? `${baseCols},reviewed_at,reviewed_by,review_note${orderReady ? ',waitlist_order' : ''}` : baseCols)
+            .select(reviewReady ? `${baseCols},reviewed_at,reviewed_by,review_note${orderReady ? ',waitlist_order' : ''}${attendanceCols}` : `${baseCols}${attendanceCols}`)
             .eq('competition_id', competitionId)
             .eq('is_deleted', false)
             .order('id', { ascending: true });
@@ -786,14 +788,23 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
 
         const counts = CMCompetitionState.countByStatus(roster);
 
+        // v3.6.2：現場報到統計。只有「正取」會出現在現場名單上，所以應到＝正取人數。
+        const attendance = attendanceReady ? {
+            expected: roster.filter((r) => r.status === 'confirmed').length,
+            attended: roster.filter((r) => r.status === 'confirmed' && r.attended_at).length,
+            onsite: roster.filter((r) => r.onsite === true).length
+        } : undefined;
+
         if (!paging.paged) {
             const result = wantedStatus.length ? rows.filter((r) => wantedStatus.includes(r.status)) : rows;
             return res.json({
                 registrations: result,
                 total: result.length,
                 counts,
+                attendance: isAdmin ? attendance : undefined,
                 waitlist_queue: isAdmin ? queueIds : undefined,
-                schema_ready: reviewReady
+                schema_ready: reviewReady,
+                attendance_schema_ready: attendanceReady
             });
         }
 
@@ -804,8 +815,10 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
             registrations: sliced,
             total: fullList.length,
             counts,
+            attendance: isAdmin ? attendance : undefined,
             waitlist_queue: isAdmin ? queueIds : undefined,
             schema_ready: reviewReady,
+            attendance_schema_ready: attendanceReady,
             page: CMPaging.pagedResponse(sliced, {
                 limit: paging.limit, offset: paging.offset, total: fullList.length,
                 pagedBy: pageInDb ? 'db' : 'memory'
@@ -814,6 +827,161 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
         await logErrorToDb(req, 'list_registrations_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* v3.6.2：現場報到——由管理員勾選簽到／取消簽到（Roadmap 8.7 ⑤）
+ *
+ * 為什麼只有管理員：現場名單含個資，而且簽到等於「這人今天到了」，要留下操作者。
+ * 為什麼只有「正取」能簽到：候補與待審核還沒拿到資格，先簽到會讓現場名額對不上帳。
+ * 取消簽到刻意不做二次確認：勾錯是常態，取消本身也會留稽核紀錄（誰在什麼時候取消）。 */
+app.post('/api/registrations/:id/attendance', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const body = req.body || {};
+    const attended = body.attended === true || body.attended === 'true' || body.attended === 1;
+
+    if (!ADMIN_ROLES.has(req.user.role)) {
+        return res.status(403).json({ error: '權限不足：只有管理員以上可以處理現場報到' });
+    }
+
+    try {
+        if (!(await attendanceSchemaReady())) return res.status(503).json({ error: ATTENDANCE_HINT });
+
+        const { data: reg, error } = await supabase
+            .from('registrations')
+            .select('id,competition_id,username,status,is_deleted')
+            .eq('id', id)
+            .maybeSingle();
+        if (error) throw error;
+        if (!reg || reg.is_deleted) return res.status(404).json({ error: '找不到此報名紀錄' });
+
+        const comp = await fetchCompetition(reg.competition_id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const status = CMCompetitionState.normalizeRegStatus(reg.status);
+        if (attended && status !== 'confirmed') {
+            const label = CMCompetitionState.REG_STATUS_LABELS[status] || status;
+            return res.status(400).json({
+                error: `只有「正取」可以簽到（這一筆目前是${label}）：請先核准或遞補，再回來簽到`,
+                status
+            });
+        }
+
+        const patch = attended
+            ? { attended_at: new Date().toISOString(), attended_by: req.user.username }
+            : { attended_at: null, attended_by: null };
+        const { error: updateError } = await supabase.from('registrations').update(patch).eq('id', reg.id);
+        if (updateError) throw updateError;
+
+        await logAudit(req.user.username, attended ? 'REGISTER_ATTENDED' : 'REGISTER_ATTENDANCE_UNDONE', comp.id,
+            `${attended ? '現場簽到' : '取消現場簽到'}：${reg.username}（${comp.name}）`, req.userAgent);
+
+        res.json({
+            message: attended ? `${reg.username} 已簽到` : `已取消 ${reg.username} 的簽到`,
+            attended,
+            registration: {
+                id: reg.id,
+                username: reg.username,
+                attended_at: patch.attended_at,
+                attended_by: patch.attended_by
+            }
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'registration_attendance_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* v3.6.2：現場代報名——沒事先線上報名的人，由管理員當場建一筆報名（Roadmap 8.7 ⑤）
+ *
+ * 刻意允許在「報名已截止」時使用：賽事當天的臨時參加就是這樣發生的，
+ * 但名額上限仍然要守（額滿回 409 並說明要調高名額或先處理候補），而且一定留稽核。
+ * 同名（同帳號或同顯示名稱）在同場已報名 → 不重複建立，直接請管理員去名單上簽到。 */
+app.post('/api/competitions/:id/onsite-registration', authenticateToken, async (req, res) => {
+    const competitionId = req.params.id;
+    const body = req.body || {};
+    const name = cleanText(body.username, 60);
+
+    if (!ADMIN_ROLES.has(req.user.role)) {
+        return res.status(403).json({ error: '權限不足：只有管理員以上可以現場代報名' });
+    }
+    if (!name) return res.status(400).json({ error: '請填寫參加者姓名或帳號' });
+
+    try {
+        if (!(await attendanceSchemaReady())) return res.status(503).json({ error: ATTENDANCE_HINT });
+
+        const comp = await fetchCompetition(competitionId);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        // 先查「這場已經有沒有人同名」：現場最常見的其實是「這個人早就線上報名了」，
+        // 這種情況要告訴管理員「去名單上簽到就好」，比回一句「名額已滿」有用得多。
+        // （大小寫不拘，避免 Leo／leo 變成兩筆重複報名）
+        const { data: rosterRows, error: rosterError } = await supabase
+            .from('registrations')
+            .select('id,username,status')
+            .eq('competition_id', comp.id)
+            .eq('is_deleted', false);
+        if (rosterError) throw rosterError;
+        const duplicated = (rosterRows || []).find((r) => String(r.username || '').toLowerCase() === name.toLowerCase());
+        if (duplicated) {
+            return res.status(409).json({
+                error: `「${name}」在這場已經有報名紀錄（編號 ${duplicated.id}）：請直接在名單上簽到，不要重複報名`,
+                existing_id: duplicated.id
+            });
+        }
+
+        const { counts } = await registrationSummary(competitionId);
+        const max = parseInt(comp.max_registrations, 10) || 0;
+        if (max > 0 && counts.slots >= max) {
+            return res.status(409).json({
+                error: `名額已滿（${counts.slots}／${max}）：請先提高名額上限或處理候補，再現場代報名`,
+                full: true
+            });
+        }
+
+        // 姓名若剛好是某個帳號（不分大小寫），把 user_id 接上；臨時參加、沒有帳號的留 null
+        let linkedUserId = null;
+        const { data: accounts } = await supabase.from('admin_users').select('id,username');
+        const account = (accounts || []).find((u) => String(u.username || '').toLowerCase() === name.toLowerCase());
+        if (account) linkedUserId = account.id;
+
+        const teamName = cleanText(body.team_name, 40);
+        const reviewReady = await registrationReviewSchemaReady();
+        const payload = Object.assign({
+            competition_id: comp.id,
+            user_id: linkedUserId,
+            username: name,
+            team_name: teamName || null,
+            note: cleanText(body.note, 200) || null,
+            status: 'confirmed',
+            is_deleted: false,
+            onsite: true,
+            created_at: new Date().toISOString()
+        }, reviewReady ? {
+            // 現場代報名由管理員當場決定，直接視為已核准，並留下是誰處理的
+            reviewed_at: new Date().toISOString(),
+            reviewed_by: req.user.username,
+            review_note: '現場代報名'
+        } : {});
+
+        const { data, error } = await supabase.from('registrations').insert([payload]).select();
+        if (error) throw error;
+
+        await logAudit(req.user.username, 'REGISTER_ONSITE', comp.id,
+            `現場代報名：${name}（${comp.name}）${linkedUserId ? '｜已連結帳號' : ''}`, req.userAgent);
+
+        res.json({
+            message: `已為「${name}」完成現場報名`,
+            onsite: true,
+            linked_account: Boolean(linkedUserId),
+            registration: data && data[0]
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        if ((err && err.code) === '23505') return res.status(409).json({ error: '這位參加者在這場已經有報名紀錄了' });
+        await logErrorToDb(req, 'onsite_registration_error', err);
         res.status(500).json({ error: err.message });
     }
 });

@@ -100,14 +100,26 @@ test('使用說明：搜尋與分組', () => {
     assert.strictEqual(groups.reduce((n, g) => n + g.sections.length, 0), all.length, '分組後不能漏掉段落');
 });
 
-test('使用說明：不可以寫系統沒有的功能（現場簽到）', () => {
+test('使用說明：現場報到要寫出真正的規則（v3.6.2 起是系統功能）', () => {
     const text = JSON.stringify(CMGuide.GUIDE_SECTIONS) + JSON.stringify(CMGuide.ADMIN_CHECKLIST);
 
-    // 現場報到目前沒有系統功能（使用者 2026-09-26 決定先做人為勾選），說明必須誠實標示尚未上線
+    // v3.6.2 起現場報到是系統功能（管理員勾選簽到＋現場代報名），說明必須寫出真正的操作位置與限制
     const checkin = CMGuide.ADMIN_CHECKLIST.items.find((i) => /報到/.test(i.title));
     assert.ok(checkin, '操作清單要提到現場報到這一步（不然管理員會以為漏了）');
-    assert.match(checkin.where + checkin.detail, /尚未|人工|規劃/,
-        '現場報到必須誠實寫「尚未有系統功能／人工勾選」，不可假裝系統支援');
+    assert.match(checkin.where + checkin.detail, /現場報到|簽到/,
+        '現場報到要指出系統裡的位置與操作方式');
+    assert.match(checkin.detail, /正取|候補/, '要說明只有正取能簽到（候補要先遞補）');
+
+    const section = CMGuide.GUIDE_SECTIONS.find((sec) => sec.id === 'checkin-onsite');
+    assert.ok(section, '要有專門的「現場報到與現場代報名」段落');
+    const sectionText = section.intro + section.steps.join('') + (section.tip || '');
+    assert.match(sectionText, /只有正取/, '要寫清楚名單只有正取');
+    assert.match(sectionText, /取消簽到/, '要寫可以取消（勾錯是常態）');
+    assert.match(sectionText, /現場代報名/, '要寫現場代報名');
+    assert.match(sectionText, /名額上限/, '要提醒現場代報名仍守名額上限');
+    // 誠實：系統沒有 QR code 掃描，說明不可以暗示有
+    assert.ok(!/掃\s*QR|QR\s*code 報到|掃碼/.test(sectionText), '不可以寫系統沒有的 QR 掃碼報到');
+    assert.match(sectionText, /沒有 QR/, '要明講沒有 QR 掃描，避免有人以為要準備掃碼');
 
     // 不要留下佔位文字
     for (const bad of ['TODO', 'XXX', '待補', '（略）', 'lorem']) {

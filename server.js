@@ -1259,6 +1259,9 @@ const AUDIT_ACTION_LABELS = {
     REGISTER_APPROVED: '核准報名（審核）',
     REGISTER_REJECTED: '拒絕報名（審核）',
     PROMOTE_WAITLIST: '手動遞補候補',
+    REGISTER_ATTENDED: '現場簽到',
+    REGISTER_ATTENDANCE_UNDONE: '取消現場簽到',
+    REGISTER_ONSITE: '現場代報名',
     REORDER_WAITLIST: '調整候補順位',
     WAITLIST_NOTIFY: '調整遞補通知設定',
     DUPLICATE_COMPETITION: '複製賽事',
@@ -1745,6 +1748,16 @@ const REGISTRATION_REVIEW_HINT =
     '資料庫尚未執行 v2.20.0 migration（migrations/2026-09-26-v2.20.0-registration-review.sql）：' +
     '報名審核與候補需要 competitions.requires_approval／waitlist_enabled 與 registrations 的審核欄位。';
 
+/* ---------- v3.6.2：現場報到（簽到）與現場代報名（Roadmap 8.7 ⑤）----------
+   名單與簽到狀態都存在既有的 registrations 表（多三個欄位：attended_at／attended_by／onsite）。
+   規則：只有「正取（confirmed）」可以簽到；候補與待審核要先遞補／核准。
+   ------------------------------------------------------------------ */
+const ATTENDANCE_HINT =
+    '資料庫尚未執行 v3.6.2 migration（migrations/2026-09-27-v3.6.2-attendance.sql）：' +
+    '現場報到需要 registrations 的 attended_at／attended_by／onsite 欄位。';
+
+const attendanceSchemaReady = createSchemaProbe(() => columnExists('registrations', 'attended_at'));
+
 /* v2.22.0：遞補通知開關也只多一個欄位（competitions.waitlist_notify）。 */
 /* 候補異動紀錄一次最多往回抓幾筆（避免有人用 offset 無限翻） */
 const WAITLIST_HISTORY_MAX_WINDOW = 500;
@@ -2090,10 +2103,10 @@ async function logPushEvent(competitionId, kind, sentCount, extra) {
 // 各賽事報名人數（公開的彙總資訊，未執行 migration 時回空物件）
 
 /* ---------- 報名、審核、候補與帳號：v3.4.0 起移到 routes/registrations.js ---------- */
-require('./routes/registrations')(app, { ADMIN_ROLES, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, clearAuthCookie, requireAdmin, setAuthCookie, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
+require('./routes/registrations')(app, { ATTENDANCE_HINT, ADMIN_ROLES, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, attendanceSchemaReady, registrationReviewSchemaReady, registrationSummary, clearAuthCookie, requireAdmin, setAuthCookie, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
 
 /* ---------- 隊伍與隊員編排：v3.4.0 起移到 routes/teams.js ---------- */
-require('./routes/teams')(app, { ADMIN_ROLES, REGISTRATION_HINT, SUPER_ADMIN_ROLES, authenticateToken, cleanText, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, notifyOnPromote, registrationReviewSchemaReady, requireAdmin, requireSuperAdmin, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
+require('./routes/teams')(app, { ADMIN_ROLES, REGISTRATION_HINT, SUPER_ADMIN_ROLES, attendanceSchemaReady, authenticateToken, cleanText, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, notifyOnPromote, registrationReviewSchemaReady, requireAdmin, requireSuperAdmin, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
 
 const POSTER_THUMB_MAX_BYTES = 250 * 1024;   // 縮圖上限（前端產生的通常 20–60KB）
 

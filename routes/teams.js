@@ -7,7 +7,7 @@
 const CMCompetitionState = require('../public/js/competition-state');
 
 module.exports = function registerTeamsRoutes(app, ctx) {
-    const { ADMIN_ROLES, REGISTRATION_HINT, SUPER_ADMIN_ROLES, authenticateToken, cleanText, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, notifyOnPromote, registrationReviewSchemaReady, requireAdmin, requireSuperAdmin, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady } = ctx;
+    const { ADMIN_ROLES, REGISTRATION_HINT, SUPER_ADMIN_ROLES, attendanceSchemaReady, authenticateToken, cleanText, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, notifyOnPromote, registrationReviewSchemaReady, requireAdmin, requireSuperAdmin, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady } = ctx;
 app.get('/api/competitions/:id/teams', authenticateToken, async (req, res) => {
     const competitionId = req.params.id;
 
@@ -15,14 +15,16 @@ app.get('/api/competitions/:id/teams', authenticateToken, async (req, res) => {
         const reviewReady = await registrationReviewSchemaReady();
         const orderReady = reviewReady ? await waitlistOrderSchemaReady() : false;
         const notifyReady = reviewReady ? await waitlistNotifySchemaReady() : false;
+        const attendanceReady = await attendanceSchemaReady();     // v3.6.2：現場報到欄位
         // 只有欄位存在時才多查一次（未執行 migration 時不多打一次資料庫）
         const notifyRow = notifyReady ? await fetchCompetition(competitionId) : null;
+        const attendanceCols = attendanceReady ? ',attended_at,attended_by,onsite' : '';
         const [teamsRes, regsRes] = await Promise.all([
             supabase.from('competition_teams').select('*').eq('competition_id', competitionId).eq('is_deleted', false).order('id', { ascending: true }),
             supabase.from('registrations')
                 .select(reviewReady
-                    ? `id,username,user_id,team_id,team_name,status,created_at${orderReady ? ',waitlist_order' : ''}`
-                    : 'id,username,user_id,team_id,team_name')
+                    ? `id,username,user_id,team_id,team_name,status,created_at${orderReady ? ',waitlist_order' : ''}${attendanceCols}`
+                    : `id,username,user_id,team_id,team_name${attendanceCols}`)
                 .eq('competition_id', competitionId)
                 .eq('is_deleted', false)
                 .order('id', { ascending: true })
@@ -47,9 +49,20 @@ app.get('/api/competitions/:id/teams', authenticateToken, async (req, res) => {
         const pending = regs.filter((r) => r.status === 'pending');
         const waitlisted = queue.map((r, i) => Object.assign({}, r, { waitlist_position: i + 1 }));
 
+        // v3.6.2：現場名單＝所有正取（含已編隊的），現場報到要一次看到全部
+        const attendance = attendanceReady ? {
+            expected: approved.length,
+            attended: approved.filter((r) => r.attended_at).length,
+            onsite: approved.filter((r) => r.onsite === true).length
+        } : undefined;
+
         res.json({
             teams,
             unassigned: approved.filter((r) => !r.team_id),
+            // v3.6.2：現場報到用（正取完整名單＋統計；前端據 attended_at 畫勾選狀態）
+            approved,
+            attendance,
+            attendance_schema_ready: attendanceReady,
             // v2.20.0：審核／候補用的清單（管理員才看得到內容，但一般用戶本來就打不到這個端點）
             pending,
             waitlisted,

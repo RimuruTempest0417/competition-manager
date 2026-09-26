@@ -217,6 +217,44 @@ globalThis.fetch = (url, options = {}) => {
         check(`未登入指派工作人員被拒（HTTP ${staffWrite.status}）`,
             [401, 403].includes(staffWrite.status), String(staffWrite.status));
 
+        // v3.6.2：現場報到（Roadmap 8.7 ⑤）——第 4 節是唯讀檢查：只讀名單與被拒的回應，不簽到、不代報名
+        const targetId = (Array.isArray(comps) && comps[0] && comps[0].id) || 1;
+        const regsRes = await get(`/api/competitions/${targetId}/registrations`, auth);
+        const regsBody = await regsRes.json().catch(() => ({}));
+        check(`現場報到欄位已就緒（attendance_schema_ready=${regsBody.attendance_schema_ready}）`,
+            regsBody.attendance_schema_ready === true,
+            JSON.stringify(regsBody).slice(0, 120));
+        check('名單回應帶現場報到統計（應到／已簽到／現場代報名）',
+            regsBody.attendance && typeof regsBody.attendance.expected === 'number'
+                && typeof regsBody.attendance.attended === 'number' && typeof regsBody.attendance.onsite === 'number',
+            JSON.stringify(regsBody.attendance || {}).slice(0, 120));
+        check('簽到的數字不會超過應到人數',
+            !!regsBody.attendance && regsBody.attendance.attended <= regsBody.attendance.expected,
+            JSON.stringify(regsBody.attendance || {}));
+
+        const attendUserToken = jwt.sign({ sub: 999999, username: 'prod-smoke-user', role: 'user' }, secret, { expiresIn: '10m' });
+        const userAuth = { Authorization: 'Bearer ' + attendUserToken, 'Content-Type': 'application/json' };
+        const attendAnon = await fetch(SITE + '/api/registrations/1/attendance', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ attended: true })
+        });
+        check(`未登入不可簽到（HTTP ${attendAnon.status}）`, attendAnon.status === 401, String(attendAnon.status));
+        const attendUser = await fetch(SITE + '/api/registrations/1/attendance', {
+            method: 'POST', headers: userAuth, body: JSON.stringify({ attended: true })
+        });
+        check(`一般角色不可簽到（HTTP ${attendUser.status}）`, attendUser.status === 403, String(attendUser.status));
+        const attendMissing = await fetch(SITE + '/api/registrations/999999999/attendance', {
+            method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, auth), body: JSON.stringify({ attended: true })
+        });
+        check(`簽到不存在的報名回 404（HTTP ${attendMissing.status}）`, attendMissing.status === 404, String(attendMissing.status));
+        const onsiteAnon = await fetch(SITE + `/api/competitions/${targetId}/onsite-registration`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'prod-smoke' })
+        });
+        check(`未登入不可現場代報名（HTTP ${onsiteAnon.status}）`, onsiteAnon.status === 401, String(onsiteAnon.status));
+        const onsiteUser = await fetch(SITE + `/api/competitions/${targetId}/onsite-registration`, {
+            method: 'POST', headers: userAuth, body: JSON.stringify({ username: 'prod-smoke' })
+        });
+        check(`一般角色不可現場代報名（HTTP ${onsiteUser.status}）`, onsiteUser.status === 403, String(onsiteUser.status));
+
         // v3.0.0：營運儀表板、分頁與海報縮圖（全部唯讀）
         const statsDenied = await get('/api/admin/stats');
         check(`未登入讀營運統計被拒（HTTP ${statsDenied.status}）`, statsDenied.status === 401, String(statsDenied.status));

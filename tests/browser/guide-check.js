@@ -244,7 +244,10 @@ async function main() {
         check(checklist.stepCount >= 10, `操作清單有 ${checklist.stepCount} 個步驟`);
         check(/開好賽事/.test(checklist.bodyText), '操作清單第一步是「開好賽事」');
         check(/公布結果|公布成績/.test(checklist.bodyText), '操作清單包含賽後公布成績的步驟');
-        check(/尚未|人工/.test(checklist.bodyText), '現場報到誠實標示「尚未有系統功能／人工」');
+        // v3.6.2：現場報到已經是系統功能（管理員勾選簽到），所以改驗「說明有沒有寫出真正的位置與限制」，
+        // 而不是驗它標示尚未上線。同時確認說明沒有暗示系統有 QR 掃碼報到（沒有這個功能）。
+        check(/現場報到/.test(checklist.bodyText) && /簽到/.test(checklist.bodyText), '操作清單的現場報到寫出系統位置與操作方式');
+        check(!/QR/.test(checklist.bodyText), '操作清單不可以提到系統沒有的 QR 掃碼報到');
 
         // 搜尋時不應該還留著操作清單（避免搜尋結果裡混進不相關的長清單）
         await browser.evaluate(`

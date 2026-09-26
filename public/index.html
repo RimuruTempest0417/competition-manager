@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.6.1</title>
+    <title>比賽管理系統 v3.6.2</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -1518,10 +1518,45 @@
                     class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-medium px-3 py-2 rounded-lg border border-emerald-200 transition">
                     ⬇️ 匯出報名名單 (CSV)
                 </button>
-                <span class="text-[11px] text-slate-400">含姓名、帳號、隊伍、備註與報名時間</span>
+                <span class="text-[11px] text-slate-400">含姓名、隊伍、狀態、候補順位、簽到與報名時間（可列印當紙本點名表）</span>
             </div>
 
             <div class="flex-1 overflow-y-auto space-y-3">
+                <!-- v3.6.2：現場報到與現場代報名（Roadmap 8.7 ⑤）——比賽當天用這一塊點名 -->
+                <div id="attendanceSection" class="border border-emerald-200 rounded-lg p-3 bg-emerald-50">
+                    <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <div>
+                            <p class="text-xs font-bold text-emerald-700 uppercase">🎫 現場報到</p>
+                            <p id="attendanceSummary" class="text-[11px] text-emerald-700 mt-0.5"></p>
+                        </div>
+                        <button id="onsiteToggleBtn"
+                            class="text-xs bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-100 font-medium px-2.5 py-1.5 rounded-lg transition shrink-0">
+                            ➕ 現場代報名
+                        </button>
+                    </div>
+                    <div id="onsiteForm" class="hidden mt-2 bg-white border border-emerald-200 rounded-lg p-2.5 space-y-2">
+                        <input type="text" id="onsiteName" maxlength="60" placeholder="參加者姓名或帳號（必填）"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                        <input type="text" id="onsiteNote" maxlength="200" placeholder="備註（選填，例如：現場臨時參加）"
+                            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <button id="onsiteSubmitBtn"
+                                class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-2 rounded-lg transition">送出報名</button>
+                            <button id="onsiteCancelBtn"
+                                class="text-xs bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium px-3 py-2 rounded-lg transition">取消</button>
+                            <p class="text-[11px] text-slate-500">名額上限仍然有效；同名者會請你直接去名單上簽到。</p>
+                        </div>
+                    </div>
+                    <div class="mt-2 flex items-center gap-2">
+                        <input type="text" id="attendanceSearch" placeholder="搜尋姓名…"
+                            class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs flex-1">
+                        <button id="attendanceReloadBtn"
+                            class="text-xs bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium px-2.5 py-1.5 rounded-lg transition shrink-0">🔄 重新載入</button>
+                    </div>
+                    <div id="attendanceList" class="mt-2 space-y-1.5"></div>
+                    <p id="attendanceHint" class="hidden text-[11px] text-amber-700 mt-1.5"></p>
+                </div>
+
                 <!-- v2.20.0：報名審核與候補（待審核的人不會出現在下面的隊伍名單裡） -->
                 <div id="reviewSummary" class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2"></div>
                 <div id="pendingSection" class="hidden">
