@@ -76,6 +76,15 @@ class Browser {
         await this.send('Page.enable');
         await this.send('Runtime.enable');
         await this.send('Log.enable');
+
+        // 檢查腳本一律不准下載檔案到使用者的電腦（有些檢查會按「匯出 CSV／備份」按鈕）。
+        // 兩層保護：這裡先用 CDP 設定「拒絕下載」，頁面層另外攔 <a download>（見 guardDownloads）。
+        for (const [method, params] of [
+            ['Browser.setDownloadBehavior', { behavior: 'deny', eventsEnabled: false }],
+            ['Page.setDownloadBehavior', { behavior: 'deny' }]
+        ]) {
+            try { await this.send(method, params); } catch (err) { /* 舊版 Chrome 不支援就跳過 */ }
+        }
         await this.send('Emulation.setDeviceMetricsOverride', {
             width: this.width, height: this.height, deviceScaleFactor: 2, mobile: this.mobile
         });
@@ -143,6 +152,27 @@ class Browser {
                 }
             }, 20000);
         });
+    }
+
+    /* 在頁面裡把「下載」攔下來：<a download> 的 click 不做事（Blob 還是建立得起來，所以
+       「匯出內容」的檢查照樣能驗），真正做到「不把檔案寫到使用者的電腦」。
+       每個檢查在 login 前呼叫一次即可（換頁面要重新注入）。 */
+    async guardDownloads() {
+        return this.evaluate(`
+            if (!window.__downloadGuardInstalled) {
+                window.__downloadGuardInstalled = true;
+                window.__downloads = [];
+                const origClick = HTMLAnchorElement.prototype.click;
+                HTMLAnchorElement.prototype.click = function () {
+                    if (this.hasAttribute('download')) {
+                        window.__downloads.push(this.getAttribute('download') || '(未命名)');
+                        return;   // 不觸發下載
+                    }
+                    return origClick.apply(this, arguments);
+                };
+            }
+            return true;
+        `);
     }
 
     async goto(url, { waitMs = 300 } = {}) {

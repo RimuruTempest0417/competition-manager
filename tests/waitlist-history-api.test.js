@@ -167,3 +167,53 @@ test('v2.22.0：權限（管理員以上）與找不到賽事', async () => {
     const notFound = await historyOf(9999);
     assert.strictEqual(notFound.status, 404);
 });
+
+/* ── v2.23.0：往回翻（offset 分頁） ── */
+
+test('v2.23.0：指定 offset 可以往回翻（第二頁接在第一頁後面）', async () => {
+    // 目前 621 共 7 筆（最新在前）：新的 REORDER、取消、通知設定、核准、自動遞補、手動遞補、舊的 REORDER
+    const first = await historyOf(621, '?limit=3');
+    assert.deepStrictEqual(first.body.logs.map((l) => l.action),
+        ['REORDER_WAITLIST', 'CANCEL_REGISTRATION', 'WAITLIST_NOTIFY']);
+    assert.strictEqual(first.body.offset, 0);
+    assert.strictEqual(first.body.has_more, true);
+
+    const second = await historyOf(621, '?limit=3&offset=3');
+    assert.deepStrictEqual(second.body.logs.map((l) => l.action),
+        ['REGISTER_APPROVED', 'AUTO_PROMOTE_WAITLIST', 'PROMOTE_WAITLIST']);
+    assert.strictEqual(second.body.offset, 3);
+    assert.strictEqual(second.body.has_more, true);
+
+    const third = await historyOf(621, '?limit=3&offset=6');
+    assert.deepStrictEqual(third.body.logs.map((l) => l.action), ['REORDER_WAITLIST']);
+    assert.strictEqual(third.body.has_more, false, '最後一頁不該說還有更多');
+});
+
+test('v2.23.0：offset 超出範圍回空陣列（不是錯誤）', async () => {
+    const res = await historyOf(621, '?limit=5&offset=99');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.returned, 0);
+    assert.strictEqual(res.body.has_more, false);
+    assert.deepStrictEqual(res.body.logs, []);
+});
+
+test('v2.23.0：offset 亂填（負數、非數字）一律當成 0', async () => {
+    const negative = await historyOf(621, '?limit=2&offset=-5');
+    assert.strictEqual(negative.body.offset, 0);
+    assert.strictEqual(negative.body.logs.length, 2);
+
+    const nan = await historyOf(621, '?limit=2&offset=abc');
+    assert.strictEqual(nan.body.offset, 0);
+    assert.strictEqual(nan.body.logs[0].action, 'REORDER_WAITLIST');
+});
+
+test('v2.23.0：分頁資料不會重複也不會漏（兩頁合起來＝全部）', async () => {
+    const p1 = await historyOf(621, '?limit=3&offset=0');
+    const p2 = await historyOf(621, '?limit=3&offset=3');
+    const p3 = await historyOf(621, '?limit=3&offset=6');
+    const ids = p1.body.logs.concat(p2.body.logs, p3.body.logs).map((l) => l.id);
+    assert.strictEqual(new Set(ids).size, ids.length, '不該有重複');
+    assert.strictEqual(ids.length, 7, '全部 7 筆都要出現');
+    const all = await historyOf(621, '?limit=100');
+    assert.deepStrictEqual(ids, all.body.logs.map((l) => l.id));
+});

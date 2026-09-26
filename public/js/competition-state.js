@@ -317,6 +317,24 @@
         return next;
     }
 
+    /* 把一整批人搬到指定位置（多選後「移到第 N 位」用；挑選的人保持原本的相對順序）。
+       位置是「這批人的第一位」要放的地方；超出範圍夾到頭或尾。
+       有任何一個 id 不在名單裡就回 null（呼叫端不送 API，讓管理員重新整理）。 */
+    function moveGroup(ids, selectedIds, toIndex) {
+        const list = (ids || []).map((x) => String(x));
+        const wanted = new Set((selectedIds || []).map((x) => String(x)));
+        // 一律照「名單上目前的順序」搬（不是照勾選的先後），這樣結果才可預期
+        const picked = list.filter((id) => wanted.has(id));
+        if (!picked.length) return null;
+        if ((selectedIds || []).some((id) => !list.includes(String(id)))) return null;
+
+        const rest = list.filter((id) => !picked.includes(id));
+        // 「移到第 N 位」是指搬完之後這批人的第一位在第 N 位 → 換算成在 rest 裡的插入點
+        const target = Math.max(1, Math.min(list.length - picked.length + 1, Number(toIndex) || 1));
+        const at = Math.max(0, Math.min(rest.length, target - 1));
+        return rest.slice(0, at).concat(picked, rest.slice(at));
+    }
+
     /* 有人讓出名額時，該遞補誰？（第一個候補，可排除剛取消的那筆） */
     function nextWaitlist(rows, excludeId) {
         const queue = waitlistQueue(rows).filter((r) => excludeId === undefined || String(r.id) !== String(excludeId));
@@ -342,6 +360,8 @@
         // v2.21.0：指定遞補與候補順位手動調整
         waitlistPosition, planWaitlistOrder, planPromotion, waitlistOrderNum,
         // v2.22.0：一次搬動到指定位置（拖拉排序與下拉共用）
-        moveInQueue
+        moveInQueue,
+        // v2.23.0：多選一次搬多筆
+        moveGroup
     };
 }));

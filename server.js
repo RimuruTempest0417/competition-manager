@@ -2692,6 +2692,9 @@ const REGISTRATION_REVIEW_HINT =
     '報名審核與候補需要 competitions.requires_approval／waitlist_enabled 與 registrations 的審核欄位。';
 
 /* v2.22.0：遞補通知開關也只多一個欄位（competitions.waitlist_notify）。 */
+/* 候補異動紀錄一次最多往回抓幾筆（避免有人用 offset 無限翻） */
+const WAITLIST_HISTORY_MAX_WINDOW = 500;
+
 const WAITLIST_NOTIFY_HINT =
     '資料庫尚未執行 v2.22.0 migration（migrations/2026-09-26-v2.22.0-waitlist-notify.sql）：' +
     '遞補通知開關需要 competitions.waitlist_notify 欄位（未執行時一律視為「通知＝開啟」）。';
@@ -3349,23 +3352,27 @@ app.get('/api/competitions/:id/waitlist/history', authenticateToken, async (req,
         if (!comp) return res.status(404).json({ error: '找不到該賽事' });
 
         const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+        const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
         // 只認「跟候補有關」的動作：調整順位、手動遞補、自動遞補、審核、通知設定、取消報名
         const actions = ['REORDER_WAITLIST', 'PROMOTE_WAITLIST', 'AUTO_PROMOTE_WAITLIST', 'WAITLIST_NOTIFY',
             'REGISTER_APPROVED', 'REGISTER_REJECTED', 'CANCEL_REGISTRATION'];
 
-        // 一律從最新抓到上限（100 筆）再自己切 limit：正式站 PostgREST 會依 range 回傳、
-        // 測試替身則回全部，這樣寫兩種環境行為一致（與 /api/audit-logs 同一個理由）。
+        // v2.23.0：可以往回翻（offset）。一律從最新抓到「這一頁結尾 + 1」再自己切頁：
+        // 正式站 PostgREST 會依 range 回傳、測試替身則回全部，這樣寫兩種環境行為一致
+        // （與 /api/audit-logs 同一個理由）。抓超過上限就請管理員去稽核日誌頁篩選。
+        const windowSize = Math.min(offset + limit + 1, WAITLIST_HISTORY_MAX_WINDOW);
         const { data, error } = await supabase
             .from('audit_logs')
             .select('*')
             .eq('target_id', comp.id)
             .in('action', actions)
             .order('created_at', { ascending: false })
-            .range(0, 99);
+            .range(0, windowSize - 1);
         if (error) throw error;
 
-        const logs = (data || []).slice(0, limit).map((l) => ({
+        const win = (data || []).slice(0, windowSize);
+        const logs = win.slice(offset, offset + limit).map((l) => ({
             id: l.id,
             at: l.created_at,
             action: l.action,
@@ -3373,12 +3380,19 @@ app.get('/api/competitions/:id/waitlist/history', authenticateToken, async (req,
             user: l.user_id,
             details: l.details || ''
         }));
+        // 還有更早的嗎？抓滿整個窗口還多出下一筆才算有
+        const more = win.length > offset + limit;
+        const capped = windowSize >= WAITLIST_HISTORY_MAX_WINDOW && win.length >= windowSize;
 
         res.json({
             competition_id: comp.id,
             name: comp.name,
             returned: logs.length,
             limit,
+            offset,
+            has_more: more && !capped,
+            capped,
+            window_size: windowSize,
             actions: actions.map((a) => ({ value: a, label: auditActionLabel(a) })),
             logs
         });

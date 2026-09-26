@@ -215,3 +215,40 @@ test('搬到指定位置：拖到某列上面＝插到那一列的位置（前�
     assert.deepStrictEqual(CS.moveInQueue(ids, 14, ids.indexOf(11)), ['14', '11', '12', '13']);
     assert.deepStrictEqual(CS.moveInQueue(ids, 11, ids.indexOf(13)), ['12', '13', '11', '14']);
 });
+
+/* ── v2.23.0：多選一次搬多筆（moveGroup） ── */
+
+test('批次搬移：把挑選的幾筆一起搬到最前面（保持原本相對順序）', () => {
+    // 挑第 3、4 位搬到最前面 → 這兩筆的相對順序不變，其他人往後推
+    assert.deepStrictEqual(CS.moveGroup([1, 2, 3, 4, 5], [4, 3], 1), ['3', '4', '1', '2', '5']);
+});
+
+test('批次搬移：搬到中間（第 3 位＝這批人的第一位排在第 3 位）', () => {
+    assert.deepStrictEqual(CS.moveGroup([1, 2, 3, 4, 5], [5, 1], 3), ['2', '3', '1', '5', '4']);
+});
+
+test('批次搬移：目標位置超出範圍會夾到頭或尾', () => {
+    assert.deepStrictEqual(CS.moveGroup([1, 2, 3, 4], [3, 4], 99), ['1', '2', '3', '4']);
+    assert.deepStrictEqual(CS.moveGroup([1, 2, 3, 4], [3, 4], -5), ['3', '4', '1', '2']);
+});
+
+test('批次搬移：挑選的順序不影響結果（一律照名單原本的相對順序）', () => {
+    assert.deepStrictEqual(CS.moveGroup([1, 2, 3, 4], [4, 2], 1), CS.moveGroup([1, 2, 3, 4], [2, 4], 1));
+});
+
+test('批次搬移：有 id 不在名單裡或沒挑到人就回 null（呼叫端不送 API）', () => {
+    assert.strictEqual(CS.moveGroup([1, 2, 3], [2, 99], 1), null);
+    assert.strictEqual(CS.moveGroup([1, 2, 3], [], 1), null);
+    assert.strictEqual(CS.moveGroup([], [1], 1), null);
+});
+
+test('批次搬移：全部挑選＝完全不動；回傳一定還是同一批人', () => {
+    assert.deepStrictEqual(CS.moveGroup([1, 2, 3], [1, 2, 3], 2), ['1', '2', '3']);
+    const next = CS.moveGroup([7, 8, 9, 10], [10, 7], 2);
+    assert.strictEqual(next.length, 4);
+    assert.deepStrictEqual(next.slice().sort(), ['10', '7', '8', '9']);
+});
+
+test('批次搬移：重複挑同一筆只算一次', () => {
+    assert.deepStrictEqual(CS.moveGroup([1, 2, 3, 4], [4, 4, 4], 1), ['4', '1', '2', '3']);
+});

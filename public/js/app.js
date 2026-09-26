@@ -901,14 +901,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     // v2.22.0：候補相關的新控制項。
     // 記取 v2.12.2 的教訓：<select> 一定要用 change 事件，click 不會觸發（也不會冒泡成我們要的結果）。
     document.getElementById('waitlistList')?.addEventListener('change', (e) => {
+        // v2.23.0：勾選框（批次搬移）→ 更新「已選 N 筆」與可放的位置
+        const box = e.target.closest('input[data-action="waitlist-select"]');
+        if (box) {
+            setWaitlistBatchBar(waitlistSelectedIds().length, waitlistIdsFromDom().length);
+            return;
+        }
         const sel = e.target.closest('select[data-action="waitlist-jump"]');
         if (!sel) return;
         jumpWaitlist(sel.dataset.id, sel.value);
     });
+    // v2.23.0：批次搬移與「載入更早」
+    document.getElementById('waitlistBatchMove')?.addEventListener('click', () => {
+        const sel = document.getElementById('waitlistBatchTarget');
+        moveSelectedWaitlist(sel ? sel.value : 1);
+    });
+    document.getElementById('waitlistBatchClear')?.addEventListener('click', () => {
+        Array.from(document.querySelectorAll('#waitlistList input[data-action="waitlist-select"]'))
+            .forEach((el) => { el.checked = false; });
+        setWaitlistBatchBar(0, waitlistIdsFromDom().length);
+    });
     document.getElementById('waitlistNotifyToggle')?.addEventListener('change', (e) => {
         toggleWaitlistNotify(e.target.checked);
     });
-    document.getElementById('waitlistHistoryBtn')?.addEventListener('click', loadWaitlistHistory);
+    document.getElementById('waitlistHistoryBtn')?.addEventListener('click', () => loadWaitlistHistory(true));
+    document.getElementById('waitlistHistoryMore')?.addEventListener('click', () => loadWaitlistHistory(false));
     document.getElementById('waitlistHistoryClose')?.addEventListener('click', () => {
         document.getElementById('waitlistHistoryPanel')?.classList.add('hidden');
     });
@@ -2123,12 +2140,18 @@ function renderReviewSection(data) {
     if (waitlistList) {
         // v2.22.0：拖拉排序要知道這份名單現在可不可以手動排（pointerdown 時會檢查）
         waitlistList.dataset.reorderable = reorderable ? '1' : '0';
+        // v2.23.0：重繪＝重新開始（勾選狀態不會留著，避免管理員對著舊勾選按下去）
+        setWaitlistBatchBar(0, waitlisted.length);
         waitlistList.innerHTML = waitlisted.map((r, i) => `
             <div data-waitlist-id="${r.id}" class="flex items-center justify-between gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                <div class="flex items-center gap-1 flex-1 min-w-0">
+                    ${reorderable ? `<input type="checkbox" data-action="waitlist-select" data-id="${r.id}"
+                        class="w-4 h-4 shrink-0" title="勾選後可以一次搬多筆">` : ''}
                 <p class="text-xs text-slate-700 truncate flex-1">
                     ${reorderable ? `<span data-waitlist-handle="1" class="cm-drag-handle text-slate-400 mr-1" title="按住拖曳就能調整順位">⠿</span>` : ''}
                     <span class="font-bold text-blue-700">第 ${r.waitlist_position} 位</span>　🙋 ${escapeHtml(r.username)}
                     <span class="text-slate-400">｜${escapeHtml(String(r.created_at || '').slice(0, 16).replace('T', ' '))}</span></p>
+                </div>
                 <div class="flex items-center justify-end gap-1 shrink-0 flex-wrap">
                     ${reorderable ? `
                     <select data-action="waitlist-jump" data-id="${r.id}" title="搬到指定順位"
@@ -2271,6 +2294,35 @@ async function jumpWaitlist(id, position) {
     return sendWaitlistOrder(next, `已更新候補順位（這一筆搬到第 ${position} 位）`);
 }
 
+/* v2.23.0：批次搬移——勾選多筆後一次搬到指定位置（搬完相對順序不變） */
+function waitlistSelectedIds() {
+    return Array.from(document.querySelectorAll('#waitlistList input[data-action="waitlist-select"]:checked'))
+        .map((el) => el.getAttribute('data-id'));
+}
+
+/* 勾選數量與「搬到第幾位」的選項：一次搬 N 筆時，最晚只能放到「人數 − N + 1」 */
+function setWaitlistBatchBar(count, total) {
+    const bar = document.getElementById('waitlistBatchBar');
+    const countEl = document.getElementById('waitlistSelectedCount');
+    const target = document.getElementById('waitlistBatchTarget');
+    if (countEl) countEl.innerText = String(count);
+    if (bar) bar.classList.toggle('hidden', !count);
+    if (!target) return;
+    const last = Math.max(1, (Number(total) || 0) - (Number(count) || 0) + 1);
+    const keep = target.value;
+    target.innerHTML = Array.from({ length: last }, (_, i) => `<option value="${i + 1}">第 ${i + 1} 位</option>`).join('');
+    if (keep && Number(keep) <= last) target.value = keep;
+}
+
+async function moveSelectedWaitlist(target) {
+    const ids = waitlistIdsFromDom();
+    const selected = waitlistSelectedIds();
+    if (!selected.length) return setTeamMsg('請先勾選要搬動的候補者', 'error');
+    const next = CMCompetitionState.moveGroup(ids, selected, Number(target) || 1);
+    if (!next) return setTeamMsg('名單已變動，請重新整理後再選一次', 'error');
+    return sendWaitlistOrder(next, `已把選取的 ${selected.length} 筆一起搬到第 ${target} 位`);
+}
+
 /* v2.22.0：遞補時要不要通知（每個賽事自己決定；關掉時遞補照常生效，只是不推播） */
 async function toggleWaitlistNotify(checked) {
     const comp = currentTeamComp;
@@ -2293,29 +2345,49 @@ async function toggleWaitlistNotify(checked) {
 }
 
 /* v2.22.0：候補與審核的異動紀錄（調整順位、遞補、審核、取消都在這裡） */
-async function loadWaitlistHistory() {
+const waitlistHistoryState = { offset: 0, loaded: 0 };
+
+const waitlistHistoryRowHtml = (l) => `
+    <div class="text-[11px] text-slate-600 border-b border-slate-100 py-1">
+        <span class="text-slate-400">${escapeHtml(String(l.at || '').slice(0, 16).replace('T', ' '))}</span>
+        ｜<span class="font-medium text-slate-700">${escapeHtml(l.action_label || l.action || '')}</span>
+        <span class="text-slate-400">（${escapeHtml(l.user || '系統')}）</span>
+        <div class="truncate" title="${escapeHtml(l.details || '')}">${escapeHtml(l.details || '')}</div>
+    </div>`;
+
+async function loadWaitlistHistory(reset) {
     const comp = currentTeamComp;
     if (!comp) return;
     const panel = document.getElementById('waitlistHistoryPanel');
     const list = document.getElementById('waitlistHistoryList');
+    const moreBtn = document.getElementById('waitlistHistoryMore');
+    const note = document.getElementById('waitlistHistoryNote');
     if (!panel || !list) return;
 
+    const isReset = reset !== false;
+    const offset = isReset ? 0 : waitlistHistoryState.offset;
     try {
-        const res = await customFetch(`/api/competitions/${comp.id}/waitlist/history?limit=30`);
+        const res = await customFetch(`/api/competitions/${comp.id}/waitlist/history?limit=30&offset=${offset}`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || '讀取異動紀錄失敗');
 
-        if (!data.logs || !data.logs.length) {
-            list.innerHTML = '<p class="text-[11px] text-slate-500">目前沒有候補相關的異動紀錄（調整順位、遞補、審核、取消報名都會記在這裡）。</p>';
+        const logs = data.logs || [];
+        const html = logs.map(waitlistHistoryRowHtml).join('');
+        if (isReset) {
+            list.innerHTML = html || '<p class="text-[11px] text-slate-500">目前沒有候補相關的異動紀錄（調整順位、遞補、審核、取消報名都會記在這裡）。</p>';
+            waitlistHistoryState.loaded = logs.length;
         } else {
-            list.innerHTML = data.logs.map((l) => `
-                <div class="text-[11px] text-slate-600 border-b border-slate-100 py-1">
-                    <span class="text-slate-400">${escapeHtml(String(l.at || '').slice(0, 16).replace('T', ' '))}</span>
-                    ｜<span class="font-medium text-slate-700">${escapeHtml(l.action_label || l.action || '')}</span>
-                    <span class="text-slate-400">（${escapeHtml(l.user || '系統')}）</span>
-                    <div class="truncate" title="${escapeHtml(l.details || '')}">${escapeHtml(l.details || '')}</div>
-                </div>`).join('');
+            list.insertAdjacentHTML('beforeend', html);
+            waitlistHistoryState.loaded += logs.length;
         }
+        waitlistHistoryState.offset = offset + logs.length;
+
+        if (note) {
+            note.innerText = data.capped
+                ? `已顯示 ${waitlistHistoryState.loaded} 筆（達 500 筆上限，更早的紀錄請到稽核日誌頁篩選）`
+                : (data.has_more ? `已顯示 ${waitlistHistoryState.loaded} 筆` : `已顯示全部 ${waitlistHistoryState.loaded} 筆`);
+        }
+        if (moreBtn) moreBtn.classList.toggle('hidden', !data.has_more);
         panel.classList.remove('hidden');
     } catch (err) {
         setTeamMsg(err.message, 'error');

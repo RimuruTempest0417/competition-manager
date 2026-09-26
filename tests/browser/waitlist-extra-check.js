@@ -104,6 +104,8 @@ const login = async (browser, username, password) => {
     try {
         await browser.goto(BASE);
         await browser.waitFor(`document.getElementById('submitLoginBtn') !== null`);
+        // 這個檢查會按「匯出報名名單」：先裝下載防護，確保**不會有任何檔案寫到使用者的電腦**
+        await browser.guardDownloads();
         await browser.evaluate(STUB_DIALOGS);
         await login(browser, ADMIN, PASS);
         await browser.waitFor(`document.querySelectorAll('[data-comp-id]').length >= 1`, { timeout: 15000 });
@@ -259,10 +261,11 @@ const login = async (browser, username, password) => {
             '名額已滿後每列的「遞補」按鈕變成停用');
 
         // ---------- 7. 匯出 CSV 多了狀態與候補順位 ----------
+        // 攔下匯出的內容來驗，但**不觸發真實下載**：回傳假的 blob URL，下載自然不會發生
         await browser.evaluate(`
-            window.__csv = null;
-            const orig = URL.createObjectURL.bind(URL);
-            URL.createObjectURL = (blob) => { window.__blob = blob; return orig(blob); };
+            const origCreate = URL.createObjectURL;
+            URL.createObjectURL = (blob) => { window.__blob = blob; return 'blob:stub'; };
+            window.__restoreCreateObjectURL = () => { URL.createObjectURL = origCreate; };
             return true;
         `);
         await browser.evaluate(`document.getElementById('exportRegsCsvBtn').click(); return true;`);
@@ -276,6 +279,10 @@ const login = async (browser, username, password) => {
             `CSV 表頭有「狀態」與「候補順位」（${csvLines[0] || ''}）`, `長度 ${String(csv || '').length}｜前 60 字 ${JSON.stringify(String(csv || '').slice(0, 60))}`);
         check(/已核准/.test(csv), 'CSV 內容看得到「已核准」');
         check(csvLines.length >= 4, `CSV 有 4 筆以上資料列（實際 ${csvLines.length - 1} 筆）`);
+        const blocked = await browser.evaluate(`return JSON.stringify(window.__downloads || []);`);
+        check(JSON.parse(blocked).some((n) => /報名名單|competitions/.test(n)),
+            `下載被攔下來（沒有檔案寫到電腦，攔到：${blocked}）`);
+        await browser.evaluate(`window.__restoreCreateObjectURL(); return true;`);
 
         // ---------- 8. 沒有 JS 錯誤 ----------
         check(browser.pageErrors.length === 0, '過程中沒有前端例外', browser.pageErrors.join(' | ').slice(0, 200));
