@@ -37,6 +37,7 @@ class Browser {
         this.nextId = 1;
         this.consoleErrors = [];
         this.pageErrors = [];
+        this.dialogs = [];        // v3.6.0：原生對話框（alert／confirm／prompt）的內容
         this.listeners = new Map();
     }
 
@@ -97,6 +98,14 @@ class Browser {
         });
         this.on('Log.entryAdded', (p) => {
             if (p.entry?.level === 'error' && !/favicon/.test(p.entry.text || '')) this.consoleErrors.push(p.entry.text);
+        // v3.6.0：原生對話框（alert／confirm／prompt）沒人處理時，整個頁面會卡住——
+        // 之後任何 evaluate 都只會逾時，症狀看起來像「腳本壞了」而不是「有對話框」。
+        // 一律記錄到 browser.dialogs，並自動以「取消」結束（取消 confirm 等於按取消，
+        // 不會誤觸刪除等動作）。檢查腳本可以事後斷言 dialogs 來確認對話框該不該出現。
+        this.on('Page.javascriptDialogOpening', async (p) => {
+            this.dialogs.push({ type: p.type, message: p.message });
+            try { await this.send('Page.handleJavaScriptDialog', { accept: false }); } catch (err) { /* 對話框已自行關閉 */ }
+        });
         });
     }
 

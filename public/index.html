@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.5.4</title>
+    <title>比賽管理系統 v3.6.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -90,6 +90,12 @@
                         <button id="notifyBtn"
                             class="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
                             🔔 通知設定
+                        </button>
+
+                        <!-- v3.6.0：使用說明（所有人皆可用，依身分顯示對應內容） -->
+                        <button id="guideBtn"
+                            class="w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                            📖 使用說明
                         </button>
 
                         <!-- 所有人皆可用：Bug 回報 -->
@@ -1590,6 +1596,36 @@
         </div>
     </div>
 
+    <!-- 彈出視窗：使用說明與管理員操作清單（v3.6.0，所有人皆可用；內容依身分不同） -->
+    <div id="guideModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    📖 使用說明
+                </h3>
+                <button id="closeGuideModalBtn" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+                <input id="guideSearch" type="search" autocomplete="off"
+                    placeholder="搜尋關鍵字（例如：候補、成績、推播、匯入）"
+                    class="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-2">
+                <span id="guideRoleNote" class="text-xs text-slate-500"></span>
+            </div>
+
+            <div class="flex-1 overflow-y-auto cm-guide-layout">
+                <nav id="guideNav" class="cm-guide-nav"></nav>
+                <div id="guideBody" class="cm-guide-body"></div>
+            </div>
+
+            <p class="text-xs text-slate-500 border-t pt-3">
+                💡 說明的內容會依你的身分顯示：訪客看到怎麼看賽事與報名，管理員才會看到審核、成績、備份等操作。
+                找不到答案時可以用右上角「🐞 回報問題」告訴我。
+            </p>
+        </div>
+    </div>
+
     <!-- 彈出視窗 7：通知設定 (所有人皆可用) -->
     <div id="notifyModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -1734,6 +1770,7 @@
     <script src="/js/results.js"></script>
     <script src="/js/printdoc.js"></script>
     <script src="/js/competition-state.js"></script>
+    <script src="/js/guide.js"></script>
     <script src="/js/app.js"></script>
 </body>
 

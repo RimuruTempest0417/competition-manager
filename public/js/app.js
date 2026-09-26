@@ -10,6 +10,8 @@ const CM_STATE_FILTERS = [
     { value: 'finished', label: '🏁 已結束' }
 ];
 let currentUser = null;
+let guideActiveSection = null;   // v3.6.0：使用說明目前選取的段落
+let guideSearchTimer = 0;        // 搜尋輸入的節流計時器
 let currentBase64Screenshot = '';
 let currentPosterItem = null;
 let currentView = 'list';                                        // 'list' | 'calendar'
@@ -521,6 +523,94 @@ async function copyPosterImage() {
     }
 }
 
+/* ---------- v3.6.0：使用說明與管理員操作清單 ----------
+ * 內容來自 public/js/guide.js（前端與 Node 測試共用同一份），這裡只負責畫。
+ * 依身分過濾在 guide.js 就做完了：一般使用者根本不會拿到管理員段落，不是畫出來再藏起來。 */
+function currentGuideRole() {
+    return (currentUser && currentUser.role) ? currentUser.role : 'guest';
+}
+
+function openGuideModal() {
+    const modal = document.getElementById('guideModal');
+    if (!modal) return;
+    const search = document.getElementById('guideSearch');
+    if (search) search.value = '';
+    guideActiveSection = null;
+    modal.classList.remove('hidden');
+    renderGuide();
+}
+
+function closeGuideModal() {
+    document.getElementById('guideModal')?.classList.add('hidden');
+}
+
+function formatGuideStep(text) {
+    // 說明內容裡的 **強調** 轉成粗體（內容是自家靜態文字，不含使用者輸入）
+    return String(text).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
+function renderGuide() {
+    const nav = document.getElementById('guideNav');
+    const body = document.getElementById('guideBody');
+    if (!nav || !body || typeof CMGuide === 'undefined') return;
+
+    const role = currentGuideRole();
+    const query = (document.getElementById('guideSearch')?.value || '').trim();
+    const sections = CMGuide.searchSections(CMGuide.sectionsFor(role), query);
+    const checklist = CMGuide.checklistFor(role);
+    const showChecklist = Boolean(checklist) && !query;
+
+    const roleNote = document.getElementById('guideRoleNote');
+    if (roleNote) roleNote.textContent = `目前身分：${getRoleLabel(role)}`;
+
+    let navHtml = '';
+    CMGuide.groupSections(sections).forEach((group) => {
+        navHtml += `<p class="cm-guide-nav-group text-slate-400">${group.name}</p>`;
+        group.sections.forEach((section) => {
+            navHtml += `<button type="button" class="cm-guide-nav-item text-slate-700 hover:bg-slate-50" data-guide-section="${section.id}">${section.icon} ${section.title}</button>`;
+        });
+    });
+    if (showChecklist) {
+        navHtml += '<p class="cm-guide-nav-group text-slate-400">管理員</p>'
+            + `<button type="button" class="cm-guide-nav-item text-slate-700 hover:bg-slate-50" data-guide-section="__checklist">✅ ${checklist.title}</button>`;
+    }
+    if (!navHtml) navHtml = '<p class="cm-guide-nav-group text-slate-400">沒有符合的說明</p>';
+    nav.innerHTML = navHtml;
+
+    // 目前選取的段落：搜尋後若原本那段不在結果裡，就回到第一段
+    const available = sections.map((section) => section.id).concat(showChecklist ? ['__checklist'] : []);
+    if (guideActiveSection && !available.includes(guideActiveSection)) guideActiveSection = null;
+    const active = guideActiveSection || available[0] || null;
+    guideActiveSection = active;
+
+    nav.querySelectorAll('[data-guide-section]').forEach((btn) => {
+        btn.classList.toggle('bg-slate-100', btn.dataset.guideSection === active);
+    });
+
+    if (active === '__checklist') {
+        body.innerHTML = `
+            <h4 class="cm-guide-title text-slate-800">✅ ${checklist.title}</h4>
+            <p class="cm-guide-intro text-slate-600">${checklist.intro}</p>
+            <ol class="cm-guide-steps text-slate-700">
+                ${checklist.items.map((item) => `<li><strong>${item.title}</strong><br><span class="cm-guide-where text-slate-500">📍 ${item.where}</span><br><span class="cm-guide-detail text-slate-600">${item.detail}</span></li>`).join('')}
+            </ol>`;
+        return;
+    }
+
+    const section = sections.find((item) => item.id === active);
+    if (!section) {
+        body.innerHTML = '<p class="cm-guide-empty bg-slate-50 text-slate-500">找不到符合的說明，換個關鍵字試試（例如：候補、成績、推播）。</p>';
+        return;
+    }
+    body.innerHTML = `
+        <h4 class="cm-guide-title text-slate-800">${section.icon} ${section.title}</h4>
+        <p class="cm-guide-intro text-slate-600">${section.intro}</p>
+        <ol class="cm-guide-steps text-slate-700">
+            ${section.steps.map((step) => `<li>${formatGuideStep(step)}</li>`).join('')}
+        </ol>
+        ${section.tip ? `<p class="cm-guide-tip bg-slate-50 text-slate-600">💡 ${formatGuideStep(section.tip)}</p>` : ''}`;
+}
+
 function openBugReportModal() {
     document.getElementById('bugReportModal').classList.remove('hidden');
 }
@@ -723,6 +813,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('themeToggleBtn')?.addEventListener('click', cycleTheme);
     document.getElementById('navMenuBtn')?.addEventListener('click', toggleNavDropdown);
     document.getElementById('menuBugReport')?.addEventListener('click', () => { openBugReportModal(); closeNavDropdown(); });
+    // v3.6.0：使用說明（所有人；內容依身分不同）
+    document.getElementById('guideBtn')?.addEventListener('click', () => { openGuideModal(); closeNavDropdown(); });
+    document.getElementById('closeGuideModalBtn')?.addEventListener('click', closeGuideModal);
+    document.getElementById('guideSearch')?.addEventListener('input', () => {
+        window.clearTimeout(guideSearchTimer);
+        guideSearchTimer = window.setTimeout(renderGuide, 120);
+    });
+    document.getElementById('guideNav')?.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-guide-section]');
+        if (!btn) return;
+        guideActiveSection = btn.dataset.guideSection;
+        renderGuide();
+    });
     document.getElementById('auditLogBtn')?.addEventListener('click', () => { openAuditLogModal(); closeNavDropdown(); });
     // v2.19.0：賽事狀態篩選列與報名時間預覽
     bindStateFilterBar();
@@ -1215,12 +1318,12 @@ function focusCompetitionCard(compId) {
 // 為什麼要這樣寫：過去每個角色分支各自列 classList.add('hidden')，
 // 只要有分支漏寫（例如訪客分支忘了隱藏 CSV 按鈕），登出後就會殘留管理員功能。
 const CM_MENU_PERMISSIONS = {
-    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false, announce: false },
-    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true },
-    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true },
-    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false, announce: true },
-    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true },
-    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true }
+    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false, announce: false, guide: true },
+    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true, guide: true },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true, guide: true },
+    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false, announce: true, guide: true },
+    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true, guide: true },
+    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true, guide: true }
 };
 
 function applyMenuVisibility(role) {
@@ -1239,7 +1342,8 @@ function applyMenuVisibility(role) {
         ['twoFactorBtn', perm.twoFactor],
         ['backupBtn', perm.backup],
         ['announcementsBtn', perm.announce],  // v2.26.0：公告中心（登入即可）
-        ['opsStatsBtn', perm.opsStats]        // v3.0.0：營運儀表板（管理員以上）
+        ['opsStatsBtn', perm.opsStats],       // v3.0.0：營運儀表板（管理員以上）
+        ['guideBtn', perm.guide]              // v3.6.0：使用說明（所有人，內容依身分）
     ];
     map.forEach(([id, visible]) => {
         const el = document.getElementById(id);
@@ -1265,6 +1369,8 @@ function updateUIByRole() {
 
     // 先依角色統一套用選單可見性（避免任何角色殘留上一輪登入的功能）
     applyMenuVisibility(currentUser ? currentUser.role : 'guest');
+    // v3.6.0：使用說明若正開著，身分改變要立刻重畫（登出後不能還看得到管理員段落）
+    if (document.getElementById('guideModal') && !document.getElementById('guideModal').classList.contains('hidden')) renderGuide();
 
     if (!currentUser) {
         authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 cm-auth-pill";

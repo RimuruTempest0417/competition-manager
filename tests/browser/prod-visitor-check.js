@@ -70,6 +70,33 @@ const check = (ok, label, extra = '') => {
 
         const shot = path.join(SHOT_DIR, `visitor-${Date.now()}.png`);
         await browser.screenshot(shot);
+
+        // v3.6.0：訪客也該看得到「使用說明」（說明只給登入者看就失去意義）
+        const guideBtnVisible = await browser.evaluate(`
+            document.getElementById('navMenuBtn')?.click();
+            const btn = document.getElementById('guideBtn');
+            return JSON.stringify({ exists: Boolean(btn), visible: Boolean(btn) && !btn.classList.contains('hidden') });
+        `);
+        const guideState = JSON.parse(guideBtnVisible);
+        check(guideState.exists && guideState.visible, '訪客在選單裡看得到「📖 使用說明」', guideBtnVisible);
+
+        const guideOpened = await browser.evaluate(`
+            document.getElementById('guideBtn')?.click();
+            const modal = document.getElementById('guideModal');
+            const nav = document.getElementById('guideNav');
+            const body = document.getElementById('guideBody');
+            return JSON.stringify({
+                open: Boolean(modal) && !modal.classList.contains('hidden'),
+                items: nav ? nav.querySelectorAll('[data-guide-section]').length : 0,
+                steps: body ? body.querySelectorAll('ol.cm-guide-steps > li').length : 0,
+                hasAdminSection: nav ? /建立與編輯賽事|管理員操作清單/.test(nav.textContent) : true
+            });
+        `);
+        const gs = JSON.parse(guideOpened);
+        check(gs.open, '線上點得開使用說明');
+        check(gs.items > 0 && gs.steps > 0, `線上說明有實際內容（${gs.items} 段、首段 ${gs.steps} 步）`);
+        check(!gs.hasAdminSection, '線上訪客看不到管理員段落（依身分過濾在正式站也成立）');
+
         console.log(`\n   📸 截圖：${shot}`);
         console.log(`\n══════ 訪客視角檢查：${pass} 通過 / ${fail} 失敗 ══════`);
         exitCode = fail === 0 ? 0 : 1;

@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v3.5.4
+# 🏆 比賽管理系統 (Competition Manager) v3.6.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -182,6 +182,21 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v3.6.0 (2026-09-27) - 使用說明（依身分給對應內容）＋ 管理員操作清單 ＋ 路由覆蓋率常駐
+
+- **「📖 使用說明」（選單，所有人皆可用）**：16 段說明分四種身分層級，內容在 `public/js/guide.js`（UMD，前端與測試共用同一份）。
+  **依身分過濾在資料層決定**——未登入或未知角色一律比照訪客，一般使用者「根本拿不到」管理員段落（不是畫出來再藏）。
+  支援關鍵字搜尋（找不到有明確提示）；桌機左清單右內容、手機改橫向排列。訪客也看得到（只給登入者看就失去意義）。
+- **管理員操作清單**：辦一場賽事的 12 步，每步寫明「在系統的哪裡做」（審核候補 → 隊伍編排 → 列印名單 → 成績草稿／公布 → 異常處理）。
+  **現場報到誠實標示「尚未有系統功能，請列印名單人工勾選」**。
+- **路由覆蓋率變成常駐檢查**：`scripts/test-coverage.js`（掃 `tests/fixtures/route-inventory.json` × `tests/**`）、`npm run check:coverage`、
+  守門測試 `tests/route-coverage.test.js`（`npm test` 就會驗）。目前 **92 條路由 92 條有測試**；
+  RED 驗證：把 v3.5.4 的三支新測試檔暫時移開，掃描立刻列出那 8 條端點並以非零退出。
+- **順手修掉**：權限對應表少一個逗號，兩行被合成 `['opsStatsBtn', …]['guideBtn', …]`，`applyMenuVisibility` 讀到 `undefined` 直接 `TypeError`
+  （`node --check` 看不出來，是新瀏覽器檢查登入後炸出來的）；`var(--cm-border, #e2e8f0)` 的變數名專案裡不存在，但「有 fallback 就不算未定義」的規則放行了它（深色模式下會出現亮線）→ 改用 `--cm-bd-200`，並在 `scripts/class-coverage.py` 新增②-b提示列出來；`tests/browser/lib/cdp.js` 過去沒有處理原生對話框，
+  一旦 `alert`／`confirm` 彈出就整頁卡住、之後每個 `evaluate` 都只會逾時——現在一律記錄到 `browser.dialogs` 並自動以「取消」結束。
+- 測試：`npm test` **601 通過 / 0 失敗**；瀏覽器檢查 **21 支套件、695 項全綠**（新增 `guide-check.js` 38 項）；正式站訪客視角新增 3 項。
 
 ### v3.5.4 (2026-09-27) - 選單彈窗在電腦上不再細成一條 ＋ 補齊 8 條沒有測試的端點
 

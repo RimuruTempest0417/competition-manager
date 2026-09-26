@@ -1037,6 +1037,112 @@ canvas {
     }
 }
 
+/* 使用說明（v3.6.0）：桌機左右兩欄（段落清單＋內容），手機上下堆疊。
+   這裡只寫版面與捲動，不新增任何顏色——顏色一律用既有的 Tailwind class
+   （例如作用中的段落用 bg-slate-100，深色模式已由既有規則處理）。 */
+.cm-guide-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+    gap: 1rem;
+    min-height: 20rem;
+}
+
+.cm-guide-nav {
+    border-right: 1px solid var(--cm-bd-200);
+    padding-right: 0.5rem;
+}
+
+.cm-guide-nav-group {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 0.5rem 0.5rem 0.25rem;
+}
+
+.cm-guide-nav-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font-size: 0.8125rem;
+    padding: 0.5rem 0.625rem;
+    border-radius: 0.5rem;
+    line-height: 1.35;
+}
+
+.cm-guide-body {
+    min-width: 0;
+    padding-right: 0.25rem;
+}
+
+.cm-guide-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+
+.cm-guide-intro {
+    font-size: 0.875rem;
+    line-height: 1.7;
+    margin-bottom: 0.75rem;
+}
+
+.cm-guide-steps {
+    list-style: decimal;
+    padding-left: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.7;
+}
+
+.cm-guide-tip,
+.cm-guide-empty {
+    margin-top: 1rem;
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    padding: 0.625rem 0.75rem;
+    border-radius: 0.5rem;
+}
+
+.cm-guide-where {
+    font-size: 0.78rem;
+    opacity: 0.85;
+}
+
+.cm-guide-detail {
+    font-size: 0.8125rem;
+    opacity: 0.9;
+}
+
+@media (max-width: 640px) {
+    /* 手機：段落清單改成橫向可滑的一列，內容在上方，避免佔掉整個畫面高度 */
+    .cm-guide-layout {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.75rem;
+        min-height: 0;
+    }
+
+    .cm-guide-nav {
+        border-right: 0;
+        border-bottom: 1px solid var(--cm-bd-200);
+        padding-right: 0;
+        padding-bottom: 0.5rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+
+    .cm-guide-nav-group {
+        width: 100%;
+        padding: 0.25rem 0.25rem 0;
+    }
+
+    .cm-guide-nav-item {
+        width: auto;
+    }
+}
+
 /* 底部安全區域：讓最後一排按鈕不被 iPhone 手勢條壓住 */
 .cm-safe-bottom {
     padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));

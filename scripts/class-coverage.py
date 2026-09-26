@@ -91,6 +91,14 @@ referenced = {
     if ',' not in tail
 }
 
+# v3.6.0：有寫 fallback 的變數不算「未定義」（上面的註解），但**名字打錯**也會被同一個寬容
+# 規則放行——fallback 通常是淺色值，於是深色模式下就會出現一條亮線或亮色塊（實際發生過：
+# var(--cm-border, #e2e8f0) 應該用既有的 --cm-bd-200）。這裡單獨列出來提示，不算錯誤。
+suspect = sorted({
+    name for name, tail in re.findall(r'var\(\s*(--[\w-]+)\s*([^)]*)', class_rules)
+    if ',' in tail and name not in root_vars
+})
+
 # ---------- class 解析 ----------
 def selectors_of(block):
     out, depth, buf = [], 0, ''
@@ -172,6 +180,14 @@ print('\n② class 規則引用了但 :root 未定義的變數：')
 if undef:
     failures.append(f'{len(undef)} 個變數未定義')
     for v in undef:
+        print('    ' + v)
+else:
+    print('    （無）')
+
+# ②-b 有 fallback 但 :root 沒有的變數（提示，不列為失敗）
+print('\n②-b 有寫 fallback、但 :root 沒有這個變數（提示：fallback 通常只在淺色模式正確）：')
+if suspect:
+    for v in suspect:
         print('    ' + v)
 else:
     print('    （無）')
