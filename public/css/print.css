@@ -1,0 +1,210 @@
+/* v3.2.0（P1-7）：列印版樣式
+ *
+ * 為什麼放在檔案裡而不是 inline <style>：CSP 是 style-src 'self'，頁面內嵌樣式會被擋掉。
+ *
+ * 兩個狀態：
+ *   1. 螢幕上＝預覽（A4 白紙、可看出實際排版）
+ *   2. 列印時（@media print）＝只留下那張紙，其餘 App 介面全部隱藏
+ */
+
+/* ---------- 預覽（螢幕） ---------- */
+#printPreviewBody {
+    background: #e5e7eb;
+    padding: 12px;
+    overflow: auto;
+}
+
+#printScaleWrap {
+    transform-origin: top center;
+}
+
+.print-sheet {
+    background: #ffffff;
+    color: #111827;
+    /* 螢幕預覽：跟著裝置寬度縮放（手機也看得到完整版面），但不超過 A4 寬度 */
+    width: 100%;
+    max-width: 186mm;             /* A4 210mm 扣掉左右 12mm 邊界 */
+    min-height: 200mm;
+    margin: 0 auto;
+    padding: 6mm 0;
+    box-sizing: border-box;
+    font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+    font-size: 12px;
+    line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+}
+
+.print-sheet.landscape {
+    max-width: 273mm;             /* A4 橫向 297mm 扣掉邊界 */
+}
+
+.print-sheet .print-head {
+    border-bottom: 2px solid #111827;
+    padding-bottom: 8px;
+    margin-bottom: 14px;
+}
+
+.print-sheet h1 {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    letter-spacing: 0.5px;
+}
+
+.print-sheet .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    color: #374151;
+    font-size: 12px;
+}
+
+.print-sheet .subject {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+}
+
+.print-sheet .subject strong {
+    font-size: 15px;
+}
+
+.print-sheet .subject span {
+    color: #4b5563;
+}
+
+.print-group {
+    margin-bottom: 16px;
+    page-break-inside: auto;
+}
+
+.print-group h3 {
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    padding-left: 6px;
+    border-left: 4px solid #2563eb;
+}
+
+.print-group h3 .group-count {
+    font-weight: 400;
+    color: #6b7280;
+    margin-left: 4px;
+}
+
+table.print-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+table.print-table th,
+table.print-table td {
+    border: 1px solid #9ca3af;
+    padding: 5px 6px;
+    text-align: left;
+    vertical-align: top;
+    word-break: break-word;
+}
+
+table.print-table th {
+    background: #f3f4f6;
+    font-weight: 700;
+    font-size: 11.5px;
+}
+
+table.print-table td.num {
+    width: 34px;
+    text-align: center;
+    color: #374151;
+}
+
+/* 簽到欄要留得下手寫空間 */
+table.print-table th:last-child,
+table.print-table td:last-child {
+    width: 22%;
+}
+
+.print-sheet .print-foot {
+    margin-top: 14px;
+    padding-top: 6px;
+    border-top: 1px solid #9ca3af;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: #6b7280;
+    font-size: 10.5px;
+}
+
+/* 螢幕上的預覽工具列（列印時要消失） */
+#printPreviewTools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ---------- 列印 ---------- */
+@page {
+    size: A4 portrait;
+    margin: 12mm;
+}
+
+@media print {
+    /* 只留下列印紙，其餘整個 App 介面（含 modal 外框、按鈕）都不印 */
+    body > *:not(#printModal) {
+        display: none !important;
+    }
+
+    #printModal {
+        position: static !important;
+        display: block !important;
+        inset: auto !important;
+        background: #ffffff !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        z-index: auto !important;
+    }
+
+    #printModal .no-print,
+    #printPreviewTools,
+    #printPreviewHeader {
+        display: none !important;
+    }
+
+    #printPreviewBody {
+        background: #ffffff !important;
+        padding: 0 !important;
+        overflow: visible !important;
+        max-height: none !important;
+    }
+
+    #printScaleWrap {
+        transform: none !important;
+    }
+
+    .print-sheet,
+    .print-sheet.landscape {
+        box-shadow: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        min-height: 0 !important;
+    }
+
+    table.print-table tr {
+        page-break-inside: avoid;
+    }
+
+    table.print-table thead {
+        display: table-header-group;   /* 每一頁都重印表頭 */
+    }
+
+    table.print-table th {
+        background: #f3f4f6 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+}

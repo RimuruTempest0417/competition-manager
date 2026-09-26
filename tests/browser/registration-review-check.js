@@ -302,6 +302,10 @@ const login = async (browser, username, password) => {
         // 介面重載後：候補剩一位、名單反映最新狀態
         await browser.evaluate(`document.getElementById('closeTeamModalBtn').click(); return true;`);
         await openTeam(802, '🙋 waitE');
+        // 這個 modal 會先用快取的名單繪製、再被重新抓回的資料取代，所以不能一打開就讀
+        //（讀太快會讀到舊的候補名單）。等畫面收斂到「沒有 waitD」再判。
+        await browser.waitFor(`!/waitD/.test(document.getElementById('waitlistList').textContent)`, { timeout: 10000 })
+            .catch(() => { /* 沒收斂就讓下面的斷言說出來，不要在這裡掩蓋問題 */ });
         const after = await browser.evaluate(`return document.getElementById('waitlistList').textContent.replace(/\\s+/g, ' ');`);
         check(/第 1 位/.test(after) && /waitE/.test(after), `遞補後 waitE 升上候補第一位（${after.slice(0, 50)}）`);
         check(!/waitD/.test(after), '已被遞補的 waitD 不再出現在候補名單');

@@ -759,6 +759,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // v3.0.0：營運儀表板
     document.getElementById('opsStatsBtn')?.addEventListener('click', openOpsStatsModal);
     initResultsUi();   // v3.1.0：成績表與成績登錄
+    bindPrintModalEvents();   // v3.2.0：列印版
     document.getElementById('closeOpsStatsBtn')?.addEventListener('click', closeOpsStatsModal);
     document.getElementById('opsStatsRefreshBtn')?.addEventListener('click', () => loadOpsStats(true));
     document.getElementById('opsStatsRange')?.addEventListener('click', (event) => {
@@ -1065,6 +1066,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             openResultsModal(id);
         } else if (action === 'edit-results') {
             openResultsEditor(id);
+        } else if (action === 'print-roster') {
+            openPrintRoster(id);
+        } else if (action === 'print-results') {
+            openPrintResults(id);
         } else if (action === 'copy-comp') {
             copyCompetition(id);
         } else if (action === 'duplicate-comp') {
@@ -3928,7 +3933,7 @@ function canManageResults() {
     return !!currentUser && ['admin', 'super_admin', 'web_owner'].includes(currentUser.role);
 }
 
-/* 卡片上的成績按鈕：已公布＝每個人都看得到；管理員多一顆登錄／修改 */
+/* 卡片上的成績按鈕：已公布＝每個人都看得到；管理員多一顆登錄／修改與列印 */
 function resultCardButtonsHtml(item) {
     const published = !!item.result_published_at;
     let html = '';
@@ -3936,6 +3941,14 @@ function resultCardButtonsHtml(item) {
         html += `<button data-action="view-results" data-id="${item.id}"
                     class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">
                     🏆 成績</button>`;
+        html += `<button data-action="print-results" data-id="${item.id}"
+                    class="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">
+                    🖨️ 列印成績</button>`;
+    }
+    if (canManageResults()) {
+        html += `<button data-action="print-roster" data-id="${item.id}"
+                    class="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">
+                    🖨️ 列印名單</button>`;
     }
     if (canManageResults()) {
         html += `<button data-action="edit-results" data-id="${item.id}"
@@ -3999,8 +4012,12 @@ function resultsModalHtml(data) {
             ${data.published_at ? `｜公布於 ${escapeHtml(String(data.published_at).slice(0, 16).replace('T', ' '))}${data.published_by ? '（' + escapeHtml(data.published_by) + '）' : ''}` : ''}
         </p>
         ${resultsTableHtml(rows, currentUser ? currentUser.username : null)}
-        ${rows.length ? `<button id="resultsExportBtn" data-id="${data.competition ? data.competition.id : ''}"
-            class="mt-3 text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">⬇️ 匯出成績 CSV</button>` : ''}`;
+        ${rows.length ? `<div class="mt-3 flex flex-wrap gap-2">
+            <button id="resultsExportBtn" data-id="${data.competition ? data.competition.id : ''}"
+                class="text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">⬇️ 匯出成績 CSV</button>
+            <button id="resultsPrintBtn" data-id="${data.competition ? data.competition.id : ''}"
+                class="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">🖨️ 列印成績表</button>
+        </div>` : ''}`;
 }
 
 async function openResultsModal(id) {
@@ -4019,6 +4036,7 @@ async function openResultsModal(id) {
 
         body.innerHTML = resultsModalHtml(data);
         document.getElementById('resultsExportBtn')?.addEventListener('click', () => exportResultsCsv(id));
+        document.getElementById('resultsPrintBtn')?.addEventListener('click', () => openPrintResults(id));
     } catch (err) {
         body.innerHTML = `<p class="text-sm text-red-600 py-4">❌ ${escapeHtml(err.message)}</p>`;
     }
@@ -4324,6 +4342,108 @@ async function unpublishResultsFromEditor() {
     } catch (err) {
         resultsEditorError('❌ ' + err.message, true);
     }
+}
+
+/* ---------- v3.2.0（P1-7）：名單與成績的列印版 ---------- */
+
+// 目前預覽中的列印資料：原始資料留住，切換選項時不必重新抓
+let printState = { kind: null, comp: null, raw: [], model: null };
+
+function printOptions() {
+    const checked = (id, fallback) => {
+        const el = document.getElementById(id);
+        return el ? el.checked : fallback;
+    };
+    return {
+        includeWaitlist: checked('printIncludeWaitlist', true),
+        includePending: checked('printIncludePending', false),
+        signColumn: checked('printSignColumn', true),
+        orientation: checked('printLandscape', false) ? 'landscape' : 'portrait'
+    };
+}
+
+function renderPrintPreview() {
+    const wrap = document.getElementById('printScaleWrap');
+    if (!wrap) return;
+    if (!printState.model) {
+        wrap.innerHTML = '<p class="text-center text-slate-500 py-10 text-sm">沒有可列印的資料</p>';
+        return;
+    }
+    wrap.innerHTML = CMPrintDoc.toHtml(printState.model);
+    const note = document.getElementById('printModalNote');
+    if (note) note.textContent = CMPrintDoc.summaryText(printState.model);
+}
+
+function rebuildPrintModel() {
+    if (!printState.comp) return;
+    const opts = printOptions();
+    printState.model = printState.kind === 'results'
+        ? CMPrintDoc.resultModel(printState.comp, printState.raw, opts)
+        : CMPrintDoc.rosterModel(printState.comp, printState.raw, opts);
+    renderPrintPreview();
+}
+
+function openPrintModal(kind, comp, raw) {
+    printState = { kind, comp, raw: raw || [], model: null };
+    const modal = document.getElementById('printModal');
+    const title = document.getElementById('printModalTitle');
+    if (!modal) return;
+    if (title) title.textContent = kind === 'results' ? '🖨️ 列印成績表' : '🖨️ 列印報名名單';
+    // 待審核只有管理員需要，成績表沒有這個選項
+    const pendingLabel = document.getElementById('printIncludePendingLabel');
+    if (pendingLabel) pendingLabel.classList.toggle('hidden', kind !== 'roster');
+    const waitLabel = document.getElementById('printIncludeWaitlistLabel');
+    if (waitLabel) waitLabel.classList.toggle('hidden', kind !== 'roster');
+    modal.classList.remove('hidden');
+    rebuildPrintModel();
+}
+
+function closePrintModal() {
+    document.getElementById('printModal')?.classList.add('hidden');
+    printState = { kind: null, comp: null, raw: [], model: null };
+}
+
+/* 列印報名名單（管理員以上；名單含未審核資訊，所以不開放給一般使用者） */
+async function openPrintRoster(id) {
+    if (!canManageResults()) return alert('權限不足：只有管理員以上可以列印報名名單。');
+    const item = allCompetitions.find((c) => String(c.id) === String(id));
+    try {
+        const res = await customFetch(`/api/competitions/${id}/registrations`);
+        if (!res.ok) throw new Error('讀取報名名單失敗');
+        const payload = await res.json();
+        const list = Array.isArray(payload) ? payload : (payload.registrations || []);
+        openPrintModal('roster', item || { id, name: '' }, list);
+    } catch (err) {
+        alert('❌ 列印名單失敗：' + err.message);
+    }
+}
+
+/* 列印成績表：已公布時任何人都能印（與前台看得到的內容一致） */
+async function openPrintResults(id) {
+    const item = allCompetitions.find((c) => String(c.id) === String(id));
+    try {
+        const res = await customFetch(`/api/competitions/${id}/results`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '讀取成績失敗');
+        if (!data.published) return alert('成績尚未公布，沒有可列印的成績表。');
+        openPrintModal('results', data.competition || item || { id, name: '' }, data.results || []);
+    } catch (err) {
+        alert('❌ 列印成績失敗：' + err.message);
+    }
+}
+
+function bindPrintModalEvents() {
+    const modal = document.getElementById('printModal');
+    if (!modal || modal.dataset.bound === '1') return;
+    modal.dataset.bound = '1';
+    document.getElementById('printModalClose')?.addEventListener('click', closePrintModal);
+    document.getElementById('printDoBtn')?.addEventListener('click', () => {
+        if (!printState.model) return;
+        window.print();
+    });
+    ['printIncludeWaitlist', 'printIncludePending', 'printSignColumn', 'printLandscape'].forEach((id) => {
+        document.getElementById(id)?.addEventListener('change', () => rebuildPrintModel());
+    });
 }
 
 function initResultsUi() {

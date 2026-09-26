@@ -55,7 +55,7 @@ const get = (p, headers) => fetch(SITE + p, { headers });
 
     // ---------- 2. 靜態檔案與本地一致 ----------
     console.log('\n【2】靜態檔案與本地一致');
-    for (const rel of ['public/js/app.js', 'public/js/csv.js', 'public/js/notify.js', 'public/js/paging.js', 'public/js/stats.js', 'public/css/custom.css', 'public/sw.js', 'public/index.html']) {
+    for (const rel of ['public/js/app.js', 'public/js/csv.js', 'public/js/notify.js', 'public/js/paging.js', 'public/js/stats.js', 'public/js/results.js', 'public/js/printdoc.js', 'public/css/custom.css', 'public/css/print.css', 'public/sw.js', 'public/index.html']) {
         const res = await get('/' + rel.replace(/^public\//, ''));
         const online = Buffer.from(await res.arrayBuffer());
         const local = fs.readFileSync(path.join(ROOT, rel));
@@ -206,6 +206,16 @@ const get = (p, headers) => fetch(SITE + p, { headers });
         const statsUserDenied = await get('/api/admin/stats', { Authorization: 'Bearer ' + jwt.sign({ sub: 4, username: 'nobody', role: 'user' }, secret, { expiresIn: '10m' }) });
         check(`一般角色讀營運統計被拒（HTTP ${statsUserDenied.status}）`,
             [401, 403].includes(statsUserDenied.status), String(statsUserDenied.status));
+
+        // v3.2.0（P1-7）：列印版資源（樣式與規則模組）必須真的拿得到
+        const printCss = await fetch(SITE + '/css/print.css');
+        const printJs = await fetch(SITE + '/js/printdoc.js');
+        check(`列印樣式可取得（HTTP ${printCss.status}）`, printCss.status === 200, String(printCss.status));
+        const printCssText = await printCss.text().catch(() => '');
+        check('列印樣式含列印媒介規則與 A4 設定', /@media print/.test(printCssText) && /@page/.test(printCssText),
+            printCssText.slice(0, 80));
+        const printJsText = await printJs.text().catch(() => '');
+        check(`列印規則模組可取得（HTTP ${printJs.status}）`, printJs.status === 200 && /CMPrintDoc/.test(printJsText), String(printJs.status));
 
         // 分頁：帶 limit 回物件、不帶 limit 維持陣列（既有整合不受影響）
         const paged = await get('/api/competitions?limit=2');

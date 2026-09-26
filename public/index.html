@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.1.2</title>
+    <title>比賽管理系統 v3.2.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -22,6 +22,8 @@
     <link href="/css/tailwind.min.css" rel="stylesheet">
     <!-- 自訂補強樣式 (Modal 高度、滾動、背景模糊、色系補強、檔案按鈕、深淺色模式) -->
     <link href="/css/custom.css" rel="stylesheet">
+    <!-- v3.2.0（P1-7）：列印版樣式（現場紙本名單與成績表） -->
+    <link href="/css/print.css" rel="stylesheet">
     <!-- 主題初始化：必須同步且早於首次繪製，避免強制深色時出現淺色閃爍 -->
     <script src="/js/theme-init.js"></script>
 </head>
@@ -1052,6 +1054,38 @@
         </div>
     </div>
 
+    <!-- v3.2.0（P1-7）：列印版（名單／成績）——列印時只留下這張紙 -->
+    <div id="printModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-3 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-5xl w-full flex flex-col cm-modal-panel">
+            <div id="printPreviewHeader" class="flex justify-between items-center border-b px-4 py-3 gap-2">
+                <h3 id="printModalTitle" class="text-base font-bold text-slate-800">🖨️ 列印版</h3>
+                <button id="printModalClose" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div id="printPreviewTools" class="px-4 py-2 border-b bg-slate-50">
+                <label id="printIncludeWaitlistLabel" class="flex items-center gap-1.5 text-[12px] text-slate-600">
+                    <input id="printIncludeWaitlist" type="checkbox" class="w-4 h-4 accent-blue-600" checked> 包含候補
+                </label>
+                <label id="printIncludePendingLabel" class="flex items-center gap-1.5 text-[12px] text-slate-600">
+                    <input id="printIncludePending" type="checkbox" class="w-4 h-4 accent-blue-600"> 包含待審核
+                </label>
+                <label class="flex items-center gap-1.5 text-[12px] text-slate-600">
+                    <input id="printSignColumn" type="checkbox" class="w-4 h-4 accent-blue-600" checked> 簽到欄
+                </label>
+                <label class="flex items-center gap-1.5 text-[12px] text-slate-600">
+                    <input id="printLandscape" type="checkbox" class="w-4 h-4 accent-blue-600"> 橫向
+                </label>
+                <button id="printDoBtn"
+                    class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded transition font-medium">🖨️ 列印 / 另存 PDF</button>
+                <span id="printScaleHint" class="text-[11px] text-slate-400">螢幕預覽會依裝置寬度縮放，實際列印為 A4</span>
+            </div>
+            <div id="printPreviewBody" class="overflow-y-auto max-h-[70vh]">
+                <div id="printScaleWrap"></div>
+                <p id="printModalNote" class="text-center text-xs text-slate-500 py-3 no-print"></p>
+            </div>
+        </div>
+    </div>
+
     <div id="staffModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
@@ -1672,6 +1706,7 @@
     <script src="/js/paging.js"></script>
     <script src="/js/stats.js"></script>
     <script src="/js/results.js"></script>
+    <script src="/js/printdoc.js"></script>
     <script src="/js/competition-state.js"></script>
     <script src="/js/app.js"></script>
 </body>
