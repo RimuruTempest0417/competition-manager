@@ -1,13 +1,13 @@
 {
   "name": "competition-manager",
-  "version": "2.27.0",
+  "version": "2.27.1",
   "description": "比賽管理系統正式版",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/*.test.js",
     "check:browser": "node tests/browser/alert-banner-check.js && node tests/browser/twofactor-check.js && node tests/browser/audit-log-check.js && node tests/browser/error-log-resolve-check.js && node tests/browser/backup-check.js && node tests/browser/competition-state-check.js && node tests/browser/registration-review-check.js && node tests/browser/waitlist-manage-check.js && node tests/browser/waitlist-extra-check.js && node tests/browser/waitlist-batch-check.js && node tests/browser/recurrence-check.js && node tests/browser/push-settings-check.js && node tests/browser/announcements-check.js && node tests/browser/venue-staff-check.js",
-    "check:prod": "node tests/browser/prod-smoke.js && node tests/browser/prod-visitor-check.js",
+    "check:prod": "node tests/browser/prod-smoke.js && node tests/browser/prod-visitor-check.js && node tests/browser/live-style-check.js",
     "triage": "node scripts/error-log-triage.js --upload",
     "check:audit-labels": "node scripts/check-audit-action-labels.js",
     "backup": "node scripts/backup-db.js",

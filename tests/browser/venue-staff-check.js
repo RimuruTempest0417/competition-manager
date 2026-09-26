@@ -253,6 +253,16 @@ function seedState() {
         check(!adminStaff.userOptions.some((o) => o.includes('off-venue')),
             '停用中的帳號不會出現在可指派清單');
 
+        // v2.27.0 修：這顆按鈕曾經因為 sky-* 色系不存在而隱形（真 Chrome 算過 CSS 才看得到）
+        const assignBtnStyle = JSON.parse(await browser.evaluate(`
+            const el = document.getElementById('staffAssignBtn');
+            const cs = getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return JSON.stringify({ bg: cs.backgroundColor, color: cs.color, w: Math.round(rect.width), h: Math.round(rect.height), text: el.textContent.trim() });
+        `));
+        check(assignBtnStyle.bg !== 'rgba(0, 0, 0, 0)' && assignBtnStyle.color !== assignBtnStyle.bg && assignBtnStyle.w > 40,
+            `「${assignBtnStyle.text}」按鈕看得見（底 ${assignBtnStyle.bg}／字 ${assignBtnStyle.color}／${assignBtnStyle.w}×${assignBtnStyle.h}）`);
+
         const assignNew = async (username, role, note) => {
             await browser.waitFor(`
                 Array.from(document.querySelectorAll('#staffUser option')).some((o) => o.textContent.includes(${JSON.stringify(username)}))

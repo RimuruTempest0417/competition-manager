@@ -239,6 +239,28 @@ function seedState() {
         check(afterAll.badgeHidden && afterAll.unreadCards === 0, '「全部標記已讀」後徽章消失、全部變成已讀');
         check(state.tables.announcement_reads.length >= 3, `已讀紀錄共 ${state.tables.announcement_reads.length} 筆（不重複）`);
 
+        // v2.27.0 修：sky-* 色系不存在 → 白字配透明底＝按鈕隱形。這裡用真的算過 CSS 的斷言守住。
+        const announceBtns = JSON.parse(await browser.evaluate(`
+            const out = {};
+            ['saveAnnounceCatsBtn', 'submitAnnounceBtn', 'markAllAnnounceReadBtn', 'toggleAnnounceFormBtn'].forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) { out[id] = null; return; }
+                const cs = getComputedStyle(el);
+                out[id] = { bg: cs.backgroundColor, color: cs.color, text: el.textContent.trim().slice(0, 12) };
+            });
+            return JSON.stringify(out);
+        `));
+        const catBtn = announceBtns.saveAnnounceCatsBtn;
+        check(catBtn && catBtn.bg !== 'rgba(0, 0, 0, 0)' && catBtn.color !== catBtn.bg,
+            `「儲存訂閱」按鈕看得見（底 ${catBtn && catBtn.bg}／字 ${catBtn && catBtn.color}）`);
+        const submitBtnStyle = announceBtns.submitAnnounceBtn;
+        check(submitBtnStyle && submitBtnStyle.bg !== 'rgba(0, 0, 0, 0)' && submitBtnStyle.color !== submitBtnStyle.bg,
+            `「${submitBtnStyle && submitBtnStyle.text}」按鈕看得見（底 ${submitBtnStyle && submitBtnStyle.bg}／字 ${submitBtnStyle && submitBtnStyle.color}）`);
+        const readBtn = announceBtns.markAllAnnounceReadBtn;
+        check(readBtn && readBtn.color !== 'rgb(255, 255, 255)', `「全部標記已讀」文字顏色不是白色（${readBtn && readBtn.color}）`);
+        const newBtn = announceBtns.toggleAnnounceFormBtn;
+        check(newBtn && newBtn.color !== 'rgb(255, 255, 255)', `「${newBtn && newBtn.text}」文字顏色不是白色（${newBtn && newBtn.color}）`);
+
         await browser.screenshot(path.join(SHOTS, '01-管理員公告中心.png'));
 
         // ---------- ③ 管理員發布公告（不推播） ----------
