@@ -233,6 +233,45 @@ const get = (p, headers) => fetch(SITE + p, { headers });
             console.log('  ℹ️ 線上目前沒有自訂海報，跳過縮圖端點檢查');
         }
 
+        // v3.1.0：成績與結果（全部唯讀，不會動到線上任何資料）
+        const targetComp = Array.isArray(plain) && plain.length ? plain[0].id : 1;
+        const resultsGuest = await get(`/api/competitions/${targetComp}/results`);
+        const resultsGuestBody = await resultsGuest.json().catch(() => ({}));
+        check(`訪客可讀成績端點（HTTP ${resultsGuest.status}）`, resultsGuest.status === 200, JSON.stringify(resultsGuestBody).slice(0, 120));
+        check('未公布時訪客拿到「尚未公布」而不是內容',
+            typeof resultsGuestBody.published === 'boolean'
+            && (resultsGuestBody.published === true || (Array.isArray(resultsGuestBody.results) && resultsGuestBody.results.length === 0)),
+            JSON.stringify(resultsGuestBody).slice(0, 120));
+
+        const resultsWrite = await fetch(`${SITE}/api/competitions/${targetComp}/results`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ results: [] })
+        });
+        check(`未登入改成績被拒（HTTP ${resultsWrite.status}）`, [401, 403].includes(resultsWrite.status), String(resultsWrite.status));
+
+        const publishDenied = await fetch(`${SITE}/api/competitions/${targetComp}/results/publish`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: true })
+        });
+        check(`未登入公布成績被拒（HTTP ${publishDenied.status}）`, [401, 403].includes(publishDenied.status), String(publishDenied.status));
+
+        const sheet = await get(`/api/competitions/${targetComp}/result-sheet`, auth);
+        const sheetBody = await sheet.json().catch(() => ({}));
+        check(`網站擁有者可讀成績登錄表（HTTP ${sheet.status}）`, sheet.status === 200, JSON.stringify(sheetBody).slice(0, 140));
+        check('登錄表帶出已核准名單與公布前檢查',
+            Array.isArray(sheetBody.entries) && sheetBody.checklist && typeof sheetBody.checklist.missing_count === 'number',
+            JSON.stringify(Object.keys(sheetBody)).slice(0, 120));
+        check('成績資料不含個資（沒有 email／password／token 欄位）',
+            !/password|totp_secret|"email"|access_token/i.test(JSON.stringify(sheetBody)),
+            JSON.stringify(sheetBody).slice(0, 120));
+
+        const myResults = await get('/api/my/results', auth);
+        const myResultsBody = await myResults.json().catch(() => null);
+        check(`「我的成績」可用（HTTP ${myResults.status}）`, myResults.status === 200 && Array.isArray(myResultsBody), String(myResults.status));
+        check('「我的成績」只包含已公布且屬於自己的成績',
+            Array.isArray(myResultsBody) && myResultsBody.every((r) => r.competitions && r.competitions.result_published_at),
+            JSON.stringify(myResultsBody).slice(0, 120));
+
         const wrongRoleToken = jwt.sign({ sub: 4, username: 'nobody', role: 'user' }, secret, { expiresIn: '10m' });
         const denied = await get('/api/admin/error-logs', { Authorization: `Bearer ${wrongRoleToken}` });
         check(`一般角色讀取錯誤日誌被拒（HTTP ${denied.status}）`, [401, 403].includes(denied.status), String(denied.status));

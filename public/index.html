@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.0.0</title>
+    <title>比賽管理系統 v3.1.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -1002,6 +1002,56 @@
     </div>
 
     <!-- 彈出視窗：工作人員指派（v2.27.0：裁判／記錄／攝影／醫護／其他） -->
+    <!-- 成績表（v3.1.0：已公布的成績，所有人可見） -->
+    <div id="resultsModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-3 cm-modal-panel flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 id="resultsModalTitle" class="text-lg font-bold text-slate-800">🏆 成績</h3>
+                <button id="resultsModalClose" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div id="resultsModalBody" class="overflow-y-auto max-h-[65vh]"></div>
+        </div>
+    </div>
+
+    <!-- 成績登錄（v3.1.0：管理員以上，草稿直到公布） -->
+    <div id="resultsEditorModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-4xl w-full p-6 space-y-3 cm-modal-panel flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 id="resultsEditorTitle" class="text-lg font-bold text-slate-800">🏆 成績登錄</h3>
+                <button id="resultsEditorClose" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <p class="text-[11px] text-slate-500">成績先存成草稿（前台看不到），確認無誤再按「公布結果」。名次可以自己填，也可以按自動排名（時間越小越好；分數類用越大越好）。</p>
+
+            <div id="resultsEditorError" class="hidden"></div>
+            <div id="resultsEditorBody" class="overflow-y-auto max-h-[50vh]"></div>
+
+            <div class="border-t pt-3 space-y-2">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input id="resultsSummaryInput" maxlength="500" placeholder="成績頁補充說明（選填，例如：計時賽，取最佳成績）"
+                        class="px-2 py-1.5 border border-slate-300 rounded-lg text-sm">
+                    <label class="flex items-center gap-2 text-[13px] text-slate-600">
+                        <input id="resultsPublishNotify" type="checkbox" class="w-4 h-4 accent-blue-600">
+                        <span>公布時推播通知參賽者</span>
+                    </label>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button id="resultsSaveBtn"
+                        class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded transition font-medium">💾 儲存草稿</button>
+                    <button id="resultsAutoRankAscBtn"
+                        class="text-xs text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded transition">🔢 自動排名（時間，越小越好）</button>
+                    <button id="resultsAutoRankDescBtn"
+                        class="text-xs text-slate-700 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded transition">🔢 自動排名（分數，越大越好）</button>
+                    <button id="resultsPublishBtn"
+                        class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded transition font-medium">🏁 公布結果</button>
+                    <button id="resultsUnpublishBtn"
+                        class="hidden text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded transition">↩️ 取消公布</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="staffModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
@@ -1090,7 +1140,11 @@
                         <input id="pushEventAnnounce" type="checkbox" class="w-4 h-4 accent-blue-600">
                         <span>站內公告發布通知</span>
                     </label>
-                    <p class="text-[11px] text-slate-500">關掉只是「不通知」，遞補與公告本身照常運作。</p>
+                    <label class="flex items-center gap-2 text-[13px] text-slate-600">
+                        <input id="pushEventResult" type="checkbox" class="w-4 h-4 accent-blue-600">
+                        <span>賽事成績公布通知</span>
+                    </label>
+                    <p class="text-[11px] text-slate-500">關掉只是「不通知」，遞補、公告與成績公布本身照常運作。</p>
                 </div>
             </div>
 
@@ -1617,6 +1671,7 @@
     <!-- v3.0.0：分頁與營運統計的共用規則（與後端同一份，UMD） -->
     <script src="/js/paging.js"></script>
     <script src="/js/stats.js"></script>
+    <script src="/js/results.js"></script>
     <script src="/js/competition-state.js"></script>
     <script src="/js/app.js"></script>
 </body>

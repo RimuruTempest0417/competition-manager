@@ -121,8 +121,11 @@ function startFakeSupabase(state, options = {}) {
 
                     let result = rows.filter((r) => matches(r, params));
 
-                    // 外鍵展開：registrations → competitions
-                    if (table === 'registrations' && /competitions\s*\(/.test(select)) {
+                    // 外鍵展開：registrations → competitions；v3.1.0 再加上 competition_results → competitions
+                    // （真實的 PostgREST 靠外鍵就能展開，這裡把它補齊，測試才驗得到「我的成績」帶賽事名稱）
+                    const embedsCompetition = /competitions\s*\(/.test(select)
+                        && (table === 'registrations' || table === 'competition_results');
+                    if (embedsCompetition) {
                         result = result.map((r) => Object.assign({}, r, {
                             competitions: (tables.competitions || []).find((c) => String(c.id) === String(r.competition_id)) || null
                         }));

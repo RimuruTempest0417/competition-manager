@@ -108,7 +108,8 @@ test('GET：沒設定過時回預設值（每日摘要 09:00、事件全開）',
         digest_kind_reminder: true,
         event_review: true,
         event_promote: true,
-        event_announce: true   // v2.26.0：公告發布通知
+        event_announce: true,   // v2.26.0：公告發布通知
+        event_result: true      // v3.1.0：成績公布通知
     });
 });
 

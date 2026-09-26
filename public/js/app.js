@@ -758,6 +758,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('closeAnnouncementBtn2')?.addEventListener('click', closeAnnouncementModal);
     // v3.0.0：營運儀表板
     document.getElementById('opsStatsBtn')?.addEventListener('click', openOpsStatsModal);
+    initResultsUi();   // v3.1.0：成績表與成績登錄
     document.getElementById('closeOpsStatsBtn')?.addEventListener('click', closeOpsStatsModal);
     document.getElementById('opsStatsRefreshBtn')?.addEventListener('click', () => loadOpsStats(true));
     document.getElementById('opsStatsRange')?.addEventListener('click', (event) => {
@@ -1060,6 +1061,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             openTeamModal(id);
         } else if (action === 'manage-staff') {
             openStaffModal(id);
+        } else if (action === 'view-results') {
+            openResultsModal(id);
+        } else if (action === 'edit-results') {
+            openResultsEditor(id);
         } else if (action === 'copy-comp') {
             copyCompetition(id);
         } else if (action === 'duplicate-comp') {
@@ -1933,6 +1938,7 @@ function renderMyRegs() {
                 <p class="text-xs text-slate-500 mt-0.5">📅 ${escapeHtml(comp.date || '')}${comp.time ? ' ' + escapeHtml(comp.time) : ''}${comp.location ? ' ｜ 📍 ' + escapeHtml(comp.location) : ''}</p>
                 ${comp.is_team_event && r.team_name ? `<p class="text-xs text-indigo-600 mt-0.5">👥 隊伍：${escapeHtml(r.team_name)}</p>` : ''}
                 ${r.note ? `<p class="text-xs text-slate-500 mt-0.5">📝 ${escapeHtml(r.note)}</p>` : ''}
+                ${myResultHtml(r.competition_id)}
                 <p class="text-xs text-slate-400 mt-0.5">報名時間：${escapeHtml(String(r.created_at || '').slice(0, 16).replace('T', ' '))}</p>
             </div>
             <div class="flex flex-col items-end gap-1.5 shrink-0">
@@ -1957,7 +1963,7 @@ async function openMyRegsModal() {
     if (list) list.innerHTML = '<p class="text-center text-slate-400 py-6 text-sm">載入中…</p>';
     document.getElementById('myRegsModal')?.classList.remove('hidden');
 
-    await fetchMyRegistrations();
+    await Promise.all([fetchMyRegistrations(), fetchMyResults()]);
     renderMyRegs();
 }
 
@@ -3902,6 +3908,442 @@ async function loadOpsStats(force) {
     }
 }
 
+
+/* ============================================================
+ * v3.1.0：成績與結果（P1-3）
+ * ------------------------------------------------------------
+ * 前台：已公布的賽事多一顆「🏆 成績」→ 名次表（前三名領獎台）。
+ * 後台：「🏆 成績登錄」→ 名單、成績、狀態、名次一次填完，
+ *      可以一鍵依成績自動排名，確認後公布（可同時推播通知參賽者）。
+ * 名次怎麼算、什麼狀態不能排名、公布前的檢查都走 CMResults（與後端同一份）。
+ * ============================================================ */
+
+const cmResultsState = {
+    competitionId: null,
+    name: '',
+    entries: [],
+    orphan: [],
+    stats: null,
+    checklist: null,
+    published: false,
+    publishedAt: null,
+    publishedBy: null,
+    summary: null,
+    saving: false
+};
+
+function canManageResults() {
+    return !!currentUser && ['admin', 'super_admin', 'web_owner'].includes(currentUser.role);
+}
+
+/* 卡片上的成績按鈕：已公布＝每個人都看得到；管理員多一顆登錄／修改 */
+function resultCardButtonsHtml(item) {
+    const published = !!item.result_published_at;
+    let html = '';
+    if (published) {
+        html += `<button data-action="view-results" data-id="${item.id}"
+                    class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">
+                    🏆 成績</button>`;
+    }
+    if (canManageResults()) {
+        html += `<button data-action="edit-results" data-id="${item.id}"
+                    class="text-xs text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">
+                    ${published ? '✏️ 修改成績' : '🏆 成績登錄'}</button>`;
+    }
+    return html;
+}
+
+/* ---------- 前台：成績表 ---------- */
+
+function resultsPodiumHtml(stats) {
+    const podium = (stats && stats.podium) || [];
+    if (!podium.length) return '';
+    return `
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+            ${podium.map((p) => `
+                <div class="border border-slate-200 rounded-lg p-3 bg-slate-50">
+                    <p class="text-sm font-bold text-slate-800">${escapeHtml(p.medal)} ${escapeHtml(String(p.name))}</p>
+                    <p class="text-xs text-slate-500 mt-0.5">${escapeHtml(CMResults.formatRank(p.rank))} · ${escapeHtml(String(p.score))}</p>
+                </div>`).join('')}
+        </div>`;
+}
+
+function resultsTableHtml(rows, highlightName) {
+    if (!rows.length) return '<p class="text-sm text-slate-400 py-4 text-center">沒有成績紀錄</p>';
+    return `
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-xs text-slate-500 border-b border-slate-200">
+                        <th class="py-2 pr-3">名次</th><th class="py-2 pr-3">姓名</th>
+                        <th class="py-2 pr-3">成績</th><th class="py-2 pr-3">狀態</th><th class="py-2">備註</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map((r) => `
+                        <tr class="border-b border-slate-100 ${highlightName && r.username === highlightName ? 'bg-blue-50' : ''}">
+                            <td class="py-2 pr-3 font-medium text-slate-800">${escapeHtml(r.medal ? r.medal + ' ' : '')}${escapeHtml(CMResults.formatRank(r.rank))}</td>
+                            <td class="py-2 pr-3 text-slate-700 cm-break">${escapeHtml(String(r.display_name || r.username || '（未具名）'))}${highlightName && r.username === highlightName ? ' <span class="text-xs text-blue-600">（你）</span>' : ''}</td>
+                            <td class="py-2 pr-3 text-slate-700">${escapeHtml(CMResults.displayScoreOrStatus(r))}</td>
+                            <td class="py-2 pr-3 text-slate-500 text-xs">${escapeHtml(CMResults.statusLabel(r.status))}</td>
+                            <td class="py-2 text-xs text-slate-500 cm-break">${escapeHtml(r.note || '')}</td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+}
+
+function resultsModalHtml(data) {
+    if (!data.published) {
+        return `<p class="text-sm text-slate-500 py-8 text-center">成績尚未公布${data.message ? `<br><span class="text-xs text-slate-400">${escapeHtml(data.message)}</span>` : ''}</p>`;
+    }
+    const rows = (data.results || []).slice().sort(CMResults.compareResults);
+    const stats = data.stats || CMResults.summarize(rows);
+    return `
+        ${data.summary ? `<p class="text-xs text-slate-600 bg-slate-50 border border-slate-100 rounded-lg p-2.5 mb-3 whitespace-pre-line">${escapeHtml(data.summary)}</p>` : ''}
+        ${resultsPodiumHtml(stats)}
+        <p class="text-xs text-slate-500 mb-3">
+            共 ${stats.total} 筆成績｜完賽 ${stats.finished}｜已排名 ${stats.ranked}${stats.unranked ? `｜未排名 ${stats.unranked}` : ''}
+            ${data.published_at ? `｜公布於 ${escapeHtml(String(data.published_at).slice(0, 16).replace('T', ' '))}${data.published_by ? '（' + escapeHtml(data.published_by) + '）' : ''}` : ''}
+        </p>
+        ${resultsTableHtml(rows, currentUser ? currentUser.username : null)}
+        ${rows.length ? `<button id="resultsExportBtn" data-id="${data.competition ? data.competition.id : ''}"
+            class="mt-3 text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">⬇️ 匯出成績 CSV</button>` : ''}`;
+}
+
+async function openResultsModal(id) {
+    const modal = document.getElementById('resultsModal');
+    const body = document.getElementById('resultsModalBody');
+    if (!modal || !body) return;
+    body.innerHTML = '<p class="text-center text-slate-400 py-6 text-sm">載入中…</p>';
+    modal.classList.remove('hidden');
+
+    try {
+        const res = await customFetch(`/api/competitions/${id}/results`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '讀取成績失敗');
+        const title = document.getElementById('resultsModalTitle');
+        if (title) title.textContent = `🏆 ${data.competition ? data.competition.name : ''} 成績`;
+
+        body.innerHTML = resultsModalHtml(data);
+        document.getElementById('resultsExportBtn')?.addEventListener('click', () => exportResultsCsv(id));
+    } catch (err) {
+        body.innerHTML = `<p class="text-sm text-red-600 py-4">❌ ${escapeHtml(err.message)}</p>`;
+    }
+}
+
+async function exportResultsCsv(id) {
+    try {
+        const res = await customFetch(`/api/competitions/${id}/results`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '讀取成績失敗');
+        if (!Array.isArray(data.results) || !data.results.length) return alert('這場賽事沒有可匯出的成績');
+        const name = (data.competition && data.competition.name) || 'competition';
+        downloadCsvBlob(`成績-${name}.csv`, new Blob([CMCSV.stringify(CMResults.csvRows(data.results), { bom: true })], { type: 'text/csv;charset=utf-8' }));
+    } catch (err) {
+        alert('❌ 匯出失敗：' + err.message);
+    }
+}
+
+/* ---------- 我的成績（我的報名裡顯示名次） ---------- */
+
+let myResults = [];
+
+async function fetchMyResults() {
+    if (!currentUser) { myResults = []; return; }
+    try {
+        const res = await customFetch('/api/my/results');
+        if (!res.ok) { myResults = []; return; }
+        const data = await res.json();
+        myResults = Array.isArray(data) ? data : [];
+    } catch (err) {
+        myResults = [];
+    }
+}
+
+/* 我的報名卡片上的一行成績（沒有公布就什麼都不顯示，不要寫「尚未公布」洗版） */
+function myResultHtml(competitionId) {
+    const hit = myResults.find((r) => String(r.competition_id) === String(competitionId));
+    if (!hit) return '';
+    const parts = [hit.rank ? `${hit.medal || ''} ${CMResults.formatRank(hit.rank)}` : CMResults.statusLabel(hit.status)];
+    const score = CMResults.displayScoreOrStatus(hit);
+    if (score && score !== '—') parts.push(score);
+    return `<p class="text-xs text-emerald-700 mt-0.5">🏆 成績：${escapeHtml(parts.join(' · '))}</p>`;
+}
+
+/* ---------- 後台：成績登錄 ---------- */
+
+function resultStatusOptionsHtml(selected) {
+    const current = CMResults.normalizeStatus(selected);
+    return CMResults.RESULT_STATUSES
+        .map((s) => `<option value="${s.id}"${s.id === current ? ' selected' : ''}>${s.emoji} ${s.label}</option>`)
+        .join('');
+}
+
+function resultsEditorRowsHtml() {
+    const entries = cmResultsState.entries;
+    if (!entries.length) {
+        return '<p class="text-sm text-slate-400 py-4 text-center">這場賽事還沒有「已核准」的報名，先審核報名再來登錄成績</p>';
+    }
+    return `
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm" id="resultsEditorTable">
+                <thead>
+                    <tr class="text-left text-xs text-slate-500 border-b border-slate-200">
+                        <th class="py-2 pr-2">姓名</th>
+                        <th class="py-2 pr-2 w-28">成績</th>
+                        <th class="py-2 pr-2 w-32">狀態</th>
+                        <th class="py-2 pr-2 w-20">名次</th>
+                        <th class="py-2 w-40">備註</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${entries.map((e) => `
+                        <tr class="border-b border-slate-100" data-registration-id="${e.registration_id}">
+                            <td class="py-1.5 pr-2 text-slate-700 cm-break">
+                                ${escapeHtml(String(e.display_name || e.username || ''))}
+                                ${e.existing ? '<span class="text-xs text-emerald-600">已登錄</span>' : '<span class="text-xs text-slate-400">未登錄</span>'}
+                            </td>
+                            <td class="py-1.5 pr-2">
+                                <input data-field="score_text" value="${escapeHtml(e.score_text || '')}" maxlength="${CMResults.SCORE_MAX}"
+                                    placeholder="12:34.5" class="w-24 border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+                            </td>
+                            <td class="py-1.5 pr-2">
+                                <select data-field="status" class="w-32 border border-slate-300 rounded px-2 py-1 text-sm">
+                                    ${resultStatusOptionsHtml(e.status)}
+                                </select>
+                            </td>
+                            <td class="py-1.5 pr-2">
+                                <input data-field="rank" type="number" min="1" step="1" value="${e.rank === null || e.rank === undefined ? '' : e.rank}"
+                                    class="w-16 border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+                            </td>
+                            <td class="py-1.5">
+                                <input data-field="note" value="${escapeHtml(e.note || '')}" maxlength="${CMResults.NOTE_MAX}"
+                                    class="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+                            </td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+}
+
+function resultsEditorStatusHtml() {
+    const { stats, checklist, published } = cmResultsState;
+    const lines = [];
+    if (stats) {
+        lines.push(`共 ${stats.total} 筆｜完賽 ${stats.finished}｜已排名 ${stats.ranked}${stats.unranked ? `｜未排名 ${stats.unranked}` : ''}`);
+    }
+    const notices = [];
+    if (checklist) {
+        if (checklist.missing_count) notices.push(`還有 ${checklist.missing_count} 位已核准參賽者沒有成績：${checklist.missing.slice(0, 5).map((m) => m.display_name).join('、')}${checklist.missing_count > 5 ? '…' : ''}`);
+        if (checklist.duplicate_ranks.length) notices.push(`名次重複：${checklist.duplicate_ranks.map((d) => `第 ${d.rank} 名 ×${d.count}`).join('、')}（並列是正常的，僅提醒）`);
+        if (checklist.rank_gaps.length) notices.push(`名次跳號：${checklist.rank_gaps.join('、')}`);
+    }
+    return `
+        <p class="text-xs ${published ? 'text-emerald-700' : 'text-amber-700'}">
+            ${published ? `✅ 已公布（${escapeHtml(String(cmResultsState.publishedAt || '').slice(0, 16).replace('T', ' '))}${cmResultsState.publishedBy ? '，' + escapeHtml(cmResultsState.publishedBy) : ''}）` : '📝 草稿狀態：前台還看不到，填好後按「公布結果」'}
+        </p>
+        ${lines.length ? `<p class="text-xs text-slate-500 mt-1">${escapeHtml(lines.join('｜'))}</p>` : ''}
+        ${notices.length ? `<ul class="text-xs text-amber-700 mt-1 list-disc list-inside space-y-0.5">${notices.map((n) => `<li>${escapeHtml(n)}</li>`).join('')}</ul>` : '<p class="text-xs text-emerald-600 mt-1">✅ 每位已核准參賽者都有成績</p>'}
+        ${cmResultsState.orphan.length ? `<p class="text-xs text-slate-500 mt-1">另有 ${cmResultsState.orphan.length} 筆成績的報名已不在名單中（例如後來取消錄取），這些成績會保留但記得確認：${escapeHtml(cmResultsState.orphan.slice(0, 3).map((o) => o.display_name).join('、'))}</p>` : ''}`;
+}
+
+function resultsEditorError(message, isError) {
+    const box = document.getElementById('resultsEditorError');
+    if (!box) return;
+    if (!message) { box.classList.add('hidden'); box.textContent = ''; return; }
+    box.textContent = message;
+    box.className = isError
+        ? 'text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3'
+        : 'text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 mb-3';
+}
+
+function renderResultsEditor() {
+    const body = document.getElementById('resultsEditorBody');
+    if (!body) return;
+    body.innerHTML = resultsEditorRowsHtml() + `<div id="resultsEditorStatus" class="mt-3 space-y-1">${resultsEditorStatusHtml()}</div>`;
+
+    const summaryInput = document.getElementById('resultsSummaryInput');
+    if (summaryInput) summaryInput.value = cmResultsState.summary || '';
+
+    const publishBtn = document.getElementById('resultsPublishBtn');
+    if (publishBtn) publishBtn.textContent = cmResultsState.published ? '🔁 重新公布（更新內容）' : '🏁 公布結果';
+    const unpublishBtn = document.getElementById('resultsUnpublishBtn');
+    if (unpublishBtn) unpublishBtn.classList.toggle('hidden', !cmResultsState.published);
+}
+
+async function openResultsEditor(id) {
+    if (!canManageResults()) return;
+    const modal = document.getElementById('resultsEditorModal');
+    const body = document.getElementById('resultsEditorBody');
+    if (!modal || !body) return;
+    body.innerHTML = '<p class="text-center text-slate-400 py-6 text-sm">載入中…</p>';
+    resultsEditorError(null);
+    modal.classList.remove('hidden');
+
+    try {
+        const res = await customFetch(`/api/competitions/${id}/result-sheet`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '讀取成績表失敗');
+
+        Object.assign(cmResultsState, {
+            competitionId: data.competition ? data.competition.id : id,
+            name: data.competition ? data.competition.name : '',
+            entries: data.entries || [],
+            orphan: data.orphan || [],
+            stats: data.stats || null,
+            checklist: data.checklist || null,
+            published: !!data.published,
+            publishedAt: data.published_at || null,
+            publishedBy: data.published_by || null,
+            summary: data.summary || null,
+            saving: false
+        });
+        const title = document.getElementById('resultsEditorTitle');
+        if (title) title.textContent = `🏆 ${cmResultsState.name} 成績登錄`;
+        renderResultsEditor();
+    } catch (err) {
+        body.innerHTML = `<p class="text-sm text-red-600 py-4">❌ ${escapeHtml(err.message)}</p>`;
+    }
+}
+
+/* 讀出畫面上每一列的輸入值（不猜、不填預設值——空白就是空白） */
+function readResultsEditor() {
+    const table = document.getElementById('resultsEditorTable');
+    if (!table) return [];
+    return Array.from(table.querySelectorAll('tr[data-registration-id]')).map((tr) => {
+        const get = (field) => {
+            const el = tr.querySelector(`[data-field="${field}"]`);
+            return el ? el.value : '';
+        };
+        return {
+            registration_id: Number(tr.dataset.registrationId),
+            score_text: get('score_text').trim(),
+            status: get('status'),
+            rank: get('rank').trim(),
+            note: get('note').trim()
+        };
+    });
+}
+
+async function saveResults(options) {
+    const opts = options || {};
+    if (!cmResultsState.competitionId || cmResultsState.saving) return;
+    cmResultsState.saving = true;
+    resultsEditorError(null);
+
+    const payload = {
+        results: readResultsEditor().filter((r) => r.score_text || r.rank || r.status !== 'finished' || r.note),
+        auto_rank: !!opts.autoRank,
+        order: opts.order === 'desc' ? 'desc' : 'asc'
+    };
+
+    try {
+        const res = await customFetch(`/api/competitions/${cmResultsState.competitionId}/results`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '儲存失敗');
+
+        cmResultsState.stats = data.stats || cmResultsState.stats;
+        cmResultsState.checklist = data.checklist || cmResultsState.checklist;
+        resultsEditorError(`✅ ${data.message}${data.auto_ranked ? '（已依成績自動排名）' : ''}`, false);
+        await refreshResultsEditor();
+        return data;
+    } catch (err) {
+        resultsEditorError('❌ ' + err.message, true);
+    } finally {
+        cmResultsState.saving = false;
+    }
+}
+
+/* 重讀後端資料（儲存後要拿到最新的名次與檢查結果，不要用前端自己算的） */
+async function refreshResultsEditor() {
+    const res = await customFetch(`/api/competitions/${cmResultsState.competitionId}/result-sheet`);
+    if (!res.ok) return;
+    const data = await res.json().catch(() => ({}));
+    if (!data || !data.entries) return;
+    cmResultsState.entries = data.entries;
+    cmResultsState.orphan = data.orphan || [];
+    cmResultsState.stats = data.stats || null;
+    cmResultsState.checklist = data.checklist || null;
+    cmResultsState.published = !!data.published;
+    cmResultsState.publishedAt = data.published_at || null;
+    cmResultsState.publishedBy = data.published_by || null;
+    renderResultsEditor();
+}
+
+async function saveResultsAndRank(order) {
+    if (!cmResultsState.entries.length) return;
+    await saveResults({ autoRank: true, order });
+}
+
+async function publishResultsFromEditor() {
+    if (!cmResultsState.competitionId) return;
+    const notifyBox = document.getElementById('resultsPublishNotify');
+    const notify = !!(notifyBox && notifyBox.checked);
+    const summaryInput = document.getElementById('resultsSummaryInput');
+    const summary = summaryInput ? summaryInput.value.trim() : '';
+
+    // 先把畫面上的輸入存起來，避免使用者以為「公布」會一起存卻沒存到
+    const saved = await saveResults({});
+    if (saved === undefined) return;
+
+    const label = cmResultsState.published ? '重新公布' : '公布';
+    const extra = notify ? '\n並推播通知所有有訂閱的參賽者。' : '';
+    if (!confirm(`確定要${label}「${cmResultsState.name}」的成績嗎？\n${label}後所有訪客都看得到。${extra}`)) return;
+
+    try {
+        const res = await customFetch(`/api/competitions/${cmResultsState.competitionId}/results/publish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: true, notify, summary })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '公布失敗');
+
+        const pushNote = notify
+            ? `，通知 ${data.notified ? data.notified.sent : 0} 位（失敗 ${data.notified ? data.notified.failed : 0} 位${data.notified && data.notified.skipped ? '：' + data.notified.skipped : ''}）`
+            : '';
+        resultsEditorError(`✅ ${data.message}${pushNote}`, false);
+        await refreshResultsEditor();
+        await fetchCompetitions();
+    } catch (err) {
+        resultsEditorError('❌ ' + err.message, true);
+    }
+}
+
+async function unpublishResultsFromEditor() {
+    if (!cmResultsState.competitionId) return;
+    if (!confirm(`確定要取消公布「${cmResultsState.name}」的成績嗎？\n取消後前台立刻看不到（成績會保留成草稿）。`)) return;
+    try {
+        const res = await customFetch(`/api/competitions/${cmResultsState.competitionId}/results/unpublish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: true })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '取消失敗');
+        resultsEditorError(`✅ ${data.message}`, false);
+        await refreshResultsEditor();
+        await fetchCompetitions();
+    } catch (err) {
+        resultsEditorError('❌ ' + err.message, true);
+    }
+}
+
+function initResultsUi() {
+    document.getElementById('resultsSaveBtn')?.addEventListener('click', () => saveResults({}));
+    document.getElementById('resultsAutoRankAscBtn')?.addEventListener('click', () => saveResultsAndRank('asc'));
+    document.getElementById('resultsAutoRankDescBtn')?.addEventListener('click', () => saveResultsAndRank('desc'));
+    document.getElementById('resultsPublishBtn')?.addEventListener('click', publishResultsFromEditor);
+    document.getElementById('resultsUnpublishBtn')?.addEventListener('click', unpublishResultsFromEditor);
+    document.getElementById('resultsModalClose')?.addEventListener('click', () => document.getElementById('resultsModal')?.classList.add('hidden'));
+    document.getElementById('resultsEditorClose')?.addEventListener('click', () => document.getElementById('resultsEditorModal')?.classList.add('hidden'));
+}
+
 function competitionCardHtml(item) {
     return `
         <div class="cm-card border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition bg-white shadow-sm flex flex-col md:flex-row justify-between gap-4" data-comp-id="${escapeHtml(String(item.id))}">
@@ -3963,6 +4405,8 @@ function competitionCardHtml(item) {
                         class="text-xs ${isSubscribed(item.id) ? 'text-emerald-700 bg-emerald-100 hover:bg-emerald-200 font-medium' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'} px-2.5 py-1 rounded transition">
                     ${isSubscribed(item.id) ? '🔔 已訂閱' : '🔕 訂閱提醒'}
                 </button>
+
+                ${resultCardButtonsHtml(item)}
 
                 ${isAdminUser() ? `
                     <button data-action="copy-comp" data-id="${item.id}" class="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded transition">複製發佈</button>
@@ -5233,7 +5677,8 @@ const CM_PUSH_SETTING_FIELDS = [
     ['pushDigestKindReminder', 'digest_kind_reminder'],
     ['pushEventReview', 'event_review'],
     ['pushEventPromote', 'event_promote'],
-    ['pushEventAnnounce', 'event_announce']   // v2.26.0：公告發布通知
+    ['pushEventAnnounce', 'event_announce'],  // v2.26.0：公告發布通知
+    ['pushEventResult', 'event_result']       // v3.1.0：成績公布通知
 ];
 
 async function openPushSettingsModal() {
