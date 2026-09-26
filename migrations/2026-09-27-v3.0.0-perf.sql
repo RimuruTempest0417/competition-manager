@@ -54,9 +54,9 @@ create index if not exists audit_logs_action_target_idx
 create index if not exists audit_logs_created_idx
     on public.audit_logs (created_at desc);
 
--- 推播紀錄的時間排序（推播看板）：
-create index if not exists push_log_created_idx
-    on public.push_log (created_at desc);
+-- 推播紀錄的時間排序（推播看板）——注意：這張表的時間欄位是 sent_at，不是 created_at：
+create index if not exists push_log_sent_idx
+    on public.push_log (sent_at desc);
 
 -- 公告已讀（未讀徽章每次載入都會查）——表可能還沒建，所以用 DO 區塊保護：
 do $$

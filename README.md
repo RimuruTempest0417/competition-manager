@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v3.1.0
+# 🏆 比賽管理系統 (Competition Manager) v3.1.1
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -172,6 +172,20 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v3.1.1 (2026-09-26) - 修正 v3.0.0 migration 無法執行（push_log 欄位）
+
+- **問題**：在 Supabase SQL Editor 跑 `migrations/2026-09-27-v3.0.0-perf.sql` 會失敗：
+  `ERROR: 42703: column "created_at" does not exist`。
+- **原因**：該檔對 `push_log` 建索引時寫 `created_at`，但**這張表的時間欄位是 `sent_at`**。
+  PostgreSQL 的錯誤只報欄位名、不報表名，容易誤判成前一條 `competitions (created_at)`（那條其實沒問題）。
+  又因為 SQL Editor 把整份腳本放在同一個交易，一句失敗就整份回滾——所以連沒問題的 `thumb_*` 欄位也沒建立。
+- **修正**：索引改為 `push_log (sent_at desc)`，名稱正名為 `push_log_sent_idx`；
+  該檔 13 條索引與 3 個欄位**逐條對照正式資料庫實際欄位**驗證過。
+- **已套用並讀回確認**：縮圖欄位、v3.0.0 的 10 條索引、`competition_results`（含索引與 RLS）、
+  `competitions` 的三個公布欄位全部到位；正式站成績端點由 503 恢復為 **HTTP 200**。
+- **測試**：`npm test` 全綠；`npm run check:prod` 煙霧 **84/84**＋訪客 **8/8**＋線上樣式 **8/8**。
+- **這支檔案可重複執行**（全部 `IF NOT EXISTS`），再貼一次也只會看到 already exists。
 
 ### v3.1.0 (2026-09-26) - 成績與結果（P1-3）
 
