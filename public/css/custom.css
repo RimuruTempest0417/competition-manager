@@ -993,6 +993,50 @@ canvas {
     max-height: 92dvh;
 }
 
+/* 桌機：彈窗不要擠成細長一條（使用者 2026-09-27 反映「右上角選單裡的按鈕點開後看上去比較細」）
+ *
+ * 修正前實測（1920×1080，通知設定）：面板只有 512×581px、內容 464px、按鈕高 24px、內文 12px
+ * ——在寬螢幕上像一張細長卡片，字小、按鈕擠成四列。
+ *
+ * 作法：依作者原本選的 max-w-* 分級，各加一個「桌機下限」。CSS 的 min-width 勝過 max-width，
+ * 所以不必改 HTML 的 class，也不會動到 3xl 以上本來就夠寬的彈窗：
+ *   max-w-md（表單類）      → 32rem
+ *   max-w-lg（通知／回報…） → 44rem
+ *   max-w-xl／2xl（表格類） → 46rem
+ * 只在 ≥1024px 生效；手機／平板維持原樣（手機另有 640px 以下的規則）。 */
+@media (min-width: 1024px) {
+    .cm-modal-panel.max-w-md {
+        min-width: min(32rem, calc(100vw - 4rem));
+    }
+
+    .cm-modal-panel.max-w-lg {
+        min-width: min(44rem, calc(100vw - 4rem));
+    }
+
+    .cm-modal-panel.max-w-xl,
+    .cm-modal-panel.max-w-2xl {
+        min-width: min(46rem, calc(100vw - 4rem));
+    }
+
+    /* 字級與按鈕高度見下方「≥641px」那一段（平板與桌機共用）。 */
+}
+
+/* 平板（>640px 的非手機裝置）也算觸控裝置，按鈕與字級不要比手機還小：
+   實測 834px 寬時彈窗按鈕只有 24px（手機反而有 36px），一次點不到就以為「壞了」。 */
+@media (min-width: 641px) {
+    body .cm-modal-panel .text-xs {
+        font-size: 0.8125rem;
+    }
+
+    body .cm-modal-panel .text-sm {
+        font-size: 0.90625rem;
+    }
+
+    body .cm-modal-panel button {
+        min-height: 2rem;
+    }
+}
+
 /* 底部安全區域：讓最後一排按鈕不被 iPhone 手勢條壓住 */
 .cm-safe-bottom {
     padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));

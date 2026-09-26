@@ -156,6 +156,62 @@ const SIZES = [
                 }
                 done(browser.pageErrors.length === 0, '沒有前端例外', browser.pageErrors.join(' | ').slice(0, 160));
 
+                /* ── v3.5.4：選單彈窗在桌機不得細成一條 ──
+                 * 使用者反映「右上角選單裡的按鈕點開後看上去比較細（以通知為例）」。
+                 * 修正前實測（1920）：通知設定面板只有 512×581px、內容 464px、按鈕高 24px、內文 12px。
+                 * 這裡在每個尺寸用真實互動開窗（點 ☰ → 點選單按鈕），量寬度、內文字級、
+                 * 按鈕高度與橫向捲動；同時確認原本就夠寬的彈窗（稽核日誌 max-w-3xl）沒有被改壞。 */
+                step = `${size.label}｜彈窗`;
+                const modalMetrics = [];
+                for (const target of [
+                    { menu: 'notifyBtn', modal: 'notifyModal', label: '通知設定' },
+                    { menu: 'auditLogBtn', modal: 'auditLogModal', label: '稽核日誌' }
+                ]) {
+                    const opened = await browser.evaluate(`
+                        document.getElementById('navMenuBtn')?.click();
+                        const btn = document.getElementById('${target.menu}');
+                        if (!btn) { return 'no-button'; }
+                        btn.click();
+                        return 'clicked';
+                    `);
+                    if (opened !== 'clicked') { done(false, `${target.label}：選單裡找得到按鈕`, opened); continue; }
+                    await browser.waitFor(`document.getElementById('${target.modal}') && !document.getElementById('${target.modal}').classList.contains('hidden')`, { timeout: 5000 });
+                    const mm = JSON.parse(await browser.evaluate(`
+                        const modal = document.getElementById('${target.modal}');
+                        const panel = modal.querySelector('.cm-modal-panel');
+                        if (!panel) { return JSON.stringify({ error: 'no-panel' }); }
+                        const pr = panel.getBoundingClientRect();
+                        const buttons = Array.from(panel.querySelectorAll('button'))
+                            .map((b) => b.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+                        const xs = panel.querySelector('.text-xs');
+                        return JSON.stringify({
+                            width: Math.round(pr.width),
+                            height: Math.round(pr.height),
+                            viewport: window.innerWidth,
+                            scrollOverflow: panel.scrollWidth - panel.clientWidth,
+                            minButtonHeight: buttons.length ? Math.round(Math.min(...buttons.map((r) => r.height))) : 0,
+                            fontXs: xs ? parseFloat(getComputedStyle(xs).fontSize) : null
+                        });
+                    `));
+                    await browser.evaluate(`document.getElementById('${target.modal}').classList.add('hidden'); return true;`);
+                    if (mm.error) { done(false, `${target.label}：找得到面板 .cm-modal-panel`, mm.error); continue; }
+                    modalMetrics.push(Object.assign({ label: target.label }, mm));
+                    console.log(`   ℹ️ ${target.label}：面板 ${mm.width}×${mm.height}px、內文 ${mm.fontXs}px、最矮按鈕 ${mm.minButtonHeight}px`);
+                }
+
+                for (const mm of modalMetrics) {
+                    done(mm.scrollOverflow <= 0, `${mm.label}：面板沒有橫向捲動`, `溢出 ${mm.scrollOverflow}px`);
+                    done(mm.width <= mm.viewport - 8, `${mm.label}：面板塞得進視窗（${mm.width} ≤ ${mm.viewport}）`);
+                    if (size.width >= 1024) {
+                        done(mm.width >= 636, `${mm.label}：桌機面板寬度 ≥ 636px（實際 ${mm.width}px）`);
+                        done(mm.fontXs === null || mm.fontXs >= 12.8, `${mm.label}：桌機內文字級 ≥ 12.8px（實際 ${mm.fontXs}px）`);
+                        done(mm.minButtonHeight >= 28, `${mm.label}：桌機按鈕高度 ≥ 28px（實際 ${mm.minButtonHeight}px）`);
+                    } else {
+                        done(mm.width >= 300, `${mm.label}：面板沒有被壓成細條（實際 ${mm.width}px）`);
+                        done(mm.minButtonHeight >= 30, `${mm.label}：手機／平板按鈕 ≥ 30px（實際 ${mm.minButtonHeight}px）`);
+                    }
+                }
+
                 await browser.screenshot(path.join(SHOTS, `layout-${size.width}.png`));
             } finally {
                 try { await browser.close(); } catch (err) { /* 忽略 */ }
