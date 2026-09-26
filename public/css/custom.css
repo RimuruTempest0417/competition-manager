@@ -1193,3 +1193,47 @@ canvas {
     box-shadow: 0 4px 10px rgba(15, 23, 42, 0.15);
     cursor: grabbing;
 }
+
+/* ==========================================
+   v3.2.1：版面空間優化（大螢幕不再留白）
+   ==========================================
+   問題：主容器固定 1280px，1920 螢幕會空掉 640px；而且賽事卡片裡的資訊
+   （日期、人數、名額…）原本是一行一行直排，右半邊整片空著。
+   做法：1) 大螢幕放寬容器；2) 卡片資訊改用格狀排列，寬度越大欄數越多；
+        3) 卡片右側的按鈕區限制寬度，不再把左邊的內容擠成細長一條。 */
+
+@media (min-width: 1600px) {
+    .cm-shell {
+        max-width: 1560px;   /* 比 Tailwind 的 max-w-7xl（1280）再寬一級 */
+    }
+}
+
+/* 卡片資訊列：自動欄數（每個資訊至少 9.5rem 寬，塞得下幾個就排幾個）
+   ——手機排 2 欄、桌面排到 5 欄，不會留一大片空白、也不會把字擠到看不清楚 */
+.cm-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+    column-gap: 1rem;
+    row-gap: 0.25rem;
+    align-items: start;
+}
+
+/* 少數比較長的資訊（例如含工作人員名單）讓它自己佔一整列，避免被切斷 */
+.cm-meta-wide {
+    grid-column: 1 / -1;
+}
+
+/* 卡片右側的動作按鈕區：桌面上限制寬度，避免用 max-content 把內容欄擠扁 */
+@media (min-width: 768px) {
+    .cm-card-actions {
+        /* 最多 30rem，但任何寬度下都不超過卡片的 45%——平板（768～1023px）
+           如果只用固定值，內容欄會被擠成細長一條（實測只剩 28%）。 */
+        max-width: min(30rem, 44%);
+        justify-content: flex-end;
+    }
+}
+
+/* 卡片內容欄可以被壓縮（min-width:0）才不會被內容撐破 */
+.cm-card-body {
+    min-width: 0;
+}

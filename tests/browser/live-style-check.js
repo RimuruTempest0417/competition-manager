@@ -96,6 +96,47 @@ const LINK_BUTTONS = [
 
         check(browser.pageErrors.length === 0, '沒有未捕捉的前端例外', browser.pageErrors.join(' | ').slice(0, 200));
 
+        // ── v3.2.1：線上版面也要真的算過 CSS ──────────────────────────────
+        // 這一版把「卡片資訊直排、內容欄被按鈕擠扁、大螢幕只用到 1280px」修掉。
+        // 光看 HTML／CSS 檔改好了不算數（可能部署沒生效或快取），要在線上量。
+        for (const size of [[414, 896, true, 2], [1920, 1080, false, 3]]) {
+            const [w, h, mobile, minCols] = size;
+            await browser.setViewport(w, h, mobile);
+            await browser.goto(SITE, { waitMs: 2500 });
+            await browser.waitFor(`document.querySelectorAll('[data-comp-id]').length > 0`, { timeout: 20000 }).catch(() => {});
+            const m = JSON.parse(await browser.evaluate(`
+                const card = document.querySelector('[data-comp-id]');
+                if (!card) return JSON.stringify({ none: true });
+                const body = card.querySelector('.cm-card-body');
+                const grids = Array.from(card.querySelectorAll('.cm-meta-grid'));
+                const main = document.getElementById('mainContent');
+                return JSON.stringify({
+                    overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+                    scrollWidth: document.documentElement.scrollWidth,
+                    viewport: window.innerWidth,
+                    cardWidth: Math.round(card.getBoundingClientRect().width),
+                    bodyWidth: body ? Math.round(body.getBoundingClientRect().width) : -1,
+                    cardHeight: Math.round(card.getBoundingClientRect().height),
+                    cols: grids.map((g) => getComputedStyle(g).gridTemplateColumns.split(' ').length),
+                    mainWidth: main ? Math.round(main.getBoundingClientRect().width) : -1
+                });
+            `));
+            const label = `${w}px 視窗`;
+            if (m.none) {
+                check(false, `${label}：線上有賽事卡片可以量（沒有卡片就量不到版面）`);
+                continue;
+            }
+            check(!m.overflow, `${label}：沒有橫向溢出`, `${m.scrollWidth} > ${m.viewport}`);
+            check(m.bodyWidth >= m.cardWidth * 0.5,
+                `${label}：卡片內容欄至少佔一半寬度（${m.bodyWidth} / ${m.cardWidth}）`);
+            check(m.cols.length > 0 && m.cols.every((c) => c >= minCols),
+                `${label}：資訊欄位數 ≥ ${minCols}（實際 [${m.cols}]）`);
+            if (w >= 1600) {
+                check(m.mainWidth > 1280, `${label}：主容器用滿寬度（${m.mainWidth}px > 1280px）`);
+            }
+        }
+        await browser.setViewport(1280, 900, false);
+
         const shot = path.join(SHOT_DIR, `live-style-${Date.now()}.png`);
         await browser.screenshot(shot);
         console.log(`\n   📸 截圖：${shot}`);

@@ -193,6 +193,18 @@ class Browser {
         return result.result.value;
     }
 
+    /* 改變視窗大小（同一輪檢查裡要量手機與大螢幕兩種版面時用） */
+    async setViewport(width, height, mobile = false) {
+        this.width = width;
+        this.height = height;
+        this.mobile = mobile;
+        await this.send('Emulation.setDeviceMetricsOverride', {
+            width, height, deviceScaleFactor: 2, mobile
+        });
+        await new Promise((r) => setTimeout(r, 250));
+        return true;
+    }
+
     async waitFor(expression, { timeout = 8000, interval = 100 } = {}) {
         const deadline = Date.now() + timeout;
         let lastErr = null;

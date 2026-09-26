@@ -4459,7 +4459,7 @@ function initResultsUi() {
 function competitionCardHtml(item) {
     return `
         <div class="cm-card border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition bg-white shadow-sm flex flex-col md:flex-row justify-between gap-4" data-comp-id="${escapeHtml(String(item.id))}">
-            <div class="space-y-2 flex-1">
+            <div class="cm-card-body space-y-2 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
                     <h3 class="text-base font-bold text-slate-800 cm-break">${escapeHtml(item.name)}</h3>
                     ${item.publisher_name ? `<span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium" title="權限層級：${escapeHtml(getRoleLabel(item.publisher_role, item.publisher_name))}"><span>${getRoleEmoji(item.publisher_role, item.publisher_name)}</span> <span>${escapeHtml(item.publisher_name)}</span></span>` : ''}
@@ -4479,7 +4479,7 @@ function competitionCardHtml(item) {
                             class="w-full sm:w-52 h-28 object-cover rounded-lg border border-slate-200 bg-slate-50">
                     </button>` : ''}
 
-                <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                <div class="cm-meta-grid text-xs text-slate-500">
                     ${item.location ? `<span>📍 ${escapeHtml(item.location)}</span>` : ''}
                     ${mapLinkHtml(item)}
                     ${staffChipHtml(item)}
@@ -4489,14 +4489,14 @@ function competitionCardHtml(item) {
 
                 ${(Array.isArray(item.tags) && item.tags.length) ? `<div class="flex flex-wrap gap-1">${tagsBadgeHtml(item)}</div>` : ''}
 
-                <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                <div class="cm-meta-grid text-xs text-slate-500">
                     ${regMetaHtml(item)}
                 </div>
 
                 ${item.description ? `<p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg whitespace-pre-line border border-slate-100">${escapeHtml(item.description)}</p>` : ''}
             </div>
 
-            <div class="flex items-start gap-1.5 self-end md:self-start flex-wrap cm-card-actions">
+            <div class="cm-card-actions flex items-start gap-1.5 self-end md:self-start flex-wrap">
                 <button data-action="copy-text" 
                         data-name="${escapeHtml(item.name)}" 
                         data-date="${item.date || ''}" 
