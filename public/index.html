@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.2.1</title>
+    <title>比賽管理系統 v3.3.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -355,6 +355,32 @@
                     <label class="block text-xs font-semibold text-slate-600 mb-1">比賽簡介 / 備註 (選填)</label>
                     <textarea id="description" rows="3" placeholder="請輸入詳細說明或報名連結..."
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+
+                <!-- v3.3.0（P1-6）：賽事規程 PDF 附件（存 DB、同源提供，公開給所有人看） -->
+                <div class="border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-2">
+                    <div class="flex items-center justify-between flex-wrap gap-2">
+                        <label for="docFile" class="text-xs font-semibold text-slate-700">
+                            📘 賽事規程 PDF（選填，公開給所有人看）
+                        </label>
+                        <button type="button" id="docRemoveBtn"
+                            class="hidden text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2 py-1 rounded transition">
+                            移除規程
+                        </button>
+                    </div>
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <input type="text" id="docLabel" maxlength="60" placeholder="附件名稱（預設：賽事規程）"
+                            class="px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <input type="file" id="docFile" accept="application/pdf"
+                            class="text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                        <button type="button" id="docUploadBtn"
+                            class="hidden bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-2 rounded-lg text-sm transition">
+                            上傳規程
+                        </button>
+                    </div>
+                    <p id="docHint" class="text-xs text-slate-500 leading-relaxed">
+                        PDF 檔，上限 3MB。上傳後賽事卡片會出現「📘 規程」按鈕，任何人都能打開。
+                    </p>
                 </div>
 
                 <div class="flex gap-2">

@@ -89,7 +89,9 @@ test('賽事列表：12 場賽事的請求次數要有上限（不是每場都�
 
     // 目前每次請求會碰：competitions、admin_users（發佈者）、registrations（人數）、
     // competition_staff（工作人員人數）——固定 4 次，與賽事數量無關。
-    assert.ok(calls <= 6, `賽事列表查詢次數應與賽事數量無關且 <= 6，實際 ${calls} 次：${tables.join('、')}`);
+    // v3.3.0：多一個小查詢撈規程附件的中介資料（只 select 標籤／大小／時間，不撈檔案內容），
+    // 上限由 6 放寬到 7；重點是「不隨賽事數量成長」，不是死板的次數。
+    assert.ok(calls <= 7, `賽事列表查詢次數應與賽事數量無關且 <= 7，實際 ${calls} 次：${tables.join('、')}`);
     assert.strictEqual(tables.length, new Set(tables).size, `不該對同一張表重複查詢：${tables.join('、')}`);
 });
 
@@ -103,7 +105,7 @@ test('賽事列表：資料庫查詢次數不隨賽事數量成長（100 場也�
     assert.strictEqual(list.length, 100);
     const calls = state.log.length - from;
     console.log(`     100 場賽事時查詢次數：${calls}`);
-    assert.ok(calls <= 6, `查詢次數不該隨資料量成長，實際 ${calls} 次`);
+    assert.ok(calls <= 7, `查詢次數不該隨資料量成長，實際 ${calls} 次`);
 });
 
 test('分頁：帶 limit/offset 時只回那一頁，並附 total 與 has_more', async () => {

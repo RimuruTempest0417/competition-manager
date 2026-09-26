@@ -284,6 +284,32 @@ const get = (p, headers) => fetch(SITE + p, { headers });
             !/password|totp_secret|"email"|access_token/i.test(JSON.stringify(sheetBody)),
             JSON.stringify(sheetBody).slice(0, 120));
 
+        // v3.3.0（P1-6）：賽事規程 PDF 附件（全部唯讀，不會動到線上任何資料）
+        const docGuest = await fetch(`${SITE}/api/competitions/${targetComp}/doc`);
+        const docGuestType = docGuest.headers.get('content-type') || '';
+        const docGuestBytes = Buffer.from(await docGuest.arrayBuffer());
+        const docPending = docGuest.status === 503;
+        check(`訪客可讀規程端點（HTTP ${docGuest.status}）`,
+            docGuest.status === 200 || docGuest.status === 404 || docPending,
+            `HTTP ${docGuest.status}`);
+        check('有規程時回傳的就是 PDF、沒有規程時回 404（不是 500）',
+            docPending
+                || (docGuest.status === 200 && /application\/pdf/.test(docGuestType) && docGuestBytes.slice(0, 5).toString('latin1') === '%PDF-')
+                || (docGuest.status === 404 && docGuestBytes.length < 500),
+            `${docGuestType}／${docGuestBytes.length} 位元組`);
+        if (docGuest.status === 200) {
+            console.log(`  ℹ️ 線上已有賽事規程附件（${Math.round(docGuestBytes.length / 1024)}KB，PDF ${docGuestBytes.slice(0, 8).toString('latin1').trim()}）`);
+        }
+
+        const docWrite = await fetch(`${SITE}/api/competitions/${targetComp}/doc`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataUrl: 'data:application/pdf;base64,JVBERi0xLjQK' })
+        });
+        check(`未登入上傳規程被拒（HTTP ${docWrite.status}）`, [401, 403].includes(docWrite.status), String(docWrite.status));
+
+        const docDelete = await fetch(`${SITE}/api/competitions/${targetComp}/doc`, { method: 'DELETE' });
+        check(`未登入移除規程被拒（HTTP ${docDelete.status}）`, [401, 403].includes(docDelete.status), String(docDelete.status));
+
         const myResults = await get('/api/my/results', auth);
         const myResultsBody = await myResults.json().catch(() => null);
         check(`「我的成績」可用（HTTP ${myResults.status}）`, myResults.status === 200 && Array.isArray(myResultsBody), String(myResults.status));

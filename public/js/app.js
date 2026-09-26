@@ -920,6 +920,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // v2.10.0：海報上傳與推播訂閱
     document.getElementById('posterFile')?.addEventListener('change', handlePosterFileChange);
     document.getElementById('posterRemoveBtn')?.addEventListener('click', handlePosterRemove);
+    // v3.3.0（P1-6）：賽事規程 PDF 附件
+    document.getElementById('docFile')?.addEventListener('change', handleDocFileChange);
+    document.getElementById('docUploadBtn')?.addEventListener('click', uploadDoc);
+    document.getElementById('docRemoveBtn')?.addEventListener('click', removeDoc);
+    document.getElementById('cancelEditBtn')?.addEventListener('click', resetDocUi);
     // v2.24.0：週期性賽事
     document.getElementById('closeRecurrenceModalBtn')?.addEventListener('click', closeRecurrenceModal);
     document.getElementById('closeRecurrenceBtn')?.addEventListener('click', closeRecurrenceModal);
@@ -2878,6 +2883,135 @@ async function uploadPoster(competitionId, dataUrl, thumbDataUrl) {
     return data;
 }
 
+/* ---------- v3.3.0（P1-6）：賽事規程 PDF 附件 ----------
+   規則與海報一致：檔案以 base64 送到後端存進資料庫、由同源 API 提供，
+   CSP 不用放寬，也不需要外部物件儲存。差別是規程「公開給所有人看」，
+   而且不跟表單一起儲存——選好檔案按「上傳規程」就立刻生效，
+   管理員不必為了換一份規程再存一次賽事資料。 */
+const DOC_MAX_BYTES = 3 * 1024 * 1024;
+let pendingDocFile = null;
+
+function setDocHint(message, type) {
+    const el = document.getElementById('docHint');
+    if (!el) return;
+    el.classList.remove('text-red-600', 'text-emerald-700');
+    if (!message) {
+        el.textContent = 'PDF 檔，上限 3MB。上傳後賽事卡片會出現「📘 規程」按鈕，任何人都能打開（現場與家長都看得到）。';
+        return;
+    }
+    el.textContent = message;
+    el.classList.add(type === 'error' ? 'text-red-600' : 'text-emerald-700');
+}
+
+function resetDocUi() {
+    pendingDocFile = null;
+    const file = document.getElementById('docFile');
+    if (file) file.value = '';
+    const label = document.getElementById('docLabel');
+    if (label) label.value = '';
+    document.getElementById('docUploadBtn')?.classList.add('hidden');
+    document.getElementById('docRemoveBtn')?.classList.add('hidden');
+    setDocHint('賽事發佈後，可在這裡上傳規程 PDF。');
+}
+
+function showCurrentDoc(item) {
+    if (!item) return resetDocUi();
+    pendingDocFile = null;
+    const file = document.getElementById('docFile');
+    if (file) file.value = '';
+    const label = document.getElementById('docLabel');
+    if (label) label.value = item.doc_label || '';
+    document.getElementById('docUploadBtn')?.classList.add('hidden');
+    if (item.doc_url) {
+        document.getElementById('docRemoveBtn')?.classList.remove('hidden');
+        const kb = Math.round((Number(item.doc_bytes) || 0) / 1024);
+        setDocHint(`目前附件：「${item.doc_label || '賽事規程'}」（${kb}KB）。重新選擇檔案即可取代。`, 'ok');
+    } else {
+        document.getElementById('docRemoveBtn')?.classList.add('hidden');
+        setDocHint(null);
+    }
+}
+
+function handleDocFileChange(event) {
+    const file = event.target.files && event.target.files[0];
+    const uploadBtn = document.getElementById('docUploadBtn');
+    if (!file) {
+        pendingDocFile = null;
+        uploadBtn?.classList.add('hidden');
+        return;
+    }
+    const looksPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    if (!looksPdf) {
+        pendingDocFile = null;
+        event.target.value = '';
+        uploadBtn?.classList.add('hidden');
+        setDocHint('請選擇 PDF 檔（.pdf）', 'error');
+        return;
+    }
+    if (file.size > DOC_MAX_BYTES) {
+        const mb = (file.size / 1024 / 1024).toFixed(1);
+        pendingDocFile = null;
+        event.target.value = '';
+        uploadBtn?.classList.add('hidden');
+        setDocHint(`檔案 ${mb}MB 超過 3MB 上限，請先壓縮再上傳`, 'error');
+        return;
+    }
+    pendingDocFile = file;
+    uploadBtn?.classList.remove('hidden');
+    setDocHint(`已選擇 ${file.name}（${Math.round(file.size / 1024)}KB），按「上傳規程」送出。`, 'ok');
+}
+
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('讀取檔案失敗'));
+        reader.readAsDataURL(file);
+    });
+}
+
+async function uploadDoc() {
+    const editingId = document.getElementById('editingId').value;
+    if (!editingId) return alert('請先發佈賽事，再上傳規程');
+    if (!pendingDocFile) return alert('請先選擇 PDF 檔');
+    const btn = document.getElementById('docUploadBtn');
+    const labelInput = document.getElementById('docLabel');
+    if (btn) { btn.disabled = true; btn.textContent = '上傳中…'; }
+    try {
+        const dataUrl = await readFileAsDataUrl(pendingDocFile);
+        const res = await customFetch(`/api/competitions/${editingId}/doc`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataUrl, label: labelInput ? labelInput.value.trim() : '' })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '規程上傳失敗');
+        await fetchCompetitions();
+        showCurrentDoc(allCompetitions.find((c) => String(c.id) === String(editingId)));
+        setDocHint(data.message || '規程已上傳', 'ok');
+    } catch (err) {
+        setDocHint(err.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '上傳規程'; }
+    }
+}
+
+async function removeDoc() {
+    const editingId = document.getElementById('editingId').value;
+    if (!editingId) return;
+    if (!confirm('確定要移除這場賽事的規程附件嗎？')) return;
+    try {
+        const res = await customFetch(`/api/competitions/${editingId}/doc`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '移除失敗');
+        await fetchCompetitions();
+        showCurrentDoc(allCompetitions.find((c) => String(c.id) === String(editingId)));
+        alert(data.message || '已移除規程附件');
+    } catch (err) {
+        setDocHint(err.message, 'error');
+    }
+}
+
 async function handlePosterRemove() {
     const editingId = document.getElementById('editingId').value;
     const item = allCompetitions.find((c) => String(c.id) === String(editingId));
@@ -4511,6 +4645,13 @@ function competitionCardHtml(item) {
                     🖼️ 分享海報
                 </button>
 
+                ${item.doc_url ? `
+                <a href="${escapeHtml(item.doc_url)}" target="_blank" rel="noopener noreferrer"
+                   title="${escapeHtml((item.doc_label || '賽事規程') + '（PDF，另開新視窗）')}"
+                   class="text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 px-2.5 py-1 rounded transition font-medium">
+                    📘 ${escapeHtml(item.doc_label || '規程')}
+                </a>` : ''}
+
                 ${registrationButtonHtml(item)}
 
                 <button data-action="toggle-subscribe" data-id="${item.id}"
@@ -4615,6 +4756,7 @@ function startEdit(id) {
 
     pendingPoster = null;
     showCurrentPoster(item);
+    showCurrentDoc(item);   // v3.3.0（P1-6）：規程附件
 
     document.getElementById('editingId').value = item.id;
     document.getElementById('name').value = item.name || '';

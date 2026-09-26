@@ -1796,6 +1796,9 @@ const AUDIT_ACTION_LABELS = {
     REMOVE_TEAM_MEMBER: '移除隊伍成員',
     UPLOAD_POSTER: '上傳海報',
     DELETE_POSTER: '刪除海報',
+    // v3.3.0（P1-6）：賽事規程 PDF 附件
+    UPLOAD_DOC: '上傳賽事規程',
+    DELETE_DOC: '移除賽事規程',
     EXPORT_COMPETITIONS: '匯出賽事 CSV',
     IMPORT_COMPETITIONS: '匯入賽事 CSV',
     EXPORT_BACKUP: '匯出資料備份',
@@ -3793,6 +3796,17 @@ app.get('/api/competitions', async (req, res) => {
             regCounts[key] = (regCounts[key] || 0) + 1;
         });
 
+        // v3.3.0（P1-6）：規程附件。只取中介資料（標籤、大小、時間），不取檔案內容，
+        // 所以列表不會被 PDF 拖慢；沒有附件就是 null，前端據此決定要不要顯示「規程」按鈕。
+        const docReady = await columnExists('competition_docs', 'uploaded_at');
+        const docMap = {};
+        if (docReady) {
+            let docQuery = supabase.from('competition_docs').select('competition_id,label,bytes,uploaded_at');
+            if (pageInDb) docQuery = docQuery.in('competition_id', compIds);
+            const { data: docs, error: docErr } = await docQuery;
+            if (!docErr) (docs || []).forEach((d) => { docMap[String(d.competition_id)] = d; });
+        }
+
         const now = new Date();
         const withState = competitions.map(c => {
             const pubName = publisherMap[String(c.id)] || null;
@@ -3809,6 +3823,11 @@ app.get('/api/competitions', async (req, res) => {
                 poster_thumb_url: c.poster_updated_at
                     ? `/api/competitions/${c.id}/poster?variant=thumb&v=${Date.parse(c.poster_updated_at) || 0}`
                     : null,
+                // v3.3.0（P1-6）：規程附件（沒有就是 null）
+                doc_url: docMap[String(c.id)] ? `/api/competitions/${c.id}/doc?v=${Date.parse(docMap[String(c.id)].uploaded_at) || 0}` : null,
+                doc_label: docMap[String(c.id)] ? docMap[String(c.id)].label : null,
+                doc_bytes: docMap[String(c.id)] ? docMap[String(c.id)].bytes : null,
+                doc_uploaded_at: docMap[String(c.id)] ? docMap[String(c.id)].uploaded_at : null,
                 map_url_auto: CMVenue.isAutoMapUrl(c),
                 publisher_name: pubName,
                 publisher_role: pubName ? (userRoleMap[pubName] || 'admin') : null,
@@ -6166,6 +6185,134 @@ app.get('/api/competitions/:id/poster', async (req, res) => {
         res.send(buffer);
     } catch (err) {
         res.status(404).json({ error: '此賽事沒有自訂海報' });
+    }
+});
+
+// ---------- v3.3.0（P1-6）：賽事規程 PDF 附件 ----------
+// 規程是公開資訊（參賽者、家長、現場人員都該看得到），所以 GET 不驗身分；
+// 上傳／移除限管理員以上。存法與海報一致（base64 存 DB、同源提供），
+// 不需要外部物件儲存，CSP 也不用放寬。
+//
+// 為什麼上限是 3MB：Vercel 函式的請求上限是 4.5MB，而 base64 會膨脹約 4/3，
+// 3MB 的 PDF 上傳後約 4MB，還在安全範圍內。
+const DOC_MAX_BYTES = 3 * 1024 * 1024;
+const DOC_LABEL_MAX = 60;
+const DOC_HINT = '資料庫尚未加入規程附件資料表，請先在 Supabase SQL Editor 執行 migrations/2026-09-26-v3.3.0-docs.sql';
+
+/* 解析上傳的規程檔：接受 data:application/pdf;base64,... 或純 base64。
+   一定要真的是 PDF——只看 MIME 或副檔名不夠（改個檔名就能騙過）。 */
+function parsePdfDataUrl(input) {
+    if (typeof input !== 'string' || !input.trim()) return null;
+    let raw = input.trim();
+    let mime = 'application/pdf';
+    const m = /^data:([^;,]*)(;base64)?,/.exec(raw);
+    if (m) {
+        mime = (m[1] || 'application/pdf').toLowerCase();
+        if (!m[2]) return null;                 // 只收 base64（前端 FileReader 給的就是這個）
+        raw = raw.slice(m[0].length);
+    }
+    if (!/^[A-Za-z0-9+/=\s]+$/.test(raw)) return null;
+    const buffer = Buffer.from(raw.replace(/\s+/g, ''), 'base64');
+    if (!buffer || buffer.length < 8) return null;
+    if (buffer.slice(0, 5).toString('latin1') !== '%PDF-') return null;
+    if (!['application/pdf', 'application/x-pdf', 'application/octet-stream'].includes(mime)) return null;
+    return { mime: 'application/pdf', buffer };
+}
+
+/* 檔名要放進標頭，只留安全字元（中文用 RFC 5987 編碼帶出去） */
+function docFileName(label, id) {
+    const base = String(label || '賽事規程').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, DOC_LABEL_MAX).trim() || '賽事規程';
+    return { plain: `doc-${id}.pdf`, utf8: `${encodeURIComponent(base)}.pdf`, label: base };
+}
+
+// 取得規程（公開）：預設 inline（瀏覽器直接開 PDF 檢視器），?download=1 則下載
+app.get('/api/competitions/:id/doc', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('competition_docs')
+            .select('label,mime,bytes,data,uploaded_at')
+            .eq('competition_id', req.params.id)
+            .maybeSingle();
+        if (error) throw error;
+        if (!data || !data.data) return res.status(404).json({ error: '此賽事沒有上傳規程附件' });
+
+        const buffer = Buffer.from(data.data, 'base64');
+        const name = docFileName(data.label, req.params.id);
+        const wantsDownload = String(req.query.download || '') === '1';
+        res.set('Content-Type', 'application/pdf');
+        res.set('Content-Length', String(buffer.length));
+        res.set('Cache-Control', 'public, max-age=600');
+        res.set('X-Content-Type-Options', 'nosniff');
+        res.set('X-Doc-Label', encodeURIComponent(name.label));
+        res.set('Content-Disposition',
+            `${wantsDownload ? 'attachment' : 'inline'}; filename="${name.plain}"; filename*=UTF-8''${name.utf8}`);
+        res.send(buffer);
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: DOC_HINT });
+        res.status(404).json({ error: '此賽事沒有上傳規程附件' });
+    }
+});
+
+// 上傳／更新規程（管理員以上）：一場賽事一份，上傳即覆蓋
+app.post('/api/competitions/:id/doc', requireAdmin, async (req, res) => {
+    const parsed = parsePdfDataUrl(req.body && (req.body.dataUrl || req.body.data));
+    if (!parsed) return res.status(400).json({ error: '規程附件格式錯誤：請上傳 PDF 檔' });
+    if (parsed.buffer.length > DOC_MAX_BYTES) {
+        const mb = Math.round((parsed.buffer.length / 1024 / 1024) * 10) / 10;
+        return res.status(413).json({ error: `規程檔案過大（${mb}MB），上限 3MB` });
+    }
+
+    try {
+        const comp = await fetchCompetition(req.params.id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const label = String((req.body && req.body.label) || '').trim().slice(0, DOC_LABEL_MAX) || '賽事規程';
+        const now = new Date().toISOString();
+        const row = {
+            competition_id: comp.id,
+            label,
+            mime: 'application/pdf',
+            bytes: parsed.buffer.length,
+            data: parsed.buffer.toString('base64'),
+            uploaded_by: req.currentUser ? req.currentUser.username : null,
+            uploaded_at: now
+        };
+        const { error: upErr } = await supabase.from('competition_docs').upsert([row], { onConflict: 'competition_id' });
+        if (upErr) throw upErr;
+
+        await logAudit(req.user.username, 'UPLOAD_DOC', comp.id,
+            `上傳賽事規程「${label}」（${Math.round(parsed.buffer.length / 1024)}KB）`, req.userAgent);
+        res.json({
+            message: `已上傳規程附件「${label}」，所有人都能在賽事卡片上打開`,
+            label,
+            bytes: parsed.buffer.length,
+            uploaded_at: now,
+            doc_url: `/api/competitions/${comp.id}/doc?v=${Date.parse(now)}`
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: DOC_HINT });
+        await logErrorToDb(req, 'doc_upload_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 移除規程（管理員以上）
+app.delete('/api/competitions/:id/doc', requireAdmin, async (req, res) => {
+    try {
+        const comp = await fetchCompetition(req.params.id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const { data: existing } = await supabase.from('competition_docs').select('label').eq('competition_id', comp.id).maybeSingle();
+        const { error: delErr } = await supabase.from('competition_docs').delete().eq('competition_id', comp.id);
+        if (delErr) throw delErr;
+
+        await logAudit(req.user.username, 'DELETE_DOC', comp.id,
+            `移除賽事規程附件${existing && existing.label ? `「${existing.label}」` : ''}`, req.userAgent);
+        res.json({ message: '已移除規程附件' });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: DOC_HINT });
+        await logErrorToDb(req, 'doc_delete_error', err);
+        res.status(500).json({ error: err.message });
     }
 });
 
