@@ -9,7 +9,7 @@ const CMPaging = require('../public/js/paging');                  // v3.0.0：�
 const CMVenue = require('../public/js/venue');                    // v2.27.0：地圖連結規則的唯一真實來源
 
 module.exports = function registerCompetitionsRoutes(app, ctx) {
-    const { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady } = ctx;
+    const { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, cleanText, fetchCompetition, scheduleSchemaReady, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady } = ctx;
 app.get('/api/competitions', async (req, res) => {
     try {
         // v3.0.0：分頁是 opt-in（沒帶 limit 就維持原本「一次回全部」）。
@@ -584,4 +584,131 @@ app.delete('/api/competitions/:id/hard-delete', requireSuperAdmin, async (req, r
 // ==========================================
 // v2.9.0：普通用戶報名與隊伍編排 API
 // ==========================================
+
+
+/* ---------- v3.6.3：取消／延期／最新消息（Roadmap 8.8⑥）----------
+ *
+ * 為什麼需要人工標記：賽事狀態原本完全由日期推導，「延期過」「取消」算不出來；
+ * 而澳門颱風延期是常態，事後查「原本訂幾號、後來延到幾號」很重要 → 原訂時間**不覆蓋**，
+ * 延期的新時間另存 postponed_date／postponed_time。
+ *
+ * 為什麼公告要直接顯示在卡片：推播要訂閱，沒訂閱的人什麼都看不到；
+ * 臨時變更（延期、集合時間、場地）最需要人人看得到 → news 直接畫在卡片與詳情。
+ */
+
+/* 取消賽事（或帶 cancelled:false 復原）。取消＝狀態立即變「已取消」、不可再報名。 */
+app.post('/api/competitions/:id/cancel', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const body = req.body || {};
+    const cancelled = body.cancelled !== false;      // 預設＝取消；明確傳 false 才是復原
+    const reason = cleanText(body.reason, 200);
+
+    try {
+        if (!(await scheduleSchemaReady())) return res.status(503).json({ error: SCHEDULE_HINT });
+        const comp = await fetchCompetition(id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+        if (cancelled && !reason) return res.status(400).json({ error: '取消賽事請填寫原因（會顯示在卡片上讓大家看到）' });
+
+        const { error } = await supabase.from('competitions')
+            .update({ cancelled_at: cancelled ? new Date().toISOString() : null, cancel_reason: cancelled ? reason : null })
+            .eq('id', comp.id);
+        if (error) throw error;
+
+        await logAudit(req.user.username, 'CANCEL_COMPETITION', comp.id,
+            cancelled ? `取消賽事：${comp.name}（原因：${reason}）` : `復原被取消的賽事：${comp.name}`, req.userAgent);
+
+        const updated = await fetchCompetition(comp.id);
+        res.json({
+            message: cancelled ? `已取消「${comp.name}」` : `已復原「${comp.name}」`,
+            competition: updated,
+            state: competitionState(updated, new Date()).state,
+            state_label: competitionState(updated, new Date()).label
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: MIGRATION_HINT });
+        await logErrorToDb(req, 'cancel_competition_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* 延期：記下新日期（與可選的新時間），原訂時間保留；帶 postponed_date:null 表示取消延期。 */
+app.post('/api/competitions/:id/postpone', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const body = req.body || {};
+    const newDate = body.postponed_date ? String(body.postponed_date).slice(0, 10) : null;
+    const newTime = body.postponed_time ? String(body.postponed_time).slice(0, 5) : null;
+    const reason = cleanText(body.reason, 200);
+
+    try {
+        if (!(await scheduleSchemaReady())) return res.status(503).json({ error: SCHEDULE_HINT });
+        const comp = await fetchCompetition(id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+        // 日期要「真的存在」：2026-10-99 這種通過格式檢查但算不出來的日期要擋下來
+        // （用往返轉換比對，2026-02-30 會被規範化成 3/2，因此不相等 → 擋下）
+        if (newDate) {
+            const d = new Date(`${newDate}T00:00:00`);
+            const roundTrip = isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            if (roundTrip !== newDate) return res.status(400).json({ error: '延期日期不是有效日期（格式 YYYY-MM-DD）' });
+        }
+        if (newTime && !/^\d{1,2}:\d{2}$/.test(newTime)) return res.status(400).json({ error: '延期時間格式要是 HH:MM' });
+        if (newDate && newDate === String(comp.date || '').slice(0, 10)) {
+            return res.status(400).json({ error: '延期後的新日期和原本日期一樣：若只是要公告變更，請用「更新最新消息」' });
+        }
+
+        const { error } = await supabase.from('competitions')
+            .update({ postponed_date: newDate, postponed_time: newDate ? newTime : null })
+            .eq('id', comp.id);
+        if (error) throw error;
+
+        await logAudit(req.user.username, 'POSTPONE_COMPETITION', comp.id,
+            newDate
+                ? `賽事延期：${comp.name}（原訂 ${String(comp.date || '').slice(0, 10)} → ${newDate}${newTime ? ' ' + newTime : ''}${reason ? '｜' + reason : ''}）`
+                : `取消延期標記：${comp.name}`, req.userAgent);
+
+        const updated = await fetchCompetition(comp.id);
+        const st = competitionState(updated, new Date());
+        res.json({
+            message: newDate ? `已將「${comp.name}」延期至 ${newDate}${newTime ? ' ' + newTime : ''}（原訂時間保留）` : `已取消「${comp.name}」的延期標記`,
+            competition: updated,
+            state: st.state,
+            state_label: st.label
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: MIGRATION_HINT });
+        await logErrorToDb(req, 'postpone_competition_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* 最新消息：臨時集合時間、場地更換等，直接顯示在卡片與詳情（不需要訂閱推播）。 */
+app.post('/api/competitions/:id/news', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const body = req.body || {};
+    const news = cleanText(body.news, 300);
+
+    try {
+        if (!(await scheduleSchemaReady())) return res.status(503).json({ error: SCHEDULE_HINT });
+        const comp = await fetchCompetition(id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const { error } = await supabase.from('competitions')
+            .update({ news: news || null, news_updated_at: news ? new Date().toISOString() : null })
+            .eq('id', comp.id);
+        if (error) throw error;
+
+        await logAudit(req.user.username, 'UPDATE_COMPETITION_NEWS', comp.id,
+            news ? `更新賽事最新消息：${comp.name}（${news}）` : `清空賽事最新消息：${comp.name}`, req.userAgent);
+
+        const updated = await fetchCompetition(comp.id);
+        res.json({
+            message: news ? '已更新最新消息（卡片上會直接顯示）' : '已清空最新消息',
+            competition: updated
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: MIGRATION_HINT });
+        await logErrorToDb(req, 'competition_news_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 };

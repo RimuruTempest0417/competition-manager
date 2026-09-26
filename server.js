@@ -1259,6 +1259,9 @@ const AUDIT_ACTION_LABELS = {
     REGISTER_APPROVED: '核准報名（審核）',
     REGISTER_REJECTED: '拒絕報名（審核）',
     PROMOTE_WAITLIST: '手動遞補候補',
+    CANCEL_COMPETITION: '取消賽事',
+    POSTPONE_COMPETITION: '賽事延期',
+    UPDATE_COMPETITION_NEWS: '更新賽事最新消息',
     REGISTER_ATTENDED: '現場簽到',
     REGISTER_ATTENDANCE_UNDONE: '取消現場簽到',
     REGISTER_ONSITE: '現場代報名',
@@ -1731,7 +1734,17 @@ const getTrashCompetitionsHandler = async (req, res) => {
 };
 
 /* ---------- 賽事 CRUD、複製與週期性：v3.4.0 起移到 routes/competitions.js ---------- */
-require('./routes/competitions')(app, { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady });
+/* ---------- v3.6.3：賽事取消／延期與卡片「最新消息」（Roadmap 8.8⑥）----------
+   颱風延期與臨時取消都不是時間算得出來的狀態，要有人按下按鈕；公告直接顯示在卡片上，
+   不依賴推播訂閱（沒訂閱的人也要看得到）。
+   ------------------------------------------------------------------ */
+const SCHEDULE_HINT =
+    '資料庫尚未執行 v3.6.3 migration（migrations/2026-09-27-v3.6.3-cancel-postpone-news.sql）：' +
+    '賽事取消／延期與最新消息需要 competitions 的 cancelled_at／cancel_reason／postponed_date／postponed_time／news／news_updated_at 欄位。';
+
+const scheduleSchemaReady = createSchemaProbe(() => columnExists('competitions', 'cancelled_at'));
+
+require('./routes/competitions')(app, { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, cleanText, fetchCompetition, requireAdmin, scheduleSchemaReady, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady });
 
 
 async function fetchCompetition(id) {
@@ -1757,6 +1770,7 @@ const ATTENDANCE_HINT =
     '現場報到需要 registrations 的 attended_at／attended_by／onsite 欄位。';
 
 const attendanceSchemaReady = createSchemaProbe(() => columnExists('registrations', 'attended_at'));
+
 
 /* v2.22.0：遞補通知開關也只多一個欄位（competitions.waitlist_notify）。 */
 /* 候補異動紀錄一次最多往回抓幾筆（避免有人用 offset 無限翻） */

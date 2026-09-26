@@ -1,6 +1,6 @@
 {
   "name": "competition-manager",
-  "version": "3.6.2",
+  "version": "3.6.3",
   "description": "比賽管理系統正式版",
   "main": "server.js",
   "scripts": {

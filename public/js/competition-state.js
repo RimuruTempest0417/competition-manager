@@ -27,14 +27,17 @@
         registration_open: '報名中',
         registration_closed: '報名已截止',
         ongoing: '進行中',
-        finished: '已結束'
+        finished: '已結束',
+        cancelled: '已取消',
+        postponed: '已延期'
     };
 
     // 前端 badge 用的色調（green/amber/blue/slate 都已在 custom.css 有對應 class）
     const TONES = {
         missing: 'slate', deleted: 'slate', unscheduled: 'slate',
         registration_upcoming: 'amber', registration_open: 'green',
-        registration_closed: 'slate', ongoing: 'blue', finished: 'slate'
+        registration_closed: 'slate', ongoing: 'blue', finished: 'slate',
+        cancelled: 'red', postponed: 'amber'
     };
 
     const pad = (n) => String(n).padStart(2, '0');
@@ -89,6 +92,30 @@
         return { start, end, regStart, regEnd };
     }
 
+    /* v3.6.3：賽事公告（取消／延期／最新消息）——前後端共用同一份規則。
+       為什麼要有這個：颱風延期與臨時取消都不是「時間算得出來」的狀態，必須有人按下按鈕；
+       而推播要訂閱，沒訂閱的人看不到，所以公告要直接顯示在卡片與詳情上。 */
+    function competitionNotice(comp) {
+        const c = comp || {};
+        const cancelled = Boolean(c.cancelled_at);
+        const postponedDate = c.postponed_date ? String(c.postponed_date).slice(0, 10) : '';
+        const postponedTime = c.postponed_time ? String(c.postponed_time).slice(0, 5) : '';
+        const postponed = !cancelled && Boolean(postponedDate);
+        const news = typeof c.news === 'string' ? c.news.trim() : '';
+        return {
+            cancelled,
+            cancel_reason: typeof c.cancel_reason === 'string' ? c.cancel_reason.trim() : '',
+            cancelled_at: c.cancelled_at || null,
+            postponed,
+            postponed_date: postponedDate,
+            postponed_time: postponedTime,
+            postponed_label: postponedDate ? (postponedTime ? `${postponedDate} ${postponedTime}` : postponedDate) : '',
+            news,
+            news_updated_at: c.news_updated_at || null,
+            has_notice: Boolean(cancelled || postponed || news)
+        };
+    }
+
     /* 賽事狀態（純函式）：回傳完整狀態物件，前端直接顯示，不要在前端重算 */
     function evaluate(comp, now, options) {
         const opts = options || {};
@@ -118,6 +145,7 @@
             needs_approval: needsApproval,
             registered_count: registeredCount,
             max_registrations: max,
+            notice: competitionNotice(comp || {}),
             timeline: {
                 start: t.start ? t.start.toISOString() : null,
                 end: t.end ? t.end.toISOString() : null,
@@ -128,6 +156,20 @@
 
         if (!comp) return build('missing', false, '找不到該賽事');
         if (comp.is_deleted) return build('deleted', false, '此賽事已下架');
+
+        // v3.6.3：取消／延期是「人工決定」，優先於任何日期推導（澳門颱風延期是常態）。
+        // 兩者都保留原訂時間（date／time 不動），延期的新時間另存 postponed_date／postponed_time。
+        const notice = competitionNotice(comp);
+        if (notice.cancelled) {
+            return build('cancelled', false,
+                notice.cancel_reason ? `此賽事已取消：${notice.cancel_reason}` : '此賽事已取消',
+                `原訂 ${fmtDateTime(t.start) || '日期未定'}`);
+        }
+        if (notice.postponed) {
+            return build('postponed', false,
+                `此賽事已延期${notice.postponed_label ? `至 ${notice.postponed_label}` : ''}（原訂 ${fmtDate(t.start) || '日期未定'}）：報名暫停，請等主辦單位公告`,
+                notice.postponed_label ? `延期至 ${notice.postponed_label}` : '賽事已延期');
+        }
 
         // 日期未定：只依「開放報名中」與報名窗判斷，不猜時間
         if (!t.start) {
@@ -437,6 +479,7 @@
 
     return {
         LABELS, TONES, evaluate, registrationState, timeline, parseTimestamp, parseLocalDateTime, fmtDate, fmtDateTime,
+        competitionNotice,
         // v2.20.0：報名審核與候補
         REG_STATUS_LABELS, REG_STATUS_TONES, countByStatus, normalizeRegStatus, reviewFlags,
         decideRegistration, waitlistQueue, nextWaitlist, promotionStatus,

@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.6.2</title>
+    <title>比賽管理系統 v3.6.3</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -1482,6 +1482,59 @@
             <div class="flex justify-end pt-1 border-t">
                 <button id="closeMyRegsModalBtn2"
                     class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈出視窗：賽事公告（取消／延期／最新消息，v3.6.3） -->
+    <div id="noticeModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">
+            <div class="flex justify-between items-start border-b pb-3">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800">📣 賽事公告</h3>
+                    <p id="noticeModalComp" class="text-xs text-slate-500 mt-0.5"></p>
+                </div>
+                <button id="closeNoticeModalBtn" class="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
+            </div>
+            <div class="flex-1 overflow-y-auto space-y-3">
+                <div id="noticeCurrent" class="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2"></div>
+
+                <div class="border border-red-200 rounded-lg p-3 bg-red-50 space-y-2">
+                    <p class="text-xs font-bold text-red-700">⛔ 取消賽事</p>
+                    <input type="text" id="cancelReasonInput" maxlength="200" placeholder="取消原因（必填，會顯示在卡片上）"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button id="cancelCompBtn" class="text-xs bg-red-600 hover:bg-red-700 text-white font-medium px-3 py-2 rounded-lg transition">確定取消</button>
+                        <button id="reviveCompBtn" class="text-xs bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium px-3 py-2 rounded-lg transition">復原（不取消了）</button>
+                        <p class="text-[11px] text-slate-500">原訂時間不會被覆蓋。</p>
+                    </div>
+                </div>
+
+                <div class="border border-amber-200 rounded-lg p-3 bg-amber-50 space-y-2">
+                    <p class="text-xs font-bold text-amber-700">🕒 延期</p>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <input type="date" id="postponeDateInput" class="px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                        <input type="time" id="postponeTimeInput" class="px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                    </div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button id="postponeCompBtn" class="text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium px-3 py-2 rounded-lg transition">設定延期</button>
+                        <button id="clearPostponeBtn" class="text-xs bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium px-3 py-2 rounded-lg transition">取消延期標記</button>
+                        <p class="text-[11px] text-slate-500">延期期間暫停報名；原訂時間會保留。</p>
+                    </div>
+                </div>
+
+                <div class="border border-blue-200 rounded-lg p-3 bg-blue-50 space-y-2">
+                    <p class="text-xs font-bold text-blue-700">📣 最新消息（不需訂閱就看得到）</p>
+                    <textarea id="newsInput" rows="3" maxlength="300" placeholder="例如：集合時間改為 08:30，請提早 20 分鐘到場"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"></textarea>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button id="saveNewsBtn" class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-2 rounded-lg transition">更新消息</button>
+                        <button id="clearNewsBtn" class="text-xs bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium px-3 py-2 rounded-lg transition">清空消息</button>
+                    </div>
+                </div>
+
+                <div id="noticeMsg" class="hidden text-xs p-2.5 rounded-lg border"></div>
             </div>
         </div>
     </div>

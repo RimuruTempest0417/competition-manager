@@ -1062,6 +1062,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('pushUnsubscribeBtn')?.addEventListener('click', handlePushUnsubscribe);
     document.getElementById('pushTestBtn')?.addEventListener('click', handlePushTest);
     document.getElementById('notifyBtn')?.addEventListener('click', () => { refreshPushStatus(); });
+    // v3.6.3：賽事公告（取消／延期／最新消息）
+    document.getElementById('closeNoticeModalBtn')?.addEventListener('click', closeNoticeModal);
+    document.getElementById('cancelCompBtn')?.addEventListener('click', saveCancelNotice);
+    document.getElementById('reviveCompBtn')?.addEventListener('click', reviveCompetition);
+    document.getElementById('postponeCompBtn')?.addEventListener('click', savePostponeNotice);
+    document.getElementById('clearPostponeBtn')?.addEventListener('click', clearPostponeNotice);
+    document.getElementById('saveNewsBtn')?.addEventListener('click', () => saveCompetitionNews(false));
+    document.getElementById('clearNewsBtn')?.addEventListener('click', () => saveCompetitionNews(true));
     document.getElementById('closeTeamModalBtn')?.addEventListener('click', closeTeamModal);
     document.getElementById('closeTeamModalBtn2')?.addEventListener('click', closeTeamModal);
     document.getElementById('createTeamBtn')?.addEventListener('click', createTeam);
@@ -1209,6 +1217,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             openTeamModal(id);
         } else if (action === 'manage-staff') {
             openStaffModal(id);
+        } else if (action === 'manage-notice') {
+            openNoticeModal(id);
         } else if (action === 'view-results') {
             openResultsModal(id);
         } else if (action === 'edit-results') {
@@ -1552,6 +1562,8 @@ const CM_STATE_BADGE_EMOJI = {
     ongoing: '🏃',
     finished: '🏁',
     unscheduled: '📅',
+    cancelled: '⛔',
+    postponed: '🕒',
     deleted: '🗑️',
     missing: '❓'
 };
@@ -1562,7 +1574,8 @@ function regStatusBadgeHtml(item) {
         green: 'bg-emerald-100 text-emerald-700',
         amber: 'bg-amber-100 text-amber-700',
         blue: 'bg-blue-100 text-blue-700',
-        slate: 'bg-slate-100 text-slate-500'
+        slate: 'bg-slate-100 text-slate-500',
+        red: 'bg-red-100 text-red-700'
     }[st.tone] || 'bg-slate-100 text-slate-500';
 
     const label = st.label || (st.open ? '報名中' : st.reason);
@@ -3950,6 +3963,116 @@ function staffSetStatus(message, isError) {
     el.classList.toggle('hidden', !message);
 }
 
+/* ---------- v3.6.3：賽事公告（取消／延期／最新消息，Roadmap 8.8⑥） ----------
+ *
+ * 為什麼不做成「改日期」就好：改日期會蓋掉原訂時間，事後看不出「延期過」；
+ * 而且取消也不是日期算得出來的狀態。所以三個動作都獨立記錄，原訂時間一律保留。
+ * 公告直接顯示在卡片上（不需訂閱推播），臨時變更才不會只剩推播的人看得到。 */
+let noticeCompId = null;
+
+function noticeSetStatus(message, isError) {
+    const el = document.getElementById('noticeMsg');
+    if (!el) return;
+    el.textContent = message || '';
+    el.className = isError
+        ? 'text-xs p-2.5 rounded-lg border bg-red-50 border-red-200 text-red-700'
+        : 'text-xs p-2.5 rounded-lg border bg-emerald-50 border-emerald-200 text-emerald-700';
+    el.classList.toggle('hidden', !message);
+}
+
+function openNoticeModal(id) {
+    const item = allCompetitions.find((c) => String(c.id) === String(id));
+    if (!item) return;
+    if (!isAdminUser()) return alert('權限不足：只有管理員以上可以發布賽事公告');
+    noticeCompId = item.id;
+    const label = document.getElementById('noticeModalComp');
+    if (label) label.innerText = `｜${item.name}｜原訂 ${item.date || '日期未定'}${item.time ? ` ${item.time}` : ''}`;
+    const reason = document.getElementById('cancelReasonInput');
+    if (reason) reason.value = item.cancel_reason || '';
+    const pDate = document.getElementById('postponeDateInput');
+    if (pDate) pDate.value = item.postponed_date ? String(item.postponed_date).slice(0, 10) : '';
+    const pTime = document.getElementById('postponeTimeInput');
+    if (pTime) pTime.value = item.postponed_time ? String(item.postponed_time).slice(0, 5) : '';
+    const news = document.getElementById('newsInput');
+    if (news) news.value = item.news || '';
+    const current = document.getElementById('noticeCurrent');
+    if (current) {
+        const notice = window.CMCompetitionState ? CMCompetitionState.competitionNotice(item) : { has_notice: false };
+        current.innerText = notice.cancelled ? `目前狀態：⛔ 已取消${notice.cancel_reason ? `（${notice.cancel_reason}）` : ''}`
+            : notice.postponed ? `目前狀態：🕒 已延期至 ${notice.postponed_label}（原訂 ${item.date || '未定'}）`
+                : '目前狀態：正常（沒有取消或延期）';
+    }
+    document.getElementById('noticeMsg')?.classList.add('hidden');
+    document.getElementById('noticeModal')?.classList.remove('hidden');
+}
+
+function closeNoticeModal() {
+    document.getElementById('noticeModal')?.classList.add('hidden');
+    noticeCompId = null;
+}
+
+async function submitNoticeAction(path, payload, okText) {
+    if (!noticeCompId && noticeCompId !== 0) return;
+    try {
+        const res = await customFetch(`/api/competitions/${noticeCompId}/${path}`, {
+            method: 'POST',
+            body: JSON.stringify(payload || {})
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '操作失敗');
+        noticeSetStatus(data.message || okText || '已更新', false);
+        await fetchCompetitions();   // 重新載入列表：卡片上的公告要立刻更新
+        return true;
+    } catch (err) {
+        noticeSetStatus(err.message || '操作失敗', true);
+        return false;
+    }
+}
+
+async function saveCancelNotice() {
+    const reason = (document.getElementById('cancelReasonInput')?.value || '').trim();
+    if (!reason) return noticeSetStatus('取消賽事請填寫原因（會顯示在卡片上讓大家看到）', true);
+    const ok = await submitNoticeAction('cancel', { cancelled: true, reason }, '已取消賽事');
+    if (ok) noticeSetStatus('已取消賽事，卡片上會顯示取消原因', false);
+}
+
+async function reviveCompetition() {
+    const ok = await submitNoticeAction('cancel', { cancelled: false }, '已復原');
+    if (ok) noticeSetStatus('已復原（卡片上的取消標示會消失）', false);
+}
+
+async function savePostponeNotice() {
+    const date = document.getElementById('postponeDateInput')?.value || '';
+    const time = document.getElementById('postponeTimeInput')?.value || '';
+    if (!date) return noticeSetStatus('請選擇延期後的新日期', true);
+    const ok = await submitNoticeAction('postpone', { postponed_date: date, postponed_time: time }, '已設定延期');
+    if (ok) noticeSetStatus(`已延期至 ${date}${time ? ' ' + time : ''}（原訂時間保留）`, false);
+}
+
+async function clearPostponeNotice() {
+    const ok = await submitNoticeAction('postpone', { postponed_date: null }, '已取消延期標記');
+    if (ok) {
+        const pDate = document.getElementById('postponeDateInput');
+        if (pDate) pDate.value = '';
+        const pTime = document.getElementById('postponeTimeInput');
+        if (pTime) pTime.value = '';
+        noticeSetStatus('已取消延期標記', false);
+    }
+}
+
+async function saveCompetitionNews(clear) {
+    const text = clear ? '' : (document.getElementById('newsInput')?.value || '').trim();
+    if (!clear && !text) return noticeSetStatus('請輸入要公告的內容', true);
+    const ok = await submitNoticeAction('news', { news: text }, clear ? '已清空消息' : '已更新最新消息');
+    if (ok) {
+        if (clear) {
+            const news = document.getElementById('newsInput');
+            if (news) news.value = '';
+        }
+        noticeSetStatus(clear ? '已清空最新消息' : '已更新最新消息（卡片上會直接顯示）', false);
+    }
+}
+
 async function openStaffModal(id) {
     closeNavDropdown();
     cmStaffState.competitionId = id;
@@ -4856,6 +4979,34 @@ function initResultsUi() {
     document.getElementById('resultsEditorClose')?.addEventListener('click', () => document.getElementById('resultsEditorModal')?.classList.add('hidden'));
 }
 
+/* v3.6.3：卡片的公告區（取消／延期／最新消息）——不依賴推播訂閱，人人看得到 */
+function noticeBannerHtml(item) {
+    if (!window.CMCompetitionState || !CMCompetitionState.competitionNotice) return '';
+    const notice = CMCompetitionState.competitionNotice(item);
+    if (!notice.has_notice) return '';
+    const blocks = [];
+    if (notice.cancelled) {
+        blocks.push(`<p class="text-xs font-bold text-red-700">⛔ 賽事已取消${notice.cancel_reason ? `：${escapeHtml(notice.cancel_reason)}` : ''}</p>`);
+    }
+    if (notice.postponed) {
+        blocks.push(`<p class="text-xs font-bold text-amber-700">🕒 賽事延期至 ${escapeHtml(notice.postponed_label)}`
+            + ` <span class="font-normal">（原訂 ${escapeHtml(String(item.date || '日期未定'))}）</span></p>`);
+    }
+    if (notice.news) {
+        // 用本地時區顯示（澳門 UTC+8）：直接切 ISO 字串會顯示 UTC 時間，差 8 小時
+        let when = '';
+        if (notice.news_updated_at) {
+            const d = new Date(notice.news_updated_at);
+            when = isNaN(d.getTime()) ? ''
+                : `（${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 更新）`;
+        }
+        blocks.push(`<p class="text-xs text-slate-700">📣 ${escapeHtml(notice.news)}<span class="text-slate-500">${when}</span></p>`);
+    }
+    const tone = notice.cancelled ? 'bg-red-50 border-red-200'
+        : (notice.postponed ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200');
+    return `<div class="${tone} border rounded-lg px-3 py-2 space-y-1">${blocks.join('')}</div>`;
+}
+
 function competitionCardHtml(item) {
     return `
         <div class="cm-card border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition bg-white shadow-sm flex flex-col md:flex-row justify-between gap-4" data-comp-id="${escapeHtml(String(item.id))}">
@@ -4869,6 +5020,8 @@ function competitionCardHtml(item) {
                     ${item.poster_updated_at ? '<span class="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full font-medium">🖼️ 自訂海報</span>' : ''}
                     ${getBadgeStatus(item.date)}
                 </div>
+
+                ${noticeBannerHtml(item)}
                 
                 ${item.poster_thumb_url ? `
                     <button type="button" data-action="share-poster" data-id="${item.id}"
@@ -4932,6 +5085,7 @@ function competitionCardHtml(item) {
                     <button data-action="edit-comp" data-id="${item.id}" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">編輯</button>
                     <button data-action="manage-teams" data-id="${item.id}" class="text-xs text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded transition">👥 報名／隊伍</button>
                     <button data-action="manage-staff" data-id="${item.id}" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">🧑‍⚖️ 工作人員</button>
+                    <button data-action="manage-notice" data-id="${item.id}" class="text-xs ${(item.cancelled_at || item.postponed_date || item.news) ? 'text-red-700 bg-red-50 hover:bg-red-100 font-medium' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'} px-2.5 py-1 rounded transition">📣 公告／取消</button>
                     <button data-action="duplicate-comp" data-id="${item.id}" class="text-xs text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded transition">📄 複製賽事</button>
                     <button data-action="recurrence-comp" data-id="${item.id}" class="text-xs ${item.recurrence ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 font-medium' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'} px-2.5 py-1 rounded transition">🔁 ${item.recurrence ? recurrenceRuleLabel(item.recurrence) : '週期'}</button>
                     <button data-action="delete-comp" data-id="${item.id}" class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition">刪除</button>

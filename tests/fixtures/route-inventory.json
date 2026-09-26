@@ -1,6 +1,6 @@
 {
   "note": "拆模組的等價基準：路由必須完全相同且順序不變。重構時不要更新這個檔案；只有真的增減路由才更新。",
-  "count": 106,
+  "count": 109,
   "routes": [
     "USE anonymous",
     "USE corsMiddleware",
@@ -67,6 +67,9 @@
     "DELETE /api/competitions/:id",
     "PUT /api/competitions/:id/restore",
     "DELETE /api/competitions/:id/hard-delete",
+    "POST /api/competitions/:id/cancel",
+    "POST /api/competitions/:id/postpone",
+    "POST /api/competitions/:id/news",
     "GET /api/registration-counts",
     "GET /api/public-config",
     "POST /api/auth/register",
