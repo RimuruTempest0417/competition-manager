@@ -1,9 +1,10 @@
 {
   "note": "拆模組的等價基準：路由必須完全相同且順序不變。重構時不要更新這個檔案；只有真的增減路由才更新。",
-  "count": 100,
+  "count": 101,
   "routes": [
     "USE anonymous",
     "USE corsMiddleware",
+    "USE csrfCookieGuard",
     "USE jsonParser",
     "USE urlencodedParser",
     "USE serveStatic",

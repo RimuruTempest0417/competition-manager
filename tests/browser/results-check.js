@@ -60,11 +60,11 @@ const login = async (browser, username, password) => {
     `);
     await fillAndClick();
     try {
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 4000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 4000 });
     } catch (err) {
         await new Promise((r) => setTimeout(r, 500));
         await fillAndClick();
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 10000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 10000 });
     }
 };
 
@@ -306,7 +306,7 @@ function seedState() {
         // ---------- ⑧ 一般使用者的權限邊界 ----------
         const asUser = JSON.parse(await browser.evaluate(`
             const card = document.querySelector('[data-comp-id="851"]');
-            return fetch('/api/competitions/851/result-sheet', { headers: { Authorization: 'Bearer ' + localStorage.getItem('auth_token') } })
+            return fetch('/api/competitions/851/result-sheet', { headers: { Authorization: 'Bearer ' } })
                 .then((r) => r.json().then((d) => JSON.stringify({
                     hasEdit: !!card.querySelector('[data-action="edit-results"]'),
                     hasView: !!card.querySelector('[data-action="view-results"]'),

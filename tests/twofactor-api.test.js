@@ -9,6 +9,7 @@ const { once } = require('node:events');
 const jwt = require('jsonwebtoken');
 
 const { startFakeSupabase } = require('./support/fake-supabase');
+const { authCookieLine, cookieHeader } = require('./support/auth-cookie');   // v3.5.0：憑證改存 HttpOnly cookie
 const { totp: totpCode, generateSecret } = require(path.join(__dirname, '..', 'lib', 'totp.js'));
 
 const SECRET = 'twofactor-test-secret';
@@ -76,8 +77,9 @@ test('v2.15.0 未執行 migration 時：兩步驟驗證自動停用，原本的�
     assert.strictEqual(setupBody.migration_required, true);
 
     // 舊行為完全不變：沒有 2FA 欄位時照樣能用密碼登入
-    const login = await (await post('/api/auth/login', { username: 'owner', password: 'plain-owner123' })).json();
-    assert.ok(login.token, '未執行 migration 時仍應正常登入');
+    const loginRes = await post('/api/auth/login', { username: 'owner', password: 'plain-owner123' });
+    const login = await loginRes.json();
+    assert.match(authCookieLine(loginRes), /^cm_token=/, '未執行 migration 時仍應正常登入（v3.5.0：憑證在 HttpOnly cookie）');
     assert.ok(!login.requires_2fa);
 });
 
@@ -143,10 +145,13 @@ test('v2.15.0 登入兩段式：中間權杖不能當登入憑證、同一組碼
     state.tables.admin_users[0].totp_last_step = null;
 
     // 第一段：密碼正確 → 只拿到中間權杖
-    const first = await (await post('/api/auth/login', { username: 'owner', password: 'plain-owner123' })).json();
+    const firstRes = await post('/api/auth/login', { username: 'owner', password: 'plain-owner123' });
+    const firstResCookie = authCookieLine(firstRes);
+    const first = await firstRes.json();
     assert.strictEqual(first.requires_2fa, true);
     assert.ok(first.challenge_token, '應回傳中間權杖');
     assert.strictEqual(first.token, undefined, '此時還不能發正式權杖');
+    assert.strictEqual(firstResCookie, '', '第一階段也不該發登入 cookie');
 
     // 中間權杖不可以拿去讀受保護的 API（這是整個機制的關鍵）
     const blocked = await fetch(`${base}/api/admin/users`, { headers: { Authorization: 'Bearer ' + first.challenge_token } });
@@ -158,11 +163,14 @@ test('v2.15.0 登入兩段式：中間權杖不能當登入憑證、同一組碼
 
     // 正確的碼 → 正式權杖
     const code = totpCode(secret);
-    const done = await (await post('/api/auth/login/2fa', { challenge_token: first.challenge_token, code })).json();
-    assert.ok(done.token, '通過第二因素後才發正式權杖');
+    const doneRes = await post('/api/auth/login/2fa', { challenge_token: first.challenge_token, code });
+    const done = await doneRes.json();
+    assert.strictEqual(done.token, undefined, '回應不應再回傳 token（v3.5.0）');
+    assert.match(authCookieLine(doneRes), /^cm_token=/, '通過第二因素後才發正式憑證（cookie）');
+    assert.match(authCookieLine(doneRes), /HttpOnly/i, 'cookie 必須是 HttpOnly');
     assert.strictEqual(done.used_recovery_code, false);
 
-    const users = await fetch(`${base}/api/admin/users`, { headers: { Authorization: 'Bearer ' + done.token } });
+    const users = await fetch(`${base}/api/admin/users`, { headers: cookieHeader(doneRes) });
     assert.strictEqual(users.status, 200, '正式權杖可以正常使用');
 
     // 同一組碼不能再用（同一時間步重放）
@@ -188,8 +196,9 @@ test('v2.15.0 備援碼：可登入、只能用一次、剩餘數量會遞減', 
     const recovery = enabled.recovery_codes[0];
 
     const first = await (await post('/api/auth/login', { username: 'owner', password: 'plain-owner123' })).json();
-    const done = await (await post('/api/auth/login/2fa', { challenge_token: first.challenge_token, code: recovery })).json();
-    assert.ok(done.token, '備援碼應可完成登入');
+    const doneRes = await post('/api/auth/login/2fa', { challenge_token: first.challenge_token, code: recovery });
+    const done = await doneRes.json();
+    assert.match(authCookieLine(doneRes), /^cm_token=/, '備援碼應可完成登入（cookie）');
     assert.strictEqual(done.used_recovery_code, true);
     assert.strictEqual(done.remaining_recovery_codes, 7);
 
@@ -200,10 +209,11 @@ test('v2.15.0 備援碼：可登入、只能用一次、剩餘數量會遞減', 
 
     // 帶連字號、小寫、省略連字號都要能接受（使用者手抄容易格式不一）
     const first3 = await (await post('/api/auth/login', { username: 'owner', password: 'plain-owner123' })).json();
-    const loose = await (await post('/api/auth/login/2fa', {
+    const looseRes = await post('/api/auth/login/2fa', {
         challenge_token: first3.challenge_token, code: enabled.recovery_codes[1].toLowerCase().replace(/-/g, '')
-    })).json();
-    assert.ok(loose.token, '備援碼格式寬鬆比對應可登入');
+    });
+    const loose = await looseRes.json();
+    assert.match(authCookieLine(looseRes), /^cm_token=/, '備援碼格式寬鬆比對應可登入（cookie）');
     assert.strictEqual(loose.remaining_recovery_codes, 6);
 });
 
@@ -239,8 +249,9 @@ test('v2.15.0 停用：需要密碼 + 驗證碼，停用後恢復只驗密碼', 
     assert.strictEqual(row.totp_recovery_codes, null);
 
     // 之後登入只需密碼
-    const login = await (await post('/api/auth/login', { username: 'owner', password: 'plain-owner123' })).json();
-    assert.ok(login.token);
+    const loginRes = await post('/api/auth/login', { username: 'owner', password: 'plain-owner123' });
+    const login = await loginRes.json();
+    assert.match(authCookieLine(loginRes), /^cm_token=/);
     assert.ok(!login.requires_2fa);
 });
 

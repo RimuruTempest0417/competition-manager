@@ -321,13 +321,10 @@
         return !!(root && root.navigator && 'serviceWorker' in root.navigator && root.PushManager && root.Notification);
     }
 
+    /* v3.5.0：登入憑證是 HttpOnly cookie，同源 fetch 會自動帶上——
+       前端不再持有權杖（JS 讀不到，XSS 也偷不走）。這個函式只保留 Content-Type。 */
     function authHeaders(extra) {
-        const headers = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
-        try {
-            const token = root.localStorage && root.localStorage.getItem('auth_token');
-            if (token) headers.Authorization = 'Bearer ' + token;
-        } catch (e) { /* 無痕模式等情況忽略 */ }
-        return headers;
+        return Object.assign({ 'Content-Type': 'application/json' }, extra || {});
     }
 
     // VAPID 公鑰（base64url）→ Uint8Array

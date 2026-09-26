@@ -86,11 +86,11 @@ const login = async (browser, username, password) => {
     `);
     await fillAndClick();
     try {
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 4000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 4000 });
     } catch (err) {
         await new Promise((r) => setTimeout(r, 500));
         await fillAndClick();
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 10000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 10000 });
     }
 };
 
@@ -272,7 +272,7 @@ function seedState() {
         await browser.goto(BASE);
         await browser.evaluate(STUB_AND_COUNT);
         await login(browser, PLAYER, PASS);
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 15000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 15000 });
         await new Promise((r) => setTimeout(r, 1000));
         const playerView = JSON.parse(await browser.evaluate(`
             const btn = document.getElementById('adminMgmtBtn');
@@ -280,8 +280,8 @@ function seedState() {
         `));
         check(!playerView.visible, '一般使用者看不到帳號管理入口');
         const apiDenied = await browser.evaluate(`
-            const res = await fetch('/api/admin/users', { headers: { Authorization: 'Bearer ' + localStorage.getItem('auth_token') } });
-            const del = await fetch('/api/admin/users/5', { method: 'DELETE', headers: { Authorization: 'Bearer ' + localStorage.getItem('auth_token') } });
+            const res = await fetch('/api/admin/users', { headers: { Authorization: 'Bearer ' } });
+            const del = await fetch('/api/admin/users/5', { method: 'DELETE', headers: { Authorization: 'Bearer ' } });
             return JSON.stringify({ list: res.status, del: del.status });
         `);
         const denied = JSON.parse(apiDenied);

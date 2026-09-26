@@ -57,20 +57,24 @@ const login = async (browser, username, password) => {
     `);
     await fillAndClick();
     try {
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 4000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 4000 });
     } catch (err) {
         await new Promise((r) => setTimeout(r, 500));
         await fillAndClick();
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 10000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 10000 });
     }
     // 登入成功會整頁重載：重載後要重新注入 alert／confirm 的替身，否則後面的檢查收不到訊息
     await browser.waitFor(`document.getElementById('submitLoginBtn') !== null`, { timeout: 10000 });
     await browser.evaluate(STUB_DIALOGS);
 };
 
+/* v3.5.0：憑證在 HttpOnly cookie，登出一定要請伺服器清 cookie（清 localStorage 已經不夠） */
 const logout = (browser) => browser.evaluate(`
-    localStorage.removeItem('auth_token');
-    return true;
+    return fetch('/api/auth/logout', { method: 'POST' }).then(() => {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('competition_user');
+        return true;
+    });
 `).then(() => browser.goto(BASE)).then(() => browser.evaluate(STUB_DIALOGS));
 
 function seedState() {

@@ -11,7 +11,7 @@ const { hashPassword, verifyPassword, needsPasswordUpgrade } = require('../lib/p
 // v2.15.0：兩步驟驗證（TOTP）—— 純手寫實作，只用 Node 內建 crypto，無外部套件
 
 module.exports = function registerRegistrationsRoutes(app, ctx) {
-    const { ADMIN_ROLES, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady } = ctx;
+    const { ADMIN_ROLES, setAuthCookie, clearAuthCookie, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady } = ctx;
 app.get('/api/registration-counts', async (req, res) => {
     try {
         // v2.20.0：公開端點只回「佔名額的人數」與「候補人數」這種聚合數字，不含任何個人資訊
@@ -102,7 +102,9 @@ app.post('/api/auth/register', async (req, res) => {
 
         await logAudit(user.username, 'REGISTER_USER', user.id, '註冊普通用戶帳號', req.userAgent);
 
-        res.json({ message: '註冊成功', token, user: { id: user.id, username: user.username, role: 'user' } });
+        // v3.5.0：註冊完成直接以 cookie 登入（回應不含 token）
+        setAuthCookie(res, token);
+        res.json({ message: '註冊成功', user: { id: user.id, username: user.username, role: 'user' } });
     } catch (err) {
         if ((err && err.code) === '23514') {
             return res.status(503).json({ error: '資料庫尚未允許「普通用戶」角色，請先執行 migrations/2026-09-24-v2.9.0-users-registration-teams.sql' });
@@ -122,10 +124,12 @@ app.post('/api/auth/logout', authenticateToken, async (req, res) => {
         await logAudit(req.user.username, 'LOGOUT', req.user.sub, {
             role: req.user.role
         }, req.userAgent);
+        clearAuthCookie(res);   // v3.5.0：清掉 HttpOnly cookie（真正的登出）
         res.json({ success: true });
     } catch (err) {
-        // 稽核寫不進去不該讓使用者登不掉（前端無論如何都會清掉本機權杖）
+        // 稽核寫不進去不該讓使用者登不掉：仍然清掉 cookie
         await logErrorToDb(req, 'logout_audit_error', err, { severity: 'warn' });
+        clearAuthCookie(res);
         res.json({ success: true, audit_logged: false });
     }
 });

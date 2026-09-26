@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v3.4.0
+# 🏆 比賽管理系統 (Competition Manager) v3.5.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -64,6 +64,8 @@
 
 ## 🔒 安全性實作
 - **JWT 身份驗證**：登入後簽發 JWT（有效期 12 小時），payload 僅含 `sub` / `username` / `role`，不含密碼。`JWT_SECRET` 由環境變數讀取，不寫死於程式碼。
+- **登入憑證存放 (v3.5.0)**：憑證改放 **HttpOnly Cookie**（`cm_token`，`SameSite=Strict`、`Secure`、`Path=/`、`Max-Age=43200`），**回應內容不再回傳 token**、前端也不再寫入 `localStorage`——JavaScript 讀不到就偷不走（ZAP 中風險項）。維運腳本與 Vercel Cron 仍可用 `Authorization: Bearer`（兩者都支援，cookie 優先）。
+- **CSRF 防護 (v3.5.0)**：第一道是 cookie 的 `SameSite=Strict`；第二道是 `csrfCookieGuard` 中介層——帶著登入 cookie 的 `POST/PUT/PATCH/DELETE` 必須來自自家或白名單來源，否則回 403。沒有 `Origin`／`Referer` 的請求（curl、腳本、cron）不受影響。
 - **CSP (Content Security Policy)**：`style-src 'self'` 嚴格限制，禁用外部 CDN，Tailwind 改本地靜態檔載入。
 - **CSRF / XSS 防護**：所有使用者輸入於前端以 `escapeHtml()` 轉義；後端不使用 `x-user-id` / `x-user-role` 作為授權依據。
 - **其他標頭**：`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Strict-Transport-Security`、`Referrer-Policy: strict-origin-when-cross-origin`。
@@ -93,6 +95,8 @@ node server.js
 | `SUPABASE_KEY` | Supabase anon / service key |
 | `JWT_SECRET` | JWT 簽章密鑰（不可寫死於程式碼） |
 | `PORT` | 本機伺服器埠號（預設 3000） |
+| `SITE_URL` | 正式站網址（同源請求和 CORS 白名單會用到） |
+| `CORS_ALLOWED_ORIGINS` | 額外允許的跨域來源，逗號分隔（v3.5.0；**不填＝只允許自家來源**，前端同源不需要 CORS） |
 
 `.env` 已列入 `.gitignore`，不得進入 Git。
 ```
@@ -178,6 +182,17 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v3.5.0 (2026-09-26) - P0 安全修復：CORS 白名單＋登入憑證改 HttpOnly Cookie
+
+**背景**：2026-09-26 的 ZAP 被動掃描回報 2 個中風險（跨域配置錯誤、JWT 存放於 localStorage），本版處理這兩項。
+
+- **CORS 改白名單**：`server.js` 原本是裸的 `app.use('/api', cors())` → 所有 API 回應都帶 `Access-Control-Allow-Origin: *`。改為只反射「自家來源」與 `CORS_ALLOWED_ORIGINS` 列出的來源（並帶 `Access-Control-Allow-Credentials`），其餘來源完全不給 ACAO 標頭。同源前端不需要 CORS header，所以沒有相容性風險。
+- **登入憑證改存 HttpOnly Cookie**：登入／兩步驟驗證完成／註冊成功改成用 `Set-Cookie: cm_token=…`（`HttpOnly`、`SameSite=Strict`、`Secure`、`Max-Age=43200`）發憑證，**回應內容不再含 `token`**，前端也不再寫入 `localStorage`——XSS 就算成立也偷不走憑證。`Authorization: Bearer` 仍完整支援（維運腳本、Vercel Cron、正式站煙霧測試），cookie 優先。
+- **CSRF 防護**：`SameSite=Strict` 之外再加 `csrfCookieGuard` 中介層（帶 cookie 的寫入操作必須來自自家／白名單來源，否則 403）。
+- **前端調整**：`customFetch` 不再手動塞 `Authorization`（同源請求自動帶 cookie）、登入狀態改由 `GET /api/auth/me` 向伺服器確認（開站時驗一次，角色一律以伺服器為準）、登出改呼叫伺服器清 cookie、舊版遺留的 `auth_token` 一律清除。
+- **新增測試**：`tests/auth-cookie-cors.test.js`（4 項：cookie 屬性、回應不含 token、CSRF 擋跨站、CORS 白名單）；瀏覽器檢查新增「登入後 localStorage 與 `document.cookie` 都讀不到憑證」等 3 項。
+- **路由快照**：新增一層 `csrfCookieGuard` 中介層（快照 100 → 101 條，守門測試已更新）。
 
 ### v3.4.0 (2026-09-26) - `server.js` 拆模組（P4，重構但不變行為）
 

@@ -155,23 +155,33 @@ async function typeCodeAndSubmit(browser, selector, code) {
         check(true, '再次登入時要求輸入兩步驟驗證碼');
         await browser.screenshot(path.join(SHOTS, '04-要求驗證碼.png'));
 
-        const tokenBefore = await browser.evaluate(`return localStorage.getItem('auth_token');`);
-        check(!tokenBefore, '只輸入密碼時還沒有登入憑證（第二因素未通過）');
+        // v3.5.0：前端已經拿不到權杖，所以改用伺服器當權威——沒通過第二因素就該是「未登入」
+        const meBefore = await browser.evaluate(`return fetch('/api/auth/me').then((r) => r.status);`);
+        check(meBefore === 401, '只輸入密碼時還沒有登入憑證（第二因素未通過）', `HTTP ${meBefore}`);
 
         // 錯的碼要被拒絕
         await typeCodeAndSubmit(browser, '#login2faCode', '000000');
         await browser.evaluate(`document.getElementById('submitLoginBtn').click(); return true;`);
         await browser.evaluate(`return new Promise((r) => setTimeout(r, 600));`);
-        const stillNoToken = await browser.evaluate(`return localStorage.getItem('auth_token');`);
-        check(!stillNoToken, '錯誤的驗證碼不會登入');
+        const meAfterBad = await browser.evaluate(`return fetch('/api/auth/me').then((r) => r.status);`);
+        check(meAfterBad === 401, '錯誤的驗證碼不會登入', `HTTP ${meAfterBad}`);
 
         // 正確的碼：用「下一個時間步」，避免與剛才啟用時用掉的那一步相同（防重放機制會拒絕重複使用）
         const loginCode = totpCode(secret, { at: Date.now() + 30000 });
         await typeCodeAndSubmit(browser, '#login2faCode', loginCode);
         await browser.evaluate(`document.getElementById('submitLoginBtn').click(); return true;`);
-        await browser.waitFor(`localStorage.getItem('auth_token') !== null`, { timeout: 10000 });
+        await browser.waitFor(`localStorage.getItem('competition_user') !== null`, { timeout: 10000 });
         await browser.waitFor(`document.getElementById('login2faFields').classList.contains('hidden')`, { timeout: 8000 });
         check(true, '輸入正確驗證碼後完成登入');
+
+        // ---------- v3.5.0 安全性質：憑證只在 HttpOnly cookie，JS 怎麼找都找不到 ----------
+        const leak = JSON.parse(await browser.evaluate(`
+            return JSON.stringify({ ls: localStorage.getItem('auth_token'), cookie: document.cookie });
+        `));
+        check(leak.ls === null, '登入後 localStorage 不再存權杖（憑證已改放 HttpOnly cookie）');
+        check(!/cm_token=/.test(leak.cookie), 'document.cookie 也讀不到登入憑證（HttpOnly 生效）');
+        const meAfter = await browser.evaluate(`return fetch('/api/auth/me').then((r) => r.status);`);
+        check(meAfter === 200, '同源請求單靠 cookie 就能通過驗證', `HTTP ${meAfter}`);
 
         // ---------- 5. 用備援碼登入一次 ----------
         // 用真正的登出按鈕（會把記憶體中的 currentUser 一併清掉）
@@ -186,7 +196,7 @@ async function typeCodeAndSubmit(browser, selector, code) {
         await browser.evaluate(`document.getElementById('login2faUseRecovery').click(); return true;`);
         await typeCodeAndSubmit(browser, '#login2faCode', recoveryCodes[0]);
         await browser.evaluate(`document.getElementById('submitLoginBtn').click(); return true;`);
-        await browser.waitFor(`localStorage.getItem('auth_token') !== null`, { timeout: 10000 });
+        await browser.waitFor(`localStorage.getItem('competition_user') !== null`, { timeout: 10000 });
         const alerts = await browser.evaluate(`return window.__ALERTS__;`);
         check(alerts.some((m) => /備援碼/.test(m) && /剩下 7 組/.test(m)),
             '用備援碼登入成功，並提示剩餘數量', JSON.stringify(alerts));

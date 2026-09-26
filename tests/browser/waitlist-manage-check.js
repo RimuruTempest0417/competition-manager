@@ -83,11 +83,11 @@ const login = async (browser, username, password) => {
     `);
     await fillAndClick();
     try {
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 4000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 4000 });
     } catch (err) {
         await new Promise((r) => setTimeout(r, 500));
         await fillAndClick();
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 10000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 10000 });
     }
 };
 
@@ -234,7 +234,7 @@ const login = async (browser, username, password) => {
         const blocked = await browser.evaluate(`
             const res = await fetch('/api/registrations/2104/promote', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('auth_token') },
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' },
                 body: '{}'
             });
             return res.status;
@@ -246,7 +246,7 @@ const login = async (browser, username, password) => {
         const reorderStatus = await browser.evaluate(`
             const res = await fetch('/api/competitions/811/waitlist/reorder', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('auth_token') },
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' },
                 body: JSON.stringify({ order: [2103, 2104] })
             });
             return res.status;
@@ -268,7 +268,7 @@ const login = async (browser, username, password) => {
         const forbidden = await browser.evaluate(`
             const res = await fetch('/api/competitions/811/waitlist/reorder', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('auth_token') },
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' },
                 body: JSON.stringify({ order: [2104, 2103] })
             });
             return res.status;

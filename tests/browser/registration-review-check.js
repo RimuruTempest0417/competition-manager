@@ -89,11 +89,11 @@ const login = async (browser, username, password) => {
     `);
     await fillAndClick();
     try {
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 4000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 4000 });
     } catch (err) {
         await new Promise((r) => setTimeout(r, 500));
         await fillAndClick();
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 10000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 10000 });
     }
 };
 
@@ -206,7 +206,7 @@ const login = async (browser, username, password) => {
         const forbidden = await browser.evaluate(`
             const res = await fetch('/api/registrations/901/review', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('auth_token') },
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' },
                 body: JSON.stringify({ action: 'approve' })
             });
             return res.status;
@@ -219,7 +219,7 @@ const login = async (browser, username, password) => {
         await browser.evaluate(STUB_DIALOGS);
         await login(browser, ADMIN, PASS);
         await browser.waitFor(`document.querySelectorAll('[data-comp-id]').length >= 2`, { timeout: 15000 });
-        check(await browser.evaluate(`return String(localStorage.getItem('auth_token') || '').length > 0;`), '管理員重新登入成功');
+        check(await browser.evaluate(`return String(localStorage.getItem('competition_user') || '').length > 0;`), '管理員重新登入成功');
         check(await browser.evaluate(`return document.querySelectorAll('[data-action="manage-teams"]').length >= 2;`), '管理員看得到每張卡片的「報名／隊伍」按鈕');
 
         await openTeam(801, '待審核 2');
@@ -287,7 +287,7 @@ const login = async (browser, username, password) => {
         const cancelled = await browser.evaluate(`
             const res = await fetch('/api/registrations/903', {
                 method: 'DELETE',
-                headers: { Authorization: 'Bearer ' + localStorage.getItem('auth_token') }
+                headers: { Authorization: 'Bearer ' }
             });
             const data = await res.json();
             return JSON.stringify(data);
@@ -319,7 +319,7 @@ const login = async (browser, username, password) => {
         const rejectApproved = await browser.evaluate(`
             const res = await fetch('/api/registrations/905/review', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('auth_token') },
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' },
                 body: JSON.stringify({ action: 'reject', note: '手動測試' })
             });
             return res.status;

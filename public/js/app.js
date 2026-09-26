@@ -163,10 +163,9 @@ function dismissErrorAlert() {
 function handleLogout() {
     // v2.19.0：先請後端留一筆「登出」稽核紀錄（原本純前端清權杖，稽核日誌的「登出」永遠是空的）。
     // 用最原始的 fetch 且不理會結果：稽核失敗不該讓使用者登不掉。
-    const logoutToken = localStorage.getItem('auth_token');
-    if (logoutToken) {
-        fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + logoutToken } }).catch(() => {});
-    }
+    // v3.5.0：權杖在 HttpOnly cookie 裡（JS 讀不到也不需要）；直接請伺服器清掉那個 cookie。
+    // 同源請求會自動帶 cookie，不用再手動塞 Authorization。
+    fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
     pendingTwoFactor = null;
     setLoginStep('credentials');
     currentUser = null;
@@ -175,6 +174,29 @@ function handleLogout() {
     closeNavDropdown();
     updateUIByRole();
     renderErrorAlert(null);   // v2.14.0：登出後不留下前一位使用者的錯誤提示
+}
+
+/* v3.5.0：cookie 才是登入狀態的唯一權威。
+   為什麼不能只看 localStorage：權杖在 HttpOnly cookie，JS 看不到；
+   而 cookie 可能已過期或被伺服器清掉——所以開站時一定要問一次伺服器。
+   順手的好處：角色一律以伺服器最新資料為準（localStorage 被改也騙不到權限）。 */
+async function verifySession() {
+    if (!currentUser) return;
+    try {
+        const res = await fetch('/api/auth/me', { headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' });
+        if (!res.ok) throw new Error('session invalid');
+        const data = await res.json();
+        if (data && data.user) {
+            currentUser = data.user;
+            localStorage.setItem('competition_user', JSON.stringify(currentUser));
+            updateUIByRole();
+        }
+    } catch (e) {
+        // 401＝cookie 過期／被清掉 → 回到訪客狀態（不彈訊息，開站時很常見）
+        currentUser = null;
+        localStorage.removeItem('competition_user');
+        updateUIByRole();
+    }
 }
 
 function getRoleEmoji(role, username = '') {
@@ -603,12 +625,11 @@ window.addEventListener('unhandledrejection', (event) => {
 
 async function customFetch(url, options = {}) {
     try {
-        const token = localStorage.getItem('auth_token');
+        // v3.5.0：權杖改由 HttpOnly cookie 自動帶上（同源請求），前端不再持有權杖
         const headers = new Headers(options.headers || {});
         headers.set('Content-Type', headers.get('Content-Type') || 'application/json');
-        if (token) headers.set('Authorization', `Bearer ${token}`);
 
-        const response = await fetch(url, { ...options, headers });
+        const response = await fetch(url, { ...options, headers, credentials: 'same-origin' });
 
         // v2.12.0：401（或訊息明講登入逾期）才視為登入失效；
         // 403 只是「權限不足」，不該把使用者踢下線（原本任何 403 都會清 token 並重新載入）
@@ -618,8 +639,8 @@ async function customFetch(url, options = {}) {
             const message = (payload && (payload.error || payload.message)) || '';
             const sessionExpired = response.status === 401 || /Token 無效|已過期|重新登入/.test(message);
 
-            if (token && sessionExpired) {
-                localStorage.removeItem('auth_token');
+            if (currentUser && sessionExpired) {
+                localStorage.removeItem('auth_token');   // 清掉舊版遺留的權杖
                 localStorage.removeItem('competition_user');
                 alert('登入狀態已失效，請重新登入');
                 window.location.reload();
@@ -1100,15 +1121,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
+    localStorage.removeItem('auth_token');   // v3.5.0：舊版把權杖存在這裡，升級後一律清掉
     const savedUser = localStorage.getItem('competition_user');
-    const token = localStorage.getItem('auth_token');
-    if (savedUser && token) {
-        currentUser = JSON.parse(savedUser);
+    if (savedUser) {
+        // 先樂觀套用（畫面不用等），真正的權威是 cookie → 立刻向伺服器確認一次
+        try { currentUser = JSON.parse(savedUser); } catch (e) { currentUser = null; }
     } else {
         currentUser = null;
-        localStorage.removeItem('competition_user');
-        localStorage.removeItem('auth_token');
     }
+    verifySession();
     // v2.14.0：已登入的超級管理員以上，載入時檢查是否有未處理錯誤
     if (canSeeErrorLogs()) refreshErrorAlert();
     else updateErrorLogMenuLabel(0);
@@ -1629,7 +1650,8 @@ async function performRegister() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || '註冊失敗');
 
-        localStorage.setItem('auth_token', data.token);
+        // v3.5.0：權杖已由伺服器放進 HttpOnly cookie，前端只留顯示用的帳號資訊
+        localStorage.removeItem('auth_token');
         localStorage.setItem('competition_user', JSON.stringify(data.user));
         currentUser = data.user;
 
@@ -5021,7 +5043,7 @@ function setLoginStep(step) {
 
 function completeLogin(data) {
     currentUser = data.user;
-    localStorage.setItem('auth_token', data.token);
+    localStorage.removeItem('auth_token');   // v3.5.0：權杖在 cookie，不留任何一份在 JS 手上
     localStorage.setItem('competition_user', JSON.stringify(currentUser));
     setLoginStep('credentials');
     closeLoginModal();

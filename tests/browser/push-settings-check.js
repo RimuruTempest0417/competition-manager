@@ -56,11 +56,11 @@ const login = async (browser, username, password) => {
     `);
     await fillAndClick();
     try {
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 4000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 4000 });
     } catch (err) {
         await new Promise((r) => setTimeout(r, 500));
         await fillAndClick();
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 10000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 10000 });
     }
 };
 
@@ -277,10 +277,9 @@ function seedState() {
 
         // 先確認後端真的會拒絕（跟畫面無關，訊息也要說清楚格式）
         const apiBad = JSON.parse(await browser.evaluate(`
-            const token = localStorage.getItem('auth_token');
-            return fetch('/api/push/settings', {
+                        return fetch('/api/push/settings', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ digest_time: '25:99' })
             }).then(async (r) => JSON.stringify({ status: r.status, error: (await r.json()).error }));
         `));
@@ -318,10 +317,9 @@ function seedState() {
         // ---------- ⑥ 關掉的即時通知真的不查訂閱 ----------
         const subQueriesBefore = state.log.filter((l) => /push_subscriptions/.test(l.url || '')).length;
         const reviewResult = JSON.parse(await browser.evaluate(`
-            const token = localStorage.getItem('auth_token');
-            return fetch('/api/registrations/7101/review', {
+                        return fetch('/api/registrations/7101/review', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'approve' })
             }).then((r) => r.json().then((d) => JSON.stringify({ status: r.status, notified: d.notified })));
         `));
@@ -334,10 +332,9 @@ function seedState() {
 
         // ---------- ⑦ 關掉每日摘要 → 排程明確回報 ----------
         const cronResult = JSON.parse(await browser.evaluate(`
-            const token = localStorage.getItem('auth_token');
-            return fetch('/api/push/settings', {
+                        return fetch('/api/push/settings', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ digest_enabled: false, digest_time: '21:30' })
             }).then(() => fetch('/api/cron/reminders', { headers: { Authorization: 'Bearer ${CRON_SECRET}' } }))
               .then((r) => r.json().then((d) => JSON.stringify({ digest: d.digest })));

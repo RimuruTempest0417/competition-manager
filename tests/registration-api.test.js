@@ -6,6 +6,7 @@ const path = require('node:path');
 const { once } = require('node:events');
 const jwt = require('jsonwebtoken');
 const { startFakeSupabase } = require('./support/fake-supabase');
+const { authCookieLine } = require('./support/auth-cookie');   // v3.5.0：憑證改存 HttpOnly cookie
 
 const SECRET = 'v29-integration-secret';
 process.env.NODE_ENV = 'production';
@@ -74,10 +75,12 @@ test('v2.9.0 報名與隊伍編排 API', async (t) => {
         assert.strictEqual(res.status, 200);
         const data = await res.json();
         assert.strictEqual(data.user.role, 'user', '新註冊帳號應為普通用戶');
-        assert.ok(data.token, '應直接回傳 token');
+        // v3.5.0：憑證改放 HttpOnly cookie，回應內容不再帶 token（JS 讀不到才安全）
+        assert.strictEqual(data.token, undefined, '回應不應再回傳 token');
+        assert.match(authCookieLine(res), /^cm_token=/, '應以 Set-Cookie 發登入憑證');
+        assert.match(authCookieLine(res), /HttpOnly/i, 'cookie 必須是 HttpOnly');
 
         const stored = state.tables.admin_users.find((u) => u.username === 'newplayer');
-        assert.outcome ? null : null;
         assert.match(stored.password, /^scrypt\$/, '密碼應以 scrypt 雜湊儲存，不可存明碼');
         assert.ok(!stored.password.includes('abcd12'));
 

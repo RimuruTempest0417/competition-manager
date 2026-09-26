@@ -254,9 +254,12 @@ const login = async (browser) => {
 
         /* ── ④ 訪客也看得到、讀得到 ── */
         await browser.evaluate(`
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('competition_user');
-            return true;
+            // v3.5.0：登入憑證改存 HttpOnly cookie，光清 localStorage 不會登出——要請伺服器清掉 cookie
+            return fetch('/api/auth/logout', { method: 'POST' }).then(() => {
+                localStorage.removeItem('auth_token');
+                localStorage.removeItem('competition_user');
+                return true;
+            });
         `);
         await browser.goto(BASE);
         await browser.waitFor(`document.querySelectorAll('[data-comp-id]').length >= 2`, { timeout: 20000 });

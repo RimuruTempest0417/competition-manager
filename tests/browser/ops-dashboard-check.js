@@ -63,11 +63,11 @@ const login = async (browser, username, password) => {
     `);
     await fillAndClick();
     try {
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 4000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 4000 });
     } catch (err) {
         await new Promise((r) => setTimeout(r, 500));
         await fillAndClick();
-        await browser.waitFor(`String(localStorage.getItem('auth_token') || '').length > 0`, { timeout: 10000 });
+        await browser.waitFor(`String(localStorage.getItem('competition_user') || '').length > 0`, { timeout: 10000 });
     }
 };
 
@@ -250,11 +250,11 @@ function seedState() {
 
         // ---------- ④ 重新整理（強制重算） ----------
         const fresh = JSON.parse(await browser.evaluate(`
-            return fetch('/api/admin/stats?days=7', { headers: { Authorization: 'Bearer ' + localStorage.getItem('auth_token') } })
+            return fetch('/api/admin/stats?days=7', { headers: { Authorization: 'Bearer ' } })
                 .then((r) => r.json())
-                .then((d) => fetch('/api/admin/stats?days=7', { headers: { Authorization: 'Bearer ' + localStorage.getItem('auth_token') } })
+                .then((d) => fetch('/api/admin/stats?days=7', { headers: { Authorization: 'Bearer ' } })
                     .then((r2) => r2.json())
-                    .then((d2) => fetch('/api/admin/stats?days=7&fresh=1', { headers: { Authorization: 'Bearer ' + localStorage.getItem('auth_token') } })
+                    .then((d2) => fetch('/api/admin/stats?days=7&fresh=1', { headers: { Authorization: 'Bearer ' } })
                         .then((r3) => r3.json())
                         .then((d3) => JSON.stringify({ second: d2.cached, third: d3.cached }))));
         `));
@@ -265,7 +265,7 @@ function seedState() {
         const uploaded = JSON.parse(await browser.evaluate(`
             return fetch('/api/competitions/841/poster', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('auth_token') },
+                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' },
                 body: JSON.stringify({ dataUrl: ${JSON.stringify(TINY_PNG)}, thumbDataUrl: ${JSON.stringify(TINY_THUMB)} })
             }).then((r) => r.json()).then((d) => JSON.stringify({ thumbUrl: d.thumbUrl, thumbBytes: d.thumb_bytes }));
         `));
@@ -353,7 +353,7 @@ function seedState() {
         await browser.waitFor(`document.querySelectorAll('[data-comp-id]').length >= 1`, { timeout: 15000 });
         const asUser = JSON.parse(await browser.evaluate(`
             const btn = document.getElementById('opsStatsBtn');
-            return fetch('/api/admin/stats', { headers: { Authorization: 'Bearer ' + localStorage.getItem('auth_token') } })
+            return fetch('/api/admin/stats', { headers: { Authorization: 'Bearer ' } })
                 .then((r) => r.json().then((d) => JSON.stringify({
                     btnHidden: !btn || btn.classList.contains('hidden'),
                     apiStatus: r.status,

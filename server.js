@@ -27,8 +27,110 @@ app.use((req, res, next) => {
     next();
 });
 
-// 中間件配置：將 CORS 限制僅套用於 /api 路由，避免靜態資源帶有跨域標頭引起安全掃描警報
-app.use('/api', cors());
+/* ---------- v3.5.0：CORS 改白名單（原本是裸的 cors()） ----------
+ * 為什麼要改：ZAP 2026-09-26 被動掃描回報「跨域配置錯誤」，根因就是這裡——
+ * 裸的 cors() 讓**所有** /api 回應都帶 `Access-Control-Allow-Origin: *`，
+ * 任何第三方網站都能讀取「不需要身分」的 API 回應。
+ * 允許的來源＝① 同源（自己的網域；同源請求其實根本不需要 CORS header）
+ *            ② CORS_ALLOWED_ORIGINS 明確列出的來源（逗號分隔，例如 Vercel 預覽網址）
+ * 非白名單一律不回 ACAO（瀏覽器就會擋下），也因為搭配 cookie 憑證所以必須明確反射來源。 */
+function allowedCorsOrigins() {
+    return String(process.env.CORS_ALLOWED_ORIGINS || '')
+        .split(',')
+        .map((x) => x.trim().replace(/\/+$/, ''))
+        .filter(Boolean);
+}
+function siteOrigin() {
+    try {
+        return new URL(process.env.SITE_URL || '').origin;
+    } catch (e) {
+        return '';
+    }
+}
+function isAllowedCorsOrigin(origin) {
+    if (!origin) return false;
+    const o = String(origin).replace(/\/+$/, '');
+    const site = siteOrigin();
+    return (!!site && o === site) || allowedCorsOrigins().includes(o);
+}
+app.use('/api', cors((req, callback) => {
+    const origin = req.headers.origin || '';
+    const selfOrigin = `${req.protocol}://${req.get('host')}`;
+    const ok = !!origin && (origin === selfOrigin || isAllowedCorsOrigin(origin));
+    callback(null, { origin: ok, credentials: ok, maxAge: 600 });
+}));
+
+/* v3.5.0：CSRF，見 csrfCookieGuard 的說明 */
+app.use('/api', csrfCookieGuard);
+
+/* ---------- v3.5.0：登入憑證改存 HttpOnly cookie（JWT 不再放 localStorage） ----------
+ * 為什麼要改：ZAP 中風險警示——localStorage 的權杖任何一段 JS（含被注入的）都讀得到；
+ * 放進 HttpOnly cookie 之後，前端 JS 拿不到，XSS 也就偷不走。
+ * - httpOnly：JS 讀不到（這是重點）
+ * - secure：僅 production（本機測試走 http，加了 secure 瀏覽器不會送 cookie）
+ * - sameSite=strict：跨站請求完全不帶這個 cookie（CSRF 的第一道防線）
+ * - 效期與 JWT 一致（12 小時），到期後 /api/auth/me 會回 401，前端據此顯示訪客狀態 */
+const AUTH_COOKIE = 'cm_token';
+const AUTH_COOKIE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+function authCookieOptions() {
+    return {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/'
+    };
+}
+function setAuthCookie(res, token) {
+    res.cookie(AUTH_COOKIE, token, Object.assign(authCookieOptions(), { maxAge: AUTH_COOKIE_MAX_AGE_MS }));
+}
+function clearAuthCookie(res) {
+    res.clearCookie(AUTH_COOKIE, authCookieOptions());
+}
+/* 手寫 cookie 解析（不新增套件；同一個名字取最後一個，與瀏覽器行為一致） */
+function parseCookies(req) {
+    const header = req.headers.cookie || '';
+    const out = {};
+    header.split(';').forEach((part) => {
+        const idx = part.indexOf('=');
+        if (idx < 0) return;
+        const k = part.slice(0, idx).trim();
+        const v = part.slice(idx + 1).trim();
+        if (k) out[k] = decodeURIComponent(v);
+    });
+    return out;
+}
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+/* CSRF 第二道防線（第一道是 sameSite=strict）：cookie 憑證 + 會改變狀態的方法時，
+ * 要求 Origin／Referer 必須是自家來源或白名單來源。
+ * Bearer 憑證不需要這個檢查——攻擊者的網站無法讓瀏覽器自動帶上我們的 Bearer 權杖。
+ * 沒有帶 Origin 與 Referer 的請求（curl、我們自己的腳本、cron）放行：
+ * 那種請求不會自動帶上使用者的 cookie，構不成 CSRF。 */
+/* v3.5.0：CSRF 第二道防線（第一道是 cookie 的 sameSite=strict）。
+ * 條件＝「帶著我們的登入 cookie」＋「會改變狀態的方法」＋「來源不是自家／白名單」→ 403。
+ * 掛在 /api 全域而不是只掛在需要登入的路由：公開寫入端點（例如 /api/push/test）同樣會用到
+ * 登入狀態，也不該被別的網站借使用者的瀏覽器觸發。
+ * 沒有 Origin 也沒有 Referer 的請求（curl、維運腳本、cron）不受影響——那種請求不會自動
+ * 帶上使用者的 cookie，構不成 CSRF。 */
+function csrfCookieGuard(req, res, next) {
+    if (!UNSAFE_METHODS.has(req.method)) return next();
+    if (!parseCookies(req)[AUTH_COOKIE]) return next();   // 沒有 cookie 憑證就不是 CSRF 情境（Bearer 也不受影響）
+    if (isSameSiteRequest(req)) return next();
+    return res.status(403).json({ error: '跨站請求已被拒絕（CSRF 保護），請從本站操作' });
+}
+
+function isSameSiteRequest(req) {
+    const selfOrigin = `${req.protocol}://${req.get('host')}`;
+    const origin = req.headers.origin || '';
+    if (origin) return origin === selfOrigin || isAllowedCorsOrigin(origin);
+    const referer = req.headers.referer || '';
+    if (!referer) return true;
+    try {
+        const refOrigin = new URL(referer).origin;
+        return refOrigin === selfOrigin || isAllowedCorsOrigin(refOrigin);
+    } catch (e) {
+        return false;
+    }
+}
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -712,7 +814,14 @@ const USER_MIGRATION_HINT =
 // JWT 身份驗證中間件
 function authenticateToken(req, res, next) {
     const authHeader = req.headers.authorization || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const cookie = parseCookies(req)[AUTH_COOKIE] || '';
+
+    // v3.5.0：瀏覽器走 cookie（HttpOnly、JS 讀不到）；Authorization: Bearer 保留給
+    // 維運腳本、cron（CRON_SECRET）與正式站煙霧測試，兩種並存才不會把既有工具打壞。
+    // cookie 優先：這樣「瀏覽器已登入」時，任何殘留的舊標頭都不會把請求變成 401。
+    const token = cookie || bearer;
+    req.authSource = cookie ? 'cookie' : (bearer ? 'bearer' : '');
 
     if (!token) {
         return res.status(401).json({ error: '未提供身份驗證令牌，存取被拒' });
@@ -1373,9 +1482,10 @@ const loginHandler = async (req, res) => {
             alerts = await errorLogAlertSummary();
         }
 
+        // v3.5.0：權杖只放進 HttpOnly cookie，**不再出現在回應內容**（否則 JS 還是讀得到）
+        setAuthCookie(res, token);
         res.json({
             message: '登入成功',
-            token,
             user: { id: user.id, username: user.username, role: user.role },
             alerts
         });
@@ -1426,7 +1536,7 @@ async function verifySecondFactor(user, rawCode) {
 
 // 綁定狀態（前端據此決定要不要顯示設定入口）
 /* ---------- 登入、密碼與兩步驟驗證：v3.4.0 起移到 routes/auth.js ---------- */
-require('./routes/auth')(app, { GENERIC_DB_ERROR, JWT_SECRET, LOGIN_ACCOUNT_MAX_FAILURES, LOGIN_ACCOUNT_MIN_IPS, SUPER_ADMIN_ROLES, TFA_MIGRATION_HINT, TFA_RECOVERY_CODE_COUNT, authenticateToken, canManageUser, clearLoginFailures, columnExists, errorLogAlertSummary, findUserByKey, logAudit, logErrorToDb, loginHandler, loginLockRemaining, recordLoginFailure, requireAdmin, supabase, twoFactorSchemaReady, unusedRecoveryCodes, verifySecondFactor });
+require('./routes/auth')(app, { GENERIC_DB_ERROR, JWT_SECRET, LOGIN_ACCOUNT_MAX_FAILURES, LOGIN_ACCOUNT_MIN_IPS, SUPER_ADMIN_ROLES, TFA_MIGRATION_HINT, TFA_RECOVERY_CODE_COUNT, authenticateToken, canManageUser, clearLoginFailures, columnExists, errorLogAlertSummary, findUserByKey, logAudit, logErrorToDb, loginHandler, loginLockRemaining, recordLoginFailure, clearAuthCookie, requireAdmin, setAuthCookie, supabase, twoFactorSchemaReady, unusedRecoveryCodes, verifySecondFactor });
 
 const OPS_STATS_TTL_MS = 60 * 1000;
 const OPS_STATS_TREND_DAYS = 14;
@@ -1900,7 +2010,7 @@ async function logPushEvent(competitionId, kind, sentCount, extra) {
 // 各賽事報名人數（公開的彙總資訊，未執行 migration 時回空物件）
 
 /* ---------- 報名、審核、候補與帳號：v3.4.0 起移到 routes/registrations.js ---------- */
-require('./routes/registrations')(app, { ADMIN_ROLES, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
+require('./routes/registrations')(app, { ADMIN_ROLES, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, clearAuthCookie, requireAdmin, setAuthCookie, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
 
 /* ---------- 隊伍與隊員編排：v3.4.0 起移到 routes/teams.js ---------- */
 require('./routes/teams')(app, { ADMIN_ROLES, REGISTRATION_HINT, SUPER_ADMIN_ROLES, authenticateToken, cleanText, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, notifyOnPromote, registrationReviewSchemaReady, requireAdmin, requireSuperAdmin, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });

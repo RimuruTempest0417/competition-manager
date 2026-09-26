@@ -13,7 +13,7 @@ const { hashPassword, verifyPassword, needsPasswordUpgrade } = require('../lib/p
 // v2.15.0：兩步驟驗證（TOTP）—— 純手寫實作，只用 Node 內建 crypto，無外部套件
 
 module.exports = function registerAuthRoutes(app, ctx) {
-    const { GENERIC_DB_ERROR, JWT_SECRET, LOGIN_ACCOUNT_MAX_FAILURES, LOGIN_ACCOUNT_MIN_IPS, SUPER_ADMIN_ROLES, TFA_MIGRATION_HINT, TFA_RECOVERY_CODE_COUNT, authenticateToken, canManageUser, clearLoginFailures, columnExists, errorLogAlertSummary, findUserByKey, logAudit, logErrorToDb, loginHandler, loginLockRemaining, recordLoginFailure, requireAdmin, supabase, twoFactorSchemaReady, unusedRecoveryCodes, verifySecondFactor } = ctx;
+    const { GENERIC_DB_ERROR, JWT_SECRET, setAuthCookie, clearAuthCookie, LOGIN_ACCOUNT_MAX_FAILURES, LOGIN_ACCOUNT_MIN_IPS, SUPER_ADMIN_ROLES, TFA_MIGRATION_HINT, TFA_RECOVERY_CODE_COUNT, authenticateToken, canManageUser, clearLoginFailures, columnExists, errorLogAlertSummary, findUserByKey, logAudit, logErrorToDb, loginHandler, loginLockRemaining, recordLoginFailure, requireAdmin, supabase, twoFactorSchemaReady, unusedRecoveryCodes, verifySecondFactor } = ctx;
 app.post('/api/auth/login', loginHandler);
 app.post('/api/admin/login', loginHandler);
 app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
@@ -283,9 +283,10 @@ app.post('/api/auth/login/2fa', async (req, res) => {
         let alerts = null;
         if (SUPER_ADMIN_ROLES.has(user.role)) alerts = await errorLogAlertSummary();
 
+        // v3.5.0：與密碼登入一致——權杖只放 HttpOnly cookie，回應不含 token
+        setAuthCookie(res, token);
         res.json({
             message: '登入成功',
-            token,
             used_recovery_code: check.method === 'recovery_code',
             remaining_recovery_codes: remaining,
             user: { id: user.id, username: user.username, role: user.role },

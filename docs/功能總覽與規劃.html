@@ -10,7 +10,7 @@ blockquote{background:#f8fafc;border-left:4px solid #94a3b8;margin:0 0 18px;padd
 hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <body>
 <h1>🏆 比賽管理系統 — 功能總覽與規劃</h1>
-<p>文件版本：2026-09-26（對應網站 v3.4.0）</p>
+<p>文件版本：2026-09-26（對應網站 v3.5.0）</p>
 <p>線上網址：https://competition-manager-hazel.vercel.app</p>
 <p>程式碼：https://github.com/RimuruTempest0417/competition-manager</p>
 <p>本文件已重新整理：修正原本過時或標示錯誤的狀態、補上 v2.7.0～v2.13.0 的實際完成內容、新增「資料庫 Migration」「版本歷程」「測試方式」「已知限制」與「建議下一步」。</p>
@@ -160,6 +160,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>v2.15.0</td><td>管理員兩步驟驗證（TOTP，手寫不引套件、RFC 官方測試向量驗證、登入兩段式、備援碼只存雜湊、防重放、暴力嘗試計入鎖定、上級可重設）、正式站「訪客視角」檢查（真實 Chrome 確認資料真的渲染，補上 HTTP 煙霧測試看不到的盲點）</td></tr>
 <tr><td>v2.16.0</td><td>稽核日誌強化：依使用者／動作／時間區間／關鍵字篩選、分頁瀏覽、匯出 CSV（公式注入防護＋BOM）、保留天數清理（最少 30 天、可先預覽、預設不自動刪；設 <code>AUDIT_RETENTION_DAYS</code> 才由每日排程順便清）、每筆匯出與清理都留下稽核</td></tr>
 <tr><td>v2.17.0</td><td>每次更新巡檢後<strong>自動把讀到的錯誤日誌標記為已處理</strong>：新增批次標記端點（單次上限 500 筆、一定留稽核、未執行 migration 時回 503 降級）、<code>npm run triage</code> 讀取→分析→標記一次完成、錯誤日誌視窗加「🏷️ 全部標記已處理」按鈕、標記不等於刪除（可切換檢視）、首頁提示只針對下一批新錯誤</td></tr>
+<tr><td><strong>v3.5.0</strong></td><td><strong>P0 安全修復：CORS 白名單＋登入憑證改 HttpOnly Cookie（ZAP 2 個中風險）</strong>：CORS 由裸設定（回 <code>Access-Control-Allow-Origin: *</code>）改為只反射自家來源與 <code>CORS_ALLOWED_ORIGINS</code> 白名單；登入／2FA／註冊改以 <code>Set-Cookie: cm_token</code>（<code>HttpOnly</code>／<code>SameSite=Strict</code>／<code>Secure</code>／<code>Max-Age=43200</code>）發憑證、<strong>回應不再回傳 token</strong>、前端不再寫入 <code>localStorage</code>、登入狀態改問 <code>GET /api/auth/me</code>、登出請伺服器清 cookie；新增 <code>csrfCookieGuard</code>（帶 cookie 的寫入操作來源不符 → 403）；<code>Authorization: Bearer</code> 保留給腳本與 Cron（cookie 優先）。測試：<code>npm test</code> 586 項（585 通過 / 0 失敗、1 略過）＋瀏覽器 621 項＋新增端到端安全性質檢查 3 項（localStorage／<code>document.cookie</code> 都讀不到憑證）。無資料庫／CSP 變更。</td></tr>
 <tr><td><strong>v3.4.0</strong></td><td><strong><code>server.js</code> 拆模組（P4，重構不變行為）</strong>：6,979 行 → <strong>2,551 行</strong>，88 條路由拆成 <code>routes/</code> 下 <strong>19 個模組</strong>，以 <code>require(&#x27;./routes/x&#x27;)(app, ctx)</code> 依原本順序掛載；共用可變狀態集中為 <code>serverState</code>；新增 <strong>路由清單守門測試</strong>（93 條路由＋7 層中間件的數量與順序快照，順序錯了不會報錯、只有它抓得到）；順手修掉兩個與時間有關的既有測試缺陷。無資料庫／CSP／前端變更。測試：<code>npm test</code> 581 通過 / 0 失敗（1 略過）＋瀏覽器 618 項＋正式站 95＋8＋15。</td></tr>
 <tr><td><strong>v3.3.0</strong></td><td><strong>賽事規程 PDF 附件（P1-6）</strong>：新增 <code>competition_docs</code> 表（一場一份）＋公開讀取／管理員上傳／管理員移除三個端點；卡片「📘 規程」按鈕（另開新視窗、可另存）、編輯表單可上傳／更換／移除；檔案把關＝<strong>看檔頭 <code>%PDF-</code></strong>（不看副檔名／MIME）＋上限 3MB（Vercel 4.5MB 請求上限與 base64 膨脹）；列表只帶中介資料不撈檔案內容。測試：單元 18 項＋真 Chrome 32 項（含假 PDF 被後端擋下、訪客位元組相同、大檔在畫面就被擋）＋正式站煙霧 4 項。</td></tr>
 <tr><td><strong>v3.2.1</strong></td><td><strong>版面空間優化</strong>：桌機卡片內容欄原本被右側按鈕區擠到只剩 84px（7%）、資訊一行一行直排、大螢幕主容器固定 1280px。修正：按鈕區限寬 <code>min(30rem, 44%)</code>、資訊列改自動欄數格狀、內容欄可壓縮、大螢幕容器放到 1560px。結果：桌機內容欄 84→660px、卡片高 612→219px；手機維持兩欄且 13 顆按鈕全可見。新增 <code>tests/browser/layout-check.js</code>（37 項，四種尺寸），並實測拿掉修正會亮紅。</td></tr>
@@ -191,7 +192,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>回歸測試</td><td>每次發版都重跑 v2.7.0～v2.13.0 的瀏覽器實測，確認舊功能未被破壞；另有「錯誤日誌巡檢」自動把線上真實錯誤轉成待修復清單並在分析後標記已處理。</td></tr>
 <tr><td>線上驗證</td><td>部署後比對線上與本地檔案雜湊、檢查 CSP 與安全標頭、檢查新端點的降級行為。</td></tr>
 <tr><td>手機尺寸實測</td><td>headless Chrome 以 390×844（iPhone 14）與 360×640（iPhone SE） 驗證：橫向溢出、觸控目標高度、彈窗是否超出視窗、輸入框字級、篩選列排版、深色模式。</td></tr>
-<tr><td>目前規模</td><td>npm test <strong>581 項通過 / 0 失敗</strong>（另有 1 項「摘要發送時間跨午夜」的情境在深夜執行時會明確略過並說明原因）；瀏覽器檢查 <strong>618 項全綠</strong>（<code>npm run check:browser</code>：提示橫幅 13＋兩步驟驗證 15＋稽核日誌介面 22＋錯誤日誌標記 13＋備份與還原 22＋賽事狀態機 30＋報名審核與候補 49＋候補順位與指定遞補 32＋候補再補強 30＋候補收尾 23＋賽事複製與週期性 34＋推播設定 44＋公告中心與推播重送 50＋場地與工作人員 40＋營運儀表板與列表縮圖 42＋成績與結果 38＋帳號管理 20＋名單與成績列印版 32＋版面空間 37＋賽事規程附件 32，皆為真實 Chrome 手機尺寸）；正式站 <code>npm run check:prod</code>＝HTTP 煙霧測試 <strong>95 項</strong>＋訪客視角檢查 <strong>8 項</strong>＋線上樣式檢查 <strong>15 項</strong>（含 414px 與 1920px 的真實版面量測）（真實 Chrome：賽事卡片是否真的渲染、前端例外、手機橫向溢出、版本字串）；v2.17.0 143 項、v2.16.0 130 項、v2.15.0 118 項、v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗。拆模組後另加<strong>路由清單守門測試</strong>（<code>tests/route-inventory.test.js</code>＋<code>tests/fixtures/route-inventory.json</code>：93 條路由＋7 層中間件的數量與順序快照，<code>node scripts/route-inventory.js --write</code> 才更新）。</td></tr>
+<tr><td>目前規模</td><td>npm test <strong>586 項（585 通過 / 0 失敗）</strong>（另有 1 項「摘要發送時間跨午夜」的情境在深夜執行時會明確略過並說明原因；v3.5.0 新增 <code>tests/auth-cookie-cors.test.js</code> 4 項釘住 cookie／CSRF／CORS 安全性質）；瀏覽器檢查 <strong>621 項全綠</strong>（<code>npm run check:browser</code>：提示橫幅 13＋兩步驟驗證 18（含 v3.5.0 新增「登入後 localStorage 與 document.cookie 都讀不到憑證」等 3 項）＋稽核日誌介面 22＋錯誤日誌標記 13＋備份與還原 22＋賽事狀態機 30＋報名審核與候補 49＋候補順位與指定遞補 32＋候補再補強 30＋候補收尾 23＋賽事複製與週期性 34＋推播設定 44＋公告中心與推播重送 50＋場地與工作人員 40＋營運儀表板與列表縮圖 42＋成績與結果 38＋帳號管理 20＋名單與成績列印版 32＋版面空間 37＋賽事規程附件 32，皆為真實 Chrome 手機尺寸）；正式站 <code>npm run check:prod</code>＝HTTP 煙霧測試 <strong>95 項</strong>＋訪客視角檢查 <strong>8 項</strong>＋線上樣式檢查 <strong>15 項</strong>（含 414px 與 1920px 的真實版面量測）（真實 Chrome：賽事卡片是否真的渲染、前端例外、手機橫向溢出、版本字串）；v2.17.0 143 項、v2.16.0 130 項、v2.15.0 118 項、v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗。拆模組後另加<strong>路由清單守門測試</strong>（<code>tests/route-inventory.test.js</code>＋<code>tests/fixtures/route-inventory.json</code>：93 條路由＋8 層中間件的數量與順序快照（v3.5.0 新增 <code>csrfCookieGuard</code> 一層，共 101 條），<code>node scripts/route-inventory.js --write</code> 才更新）。</td></tr>
 </table>
 <h2>六、已知限制（誠實說明）</h2>
 <ul><li>~~CRON_SECRET 尚未設定~~ <strong>已設定並驗證</strong>（2026-09-25 實測：未帶權杖回 401、不再是 503），每日自動推播已啟用（Vercel Cron 每日 01:00 UTC ＝ 澳門時間 09:00）。</li></ul>
@@ -241,9 +242,9 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>☑</td><td>稽核日誌介面強化</td><td>稽核紀錄已寫入但只能瀏覽，事後追查不方便</td><td><strong>v2.16.0 完成</strong>：使用者／動作／時間區間／關鍵字篩選、分頁（每頁 100 筆）、匯出 CSV（含公式注入防護與 BOM）、保留天數清理（最少 30 天、可先預覽、預設不自動刪；設 <code>AUDIT_RETENTION_DAYS</code> 才由每日排程順便清）</td><td>無</td><td>小</td></tr>
 <tr><td>✅</td><td>錯誤日誌主動告警</td><td>目前要主動打開後台才看到</td><td><strong>v2.14.0 完成</strong>：超級管理員以上登入即顯示提示橫幅（未處理錯誤數、近 24 小時新增、最新時間）、導覽選單顯示計數、可一鍵開啟日誌或「稍後再看」（有新錯誤才再提示）</td><td>無</td><td>小</td></tr>
 <tr><td>✅</td><td>錯誤日誌自動巡檢 → 自動產生待修復清單 → <strong>分析後自動標記已處理</strong></td><td>錯誤發生後要人工翻日誌才知道，也不會自動進入規劃；讀完沒有收尾，清單會一直累積舊訊息</td><td><strong>v2.14.0 完成</strong>讀取／分類／產生待修復清單並自動更新本文件第九節與 <code>docs/錯誤日誌分析.md</code>；<strong>v2.17.0 完成</strong>巡檢後自動標記已處理（批次端點、單次上限 500 筆、留稽核、可 <code>--no-resolve</code>）</td><td>無</td><td>小</td></tr>
-<tr><td>☐</td><td><strong>CORS 改為白名單（現在回 <code>Access-Control-Allow-Origin: *</code>）</strong></td><td><strong>2026-09-26 ZAP 被動掃描回報「跨域配置錯誤」（中風險，5 處）</strong>；根因是 <code>server.js:31</code> 的裸設定 <code>app.use(&#x27;/api&#x27;, cors())</code>。實測（帶 <code>Origin: https://evil.example</code> 打正式站）：<code>/api/competitions</code> 與 <code>/api/my/registrations</code> 都回 <code>ACAO: *</code></td><td>改成只允許自家來源（<code>SITE_URL</code>／可選 <code>ALLOWED_ORIGINS</code>；同源前端不需要 CORS header，所以沒有相容性風險），非白名單不回 ACAO；加守門測試（偽造 Origin 不回 <code>*</code>、自家不變）。<strong>影響判讀</strong>：我們用 <code>Authorization</code> 標頭而非 cookie，第三方沒有權杖 → 只能讀到本來就公開的資料，實際風險低，但屬明確的過寬設定</td><td>無</td><td>小</td></tr>
-<tr><td>☐</td><td>JWT 存放位置（localStorage vs httpOnly cookie）</td><td>ZAP 中風險：<code>auth_token</code> 存在 localStorage（XSS 一旦成立就能取走；本專案 CSP 為 <code>script-src &#x27;self&#x27;</code>、無 inline script，攻擊面小但非零）；目前權杖效期 12 小時</td><td>三個選項任選：(A) 接受並在文件記錄風險（成本 0）(B) <strong>縮短效期</strong>（例如 2 小時＋自動續期）(C) 改 httpOnly cookie ＋ CSRF token（最安全、改动最大：登入／登出／2FA／所有 fetch 都要調整）</td><td>你要選 A／B／C</td><td>小～中</td></tr>
-<tr><td>☐</td><td>ZAP 掃描報告的處置（含真實憑證）</td><td><strong>這份報告內含你的登入請求（明碼密碼）與一枚 <code>web_owner</code> 權杖（12 小時效期）＋ 2FA 完成後的權杖</strong></td><td><strong>不要提交進 repo、不要外傳</strong>；若檔案曾離開你的電腦：改密碼（永久有效）＋必要時換 <code>JWT_SECRET</code>（可讓所有既有權杖立即失效，代價是所有人重新登入）。另外下次掃描請把範圍限制在自家網域（本次含 <code>update.googleapis.com</code>，那是 Chrome 更新服務、不是我們的，掃第三方服務有授權問題）</td><td>你要不要換 JWT_SECRET</td><td>小</td></tr>
+<tr><td>☑</td><td><strong>CORS 改為白名單（現在回 <code>Access-Control-Allow-Origin: *</code>）</strong></td><td><strong>2026-09-26 ZAP 被動掃描回報「跨域配置錯誤」（中風險，5 處）</strong>；根因是 <code>server.js:31</code> 的裸設定 <code>app.use(&#x27;/api&#x27;, cors())</code>。實測（帶 <code>Origin: https://evil.example</code> 打正式站）：<code>/api/competitions</code> 與 <code>/api/my/registrations</code> 都回 <code>ACAO: *</code></td><td>改成只允許自家來源（<code>SITE_URL</code>／可選 <code>ALLOWED_ORIGINS</code>；同源前端不需要 CORS header，所以沒有相容性風險），非白名單不回 ACAO；加守門測試（偽造 Origin 不回 <code>*</code>、自家不變）。<strong>影響判讀</strong>：我們用 <code>Authorization</code> 標頭而非 cookie，第三方沒有權杖 → 只能讀到本來就公開的資料，實際風險低，但屬明確的過寬設定。<strong>v3.5.0 完成</strong>：改為只反射自家來源與 <code>CORS_ALLOWED_ORIGINS</code> 白名單（帶 <code>Allow-Credentials</code>），其餘來源完全沒有 ACAO 標頭；<code>tests/auth-cookie-cors.test.js</code> 守門（偽造 Origin 不回 ACAO、白名單與同源才反射）</td><td>無</td><td>小</td></tr>
+<tr><td>☑</td><td>JWT 存放位置（localStorage vs httpOnly cookie）</td><td>ZAP 中風險：<code>auth_token</code> 存在 localStorage（XSS 一旦成立就能取走；本專案 CSP 為 <code>script-src &#x27;self&#x27;</code>、無 inline script，攻擊面小但非零）；目前權杖效期 12 小時</td><td>三個選項任選：(A) 接受並在文件記錄風險（成本 0）(B) <strong>縮短效期</strong>（例如 2 小時＋自動續期）(C) 改 httpOnly cookie ＋ CSRF token（最安全、改動最大：登入／登出／2FA／所有 fetch 都要調整）。<strong>你 2026-09-26 選 C，v3.5.0 完成</strong>：<code>Set-Cookie: cm_token</code>（<code>HttpOnly</code>／<code>SameSite=Strict</code>／<code>Secure</code>／<code>Max-Age=43200</code>）、<strong>回應不再回傳 token</strong>、前端不再寫入 <code>localStorage</code>、<code>customFetch</code> 不再手動帶 Authorization、登入狀態改問 <code>GET /api/auth/me</code>；<code>Authorization: Bearer</code> 保留給腳本與 Cron（cookie 優先）；另加 <code>csrfCookieGuard</code> 中介層（帶 cookie 的寫入操作必須來自自家／白名單來源，否則 403）</td><td><strong>已決定：C（v3.5.0）</strong></td><td>小～中</td></tr>
+<tr><td>☑</td><td>ZAP 掃描報告的處置（含真實憑證）</td><td><strong>這份報告內含你的登入請求（明碼密碼）與一枚 <code>web_owner</code> 權杖（12 小時效期）＋ 2FA 完成後的權杖</strong></td><td><strong>不要提交進 repo、不要外傳</strong>；若檔案曾離開你的電腦：改密碼（永久有效）＋必要時換 <code>JWT_SECRET</code>（可讓所有既有權杖立即失效，代價是所有人重新登入）。另外下次掃描請把範圍限制在自家網域（本次含 <code>update.googleapis.com</code>，那是 Chrome 更新服務、不是我們的，掃第三方服務有授權問題）</td><td><strong>你 2026-09-26 決定：報告已自行刪除、<code>JWT_SECRET</code> 不換</strong>（那枚權杖到期即失效）；<code>.gitignore</code> 已加 ZAP 規則避免誤提交</td><td>已決定（不換）</td><td>小</td></tr>
 <tr><td>☑</td><td>資料備份與還原</td><td>誤刪賽事或報名資料目前無法回復</td><td><strong>v2.18.0 完成</strong>：<code>GET /api/admin/backup</code> 匯出全部核心表 JSON（含 meta、每表筆數、sha256 checksum）、介面「💾 備份與還原」可下載與還原、<code>npm run backup</code>／<code>npm run restore</code> 指令（本機保留最近 20 份、自動清理）、還原要先 dry-run 檢查並帶 confirm、採 upsert 且<strong>不刪除</strong>任何資料、未執行 migration 或缺表會誠實回報。<strong>未啟用自動排程</strong>（需要時可用 Hermes 排程＋上傳 Google Drive，見「建議下一步」）</td><td>無</td><td>中</td></tr>
 </table>
 <h3>8.3 P1 — 賽事與報名核心（系統價值的延伸）</h3>
@@ -326,14 +327,14 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <p><strong>建議順序（投資報酬率排序）</strong>：</p>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><th style="background:#f1f5f9;text-align:left">順序</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">為什麼排這裡</th><th style="background:#f1f5f9;text-align:left">工作量</th></tr>
-<tr><td>1</td><td><strong>CORS 改白名單</strong>（8.2）</td><td>ZAP 實測確認過寬；改動只有一行＋守門測試，卻是最明確的一個安全設定瑕疵——先清掉它</td><td>小</td></tr>
+<tr><td>1</td><td>~~<strong>CORS 改白名單</strong>（8.2）~~ <strong>✅ v3.5.0 完成</strong>（連同 JWT 改 HttpOnly cookie＋CSRF）</td><td>ZAP 實測確認過寬；改動只有一行＋守門測試，卻是最明確的一個安全設定瑕疵——先清掉它</td><td>小</td></tr>
 <tr><td>2</td><td>使用說明＋管理員操作清單（8.5）</td><td>0 筆報名的根因可能是「不知道怎麼用」；成本最低、對真實使用影響最大</td><td>小</td></tr>
 <tr><td>3</td><td>驗證流程不再製造假錯誤日誌（8.6）</td><td>讓提示橫幅與巡檢清單恢復可信——這是後續所有判斷的基礎</td><td>小</td></tr>
 <tr><td>4</td><td>錯誤日誌截圖上限與列表瘦身（8.6）</td><td>未登入可寫的端點卻沒有大小上限，是現存最明顯的資源風險</td><td>小</td></tr>
 <tr><td>5</td><td>補齊 8 條沒有測試的端點（8.6）</td><td>改密碼與永久刪除沒有測試，是不能出錯的地方</td><td>小～中</td></tr>
 <tr><td>6</td><td>現場報到〔第一階段＝勾選制〕＋管理員代報名（8.3）</td><td>實際辦一場就會用到；有了真實資料，後面的規劃才有依據</td><td>中</td></tr>
 <tr><td>7</td><td>賽事取消／延期＋卡片最新消息（8.3／8.4）</td><td>臨時變更的溝通不該依賴推播訂閱</td><td>小～中</td></tr>
-<tr><td>8</td><td>JWT 存放位置、QR 掃碼報到、P3 使用者體驗項目</td><td><strong>你已指示「其他排期後續更新」</strong>——依這份順序往後排</td><td>視選項</td></tr>
+<tr><td>8</td><td>~~JWT 存放位置~~ <strong>✅ v3.5.0 完成</strong>、QR 掃碼報到、P3 使用者體驗項目</td><td><strong>你已指示「其他排期後續更新」</strong>——依這份順序往後排</td><td>視選項</td></tr>
 </table>
 <blockquote><p>使用者 2026-09-26 指示：現場報到採 <strong>(C) 先做管理員勾選制</strong>，其餘項目<strong>排期後續更新</strong>。</p></blockquote>
 <p><strong>需要你決定的事</strong>（不影響我先做上面 1～4 項）：</p>
@@ -343,8 +344,8 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>是否先做「示範賽事＋測試報名」</td><td>讓流程被完整走過一次（可隨時刪除），或直接用真實報名活動試跑</td></tr>
 <tr><td>自助註冊要不要開放</td><td>目前靠管理員建立帳號；開放會改變對外性質（見 8.5）</td></tr>
 <tr><td>賽事取消的語意</td><td>只標「已取消」保留原時間，或同時支援「延期到新時間」並保留原訂時間</td></tr>
-<tr><td>JWT 存放位置（ZAP 中風險）</td><td>(A) 接受並記錄／(B) 縮短效期／(C) 改 httpOnly cookie＋CSRF（見 8.2）</td></tr>
-<tr><td>要不要換 <code>JWT_SECRET</code></td><td>讓 ZAP 報告裡那枚權杖立即失效（代價：所有人重新登入）</td></tr>
+<tr><td>~~JWT 存放位置（ZAP 中風險）~~</td><td><strong>已決定（2026-09-26）：(C) 改 httpOnly cookie＋CSRF，v3.5.0 已完成</strong></td></tr>
+<tr><td>~~要不要換 <code>JWT_SECRET</code>~~</td><td><strong>已決定：不換</strong>（報告已刪除，權杖到期即失效）</td></tr>
 </table>
 <h3>8.10 ZAP 掃描結果判讀（2026-09-26，使用者提供報告）</h3>
 <p>掃描設定：ZAP 2.17.0、<strong>被動掃描</strong>（passive，只觀察既有流量、沒有主動攻擊）、共 17 種警示、68 個實例；兩個「站台」被納入報告。</p>
@@ -358,13 +359,13 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><th style="background:#f1f5f9;text-align:left">警示</th><th style="background:#f1f5f9;text-align:left">風險</th><th style="background:#f1f5f9;text-align:left">判讀</th><th style="background:#f1f5f9;text-align:left">處置</th></tr>
 <tr><td>跨域配置錯誤（CORS）</td><td>中</td><td><strong>是真的</strong>：<code>app.use(&#x27;/api&#x27;, cors())</code> 讓所有 API 回應帶 <code>Access-Control-Allow-Origin: *</code>。因為我們用 <code>Authorization</code> 標頭而非 cookie，第三方拿不到權杖 → 只能讀本來就公開的資料（賽事、成績、公告），<strong>實際影響低，但屬明確過寬</strong></td><td>改白名單（同源前端不需要 CORS，所以無相容性風險）＋守門測試</td></tr>
-<tr><td>JWT 存在瀏覽器 localStorage</td><td>中</td><td><strong>設計取捨，不是漏洞</strong>：CSP 是 <code>script-src &#x27;self&#x27;</code>、沒有任何 inline script 或外部 CDN，XSS 面本身已很小；但 localStorage 的權杖不像 cookie 能靠 <code>HttpOnly</code> 保護</td><td>見 8.2 的三個選項（接受／縮短效期／改 cookie），<strong>需要你選</strong></td></tr>
+<tr><td>~~JWT 存在瀏覽器 localStorage~~</td><td>已修</td><td><strong>v3.5.0 已改為 HttpOnly cookie</strong>：回應不再回傳 token、前端不寫入 <code>localStorage</code>、<code>document.cookie</code> 也讀不到（瀏覽器檢查會驗這三點）</td><td>完成</td></tr>
 </table>
 <p><strong>已評估、判定為誤報或可接受（不處理，理由留檔）</strong>：</p>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><th style="background:#f1f5f9;text-align:left">警示</th><th style="background:#f1f5f9;text-align:left">數量</th><th style="background:#f1f5f9;text-align:left">為什麼不處理</th></tr>
 <tr><td>Information Disclosure - Suspicious Comments</td><td>8</td><td>命中我們的註解（例如 <code>// db = 由資料庫切片</code> 被 <code>\bDB\b</code> 命中）。內容是設計說明，<strong>不含任何憑證、路徑或帳號</strong>；註解是這個專案的文件來源，不打算為了掃描器而拿掉</td></tr>
-<tr><td>Information Disclosure - Information in Browser localStorage</td><td>4</td><td>是主題偏好等 UI 設定（<code>cm-theme</code>…），不含個資；唯一敏感的是權杖，已在上表處理</td></tr>
+<tr><td>Information Disclosure - Information in Browser localStorage</td><td>4</td><td>是主題偏好等 UI 設定（<code>cm-theme</code>…）與顯示用的 <code>competition_user</code>（帳號名稱／角色，不含憑證），不含個資；權杖已於 v3.5.0 移出 localStorage</td></tr>
 <tr><td>Re-examine Cache-control Directives／Retrieved from Cache</td><td>6／6</td><td>都是<strong>靜態檔</strong>（<code>/js/*.js</code>、<code>/css/*.css</code>）被 CDN 快取，本來就該快取；API 回應已一律 <code>Cache-Control: no-store</code>（實測確認）</td></tr>
 <tr><td>Strict-Transport-Security Header Not Set（低）</td><td>1</td><td><strong>不是我們的站台</strong>（<code>update.googleapis.com</code>）；我們的回應實測有 <code>Strict-Transport-Security: max-age=31536000; includeSubDomains</code></td></tr>
 <tr><td>Tech Detected（HSTS／HTTP/3／OpenGSE／PWA／Tailwind／Vercel）</td><td>7</td><td>技術指紋，不是問題</td></tr>
