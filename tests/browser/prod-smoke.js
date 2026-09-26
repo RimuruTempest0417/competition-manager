@@ -55,7 +55,7 @@ const get = (p, headers) => fetch(SITE + p, { headers });
 
     // ---------- 2. 靜態檔案與本地一致 ----------
     console.log('\n【2】靜態檔案與本地一致');
-    for (const rel of ['public/js/app.js', 'public/js/csv.js', 'public/js/notify.js', 'public/css/custom.css', 'public/sw.js', 'public/index.html']) {
+    for (const rel of ['public/js/app.js', 'public/js/csv.js', 'public/js/notify.js', 'public/js/paging.js', 'public/js/stats.js', 'public/css/custom.css', 'public/sw.js', 'public/index.html']) {
         const res = await get('/' + rel.replace(/^public\//, ''));
         const online = Buffer.from(await res.arrayBuffer());
         const local = fs.readFileSync(path.join(ROOT, rel));
@@ -182,6 +182,56 @@ const get = (p, headers) => fetch(SITE + p, { headers });
         });
         check(`未登入指派工作人員被拒（HTTP ${staffWrite.status}）`,
             [401, 403].includes(staffWrite.status), String(staffWrite.status));
+
+        // v3.0.0：營運儀表板、分頁與海報縮圖（全部唯讀）
+        const statsDenied = await get('/api/admin/stats');
+        check(`未登入讀營運統計被拒（HTTP ${statsDenied.status}）`, statsDenied.status === 401, String(statsDenied.status));
+        const stats = await get('/api/admin/stats?days=7', auth);
+        const statsBody = await stats.json().catch(() => ({}));
+        check(`網站擁有者可讀營運統計（HTTP ${stats.status}）`, stats.status === 200, JSON.stringify(statsBody).slice(0, 140));
+        check('統計含賽事／報名／使用者／錯誤／推播／效能六個區塊',
+            ['competitions', 'registrations', 'users', 'errors', 'push', 'perf'].every((k) => statsBody[k] && typeof statsBody[k] === 'object'),
+            Object.keys(statsBody).join(','));
+        check('趨勢長度等於要求的 7 天', Array.isArray(statsBody.registrations && statsBody.registrations.trend)
+            && statsBody.registrations.trend.length === 7, JSON.stringify((statsBody.registrations || {}).trend || []).slice(0, 80));
+        check('統計不含任何帳號名稱或個資',
+            !/password|email|totp_secret|"username"/i.test(JSON.stringify(statsBody)), JSON.stringify(statsBody).slice(0, 120));
+        check('統計附上查詢耗時（實測值）', typeof (statsBody.perf || {}).total_ms === 'number', String((statsBody.perf || {}).total_ms));
+        check('有列出隨 migration 建立的索引清單',
+            Array.isArray((statsBody.perf || {}).indexes) && statsBody.perf.indexes.length >= 5,
+            String(((statsBody.perf || {}).indexes || []).length));
+        const statsUserDenied = await get('/api/admin/stats', { Authorization: 'Bearer ' + jwt.sign({ sub: 4, username: 'nobody', role: 'user' }, secret, { expiresIn: '10m' }) });
+        check(`一般角色讀營運統計被拒（HTTP ${statsUserDenied.status}）`,
+            [401, 403].includes(statsUserDenied.status), String(statsUserDenied.status));
+
+        // 分頁：帶 limit 回物件、不帶 limit 維持陣列（既有整合不受影響）
+        const paged = await get('/api/competitions?limit=2');
+        const pagedBody = await paged.json().catch(() => null);
+        check('列表帶 limit 時回分頁物件（items／total／has_more）',
+            pagedBody && !Array.isArray(pagedBody) && Array.isArray(pagedBody.items) && typeof pagedBody.total === 'number'
+            && typeof pagedBody.has_more === 'boolean',
+            JSON.stringify(pagedBody).slice(0, 140));
+        check('單次上限有效（要求 2 筆不會拿到更多）',
+            pagedBody && pagedBody.items.length <= 2, String(pagedBody && pagedBody.items.length));
+        const huge = await (await get('/api/competitions?limit=99999')).json().catch(() => null);
+        check('要求超大筆數會被夾在上限內（<= 100）', huge && huge.items.length <= 100, String(huge && huge.items.length));
+        const plain = await (await get('/api/competitions')).json().catch(() => null);
+        check('不帶 limit 仍然回陣列（既有前端與整合不受影響）', Array.isArray(plain), typeof plain);
+
+        // 海報縮圖：有海報的賽事要能取得縮圖（沒有縮圖時會退回原圖並標示）
+        const withPoster = Array.isArray(plain) ? plain.find((c) => c.poster_updated_at) : null;
+        check('列表帶海報縮圖網址欄位（沒有海報者為 null）',
+            Array.isArray(plain) && plain.every((c) => c.poster_thumb_url === null || typeof c.poster_thumb_url === 'string'),
+            JSON.stringify((plain || [])[0] || {}).slice(0, 120));
+        if (withPoster) {
+            const thumbRes = await fetch(`${SITE}/api/competitions/${withPoster.id}/poster?variant=thumb`);
+            check(`海報縮圖端點可用（HTTP ${thumbRes.status}）`, thumbRes.status === 200, String(thumbRes.status));
+            check(`縮圖回應標示實際變體（${thumbRes.headers.get('x-poster-variant')}）`,
+                ['thumb', 'full-fallback'].includes(thumbRes.headers.get('x-poster-variant')),
+                String(thumbRes.headers.get('x-poster-variant')));
+        } else {
+            console.log('  ℹ️ 線上目前沒有自訂海報，跳過縮圖端點檢查');
+        }
 
         const wrongRoleToken = jwt.sign({ sub: 4, username: 'nobody', role: 'user' }, secret, { expiresIn: '10m' });
         const denied = await get('/api/admin/error-logs', { Authorization: `Bearer ${wrongRoleToken}` });

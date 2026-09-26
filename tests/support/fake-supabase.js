@@ -4,7 +4,10 @@
    支援：
    - GET/POST/PATCH/DELETE /rest/v1/<table>
    - 查詢參數 eq.<值>／lt.／gt.／is.*／in.(a,b,c) 過濾、order=<col>.asc|desc、select 中的欄位缺失模擬（42703）
-  - 注意：**不支援 limit／offset 切片、不回 count 標頭、刪除要 .select() 才會回傳被刪的列**
+  - limit／offset 切片（PostgREST 的 limit=／offset= 查詢參數；offset 單獨出現＝從該筆取到最後）
+  - count：請求帶 Prefer: count=exact 時回 Content-Range: <起>-<迄>/<總數>（supabase-js 會解析成 data.count）
+    總數是「過濾後、切片前」的筆數，與真實 PostgREST 一致。
+  - 注意：**刪除要 .select() 才會回傳被刪的列**
    - maybeSingle()（Accept: application/vnd.pgrst.object+json）→ 0 筆回 406
    - select('*, competitions(...)') 的外鍵展開（僅 registrations → competitions）
    - 資料表缺失模擬（42P01）
@@ -136,10 +139,27 @@ function startFakeSupabase(state, options = {}) {
                         });
                     }
 
-                    if (wantsObject) {
-                        return result.length ? send(200, result[0]) : send(406, { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' });
+                    // v3.0.0：limit／offset 切片（先算總數，再切——與 PostgREST 一致）
+                    const grandTotal = result.length;
+                    const limitRaw = params.get('limit');
+                    const offsetRaw = params.get('offset');
+                    const limitNum = limitRaw === null ? null : Math.max(0, parseInt(limitRaw, 10) || 0);
+                    const offsetNum = offsetRaw === null ? 0 : Math.max(0, parseInt(offsetRaw, 10) || 0);
+                    const start = offsetNum;
+                    const end = limitNum === null ? result.length : offsetNum + limitNum;
+                    const page = result.slice(start, end);
+
+                    const extraHeaders = {};
+                    if (/count=exact/.test(prefers)) {
+                        // PostgREST：0-9/100；空集合是 */100
+                        const last = page.length ? start + page.length - 1 : null;
+                        extraHeaders['Content-Range'] = `${page.length ? `${start}-${last}` : '*'}/${grandTotal}`;
                     }
-                    return send(200, result);
+
+                    if (wantsObject) {
+                        return page.length ? send(200, page[0], extraHeaders) : send(406, { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' });
+                    }
+                    return send(200, page, extraHeaders);
                 }
 
                 if (req.method === 'POST') {

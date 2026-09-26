@@ -346,6 +346,8 @@ const CMCompetitionState = require('./public/js/competition-state');
 const CMAnnouncements = require('./public/js/announcements');   // v2.26.0：公告可見性的唯一真實來源
 const CMVenue = require('./public/js/venue');                    // v2.27.0：地圖連結規則的唯一真實來源
 const CMStaff = require('./public/js/staff');                    // v2.27.0：工作人員角色規則的唯一真實來源
+const CMPaging = require('./public/js/paging');                  // v3.0.0：分頁規則的唯一真實來源（前後端共用）
+const CMStats = require('./public/js/stats');                    // v3.0.0：營運統計與圖表幾何的唯一真實來源
 const COMPETITION_STATE_LABELS = CMCompetitionState.LABELS;
 const COMPETITION_STATE_TONES = CMCompetitionState.TONES;
 const competitionTimeline = CMCompetitionState.timeline;
@@ -612,6 +614,26 @@ async function columnExists(table, column) {
         return false;
     }
     return false; // 暫時性錯誤不快取，下次再試
+}
+
+/* v3.0.0：資料表是否存在（儀表板的選用區塊用，例如 competition_staff）。
+   沿用同一套快取規則：正結果長快取、負結果 60 秒，migration 跑完不必等實例回收。 */
+const tablePresence = new Map();
+async function tableExists(table) {
+    const cached = tablePresence.get(table);
+    if (cached === true) return true;
+    if (cached && Date.now() - cached.at < COLUMN_NEGATIVE_TTL_MS) return false;
+    if (!hasSupabaseConfig) return false;
+    const { error } = await supabase.from(table).select('id').limit(1);
+    if (!error) {
+        tablePresence.set(table, true);
+        return true;
+    }
+    if (isMissingTableError(error)) {
+        tablePresence.set(table, { at: Date.now() });
+        return false;
+    }
+    return false;
 }
 
 /* v2.27.0：資料表／欄位探測的一致性快取。
@@ -2986,6 +3008,253 @@ app.post('/api/admin/users/:id/reset-2fa', requireAdmin, async (req, res) => {
 });
 
 // ==========================================
+// 營運儀表板 API（v3.0.0，管理員以上）
+// ==========================================
+// 設計取捨：
+//   - 只回「聚合後的數字」：沒有任何帳號、email 或單筆報名內容（一般使用者一律 403）。
+//   - 每個區塊各自 try／catch：某張表還沒建（例如 migration 還沒跑）只標記 unavailable，
+//     不讓一個區塊壞掉就整個儀表板 500。
+//   - 結果快取 60 秒（?fresh=1 可強制重算）：管理員在畫面上按來按去不必每次全表掃描。
+//   - timings 是量出來的秒數，直接回給前端顯示（不是宣稱的效能）。
+const OPS_STATS_TTL_MS = 60 * 1000;
+const OPS_STATS_TREND_DAYS = 14;
+const OPS_STATS_MAX_TREND_DAYS = 30;
+let opsStatsCache = { at: 0, days: 0, payload: null };
+
+// v3.0.0 隨 migration 建立的索引（PostgREST 沒有查詢 pg_indexes 的介面，
+// 所以這裡列出「已隨 migration 宣告」的清單，畫面上據實標示來源）。
+const OPS_INDEXES = [
+    { table: 'registrations', name: 'registrations_competition_active_idx', reason: '列表／名單以賽事查報名（只含未刪除）' },
+    { table: 'registrations', name: 'registrations_user_idx', reason: '「我的賽事」與單一使用者查詢' },
+    { table: 'registrations', name: 'registrations_status_idx', reason: '依狀態統計與篩選（含候補）' },
+    { table: 'competitions', name: 'competitions_created_idx', reason: '賽事列表與趨勢統計的時間排序' },
+    { table: 'error_logs', name: 'error_logs_created_idx', reason: '錯誤趨勢與巡檢時間窗' },
+    { table: 'audit_logs', name: 'audit_logs_action_target_idx', reason: '依動作與對象查稽核（匯出與追蹤）' },
+    { table: 'push_log', name: 'push_log_created_idx', reason: '推播紀錄的時間排序' }
+];
+
+app.get('/api/admin/stats', requireAdmin, async (req, res) => {
+    const days = CMPaging.clampInt(req.query.days, 7, OPS_STATS_MAX_TREND_DAYS, OPS_STATS_TREND_DAYS);
+    const fresh = String(req.query.fresh || '') === '1';
+    const now = Date.now();
+
+    if (!fresh && opsStatsCache.payload && opsStatsCache.days === days && (now - opsStatsCache.at) < OPS_STATS_TTL_MS) {
+        return res.json(Object.assign({}, opsStatsCache.payload, { cached: true, cache_age_ms: now - opsStatsCache.at }));
+    }
+
+    const timings = {};
+    const unavailable = [];
+    // 小工具：量測每個區塊的耗時，並把失敗原因記下來（不讓單一區塊炸掉整個回應）
+    const block = async (name, fn) => {
+        const t0 = Date.now();
+        try {
+            return await fn();
+        } catch (err) {
+            unavailable.push({ section: name, reason: isMissingTableError(err) ? '資料表尚未建立（migration 未執行）' : (err.message || '查詢失敗') });
+            return null;
+        } finally {
+            timings[name] = Date.now() - t0;
+        }
+    };
+
+    const hasSeverity = await columnExists('error_logs', 'severity');
+    const hasResolved = await columnExists('error_logs', 'resolved');
+    const hasLastLogin = await columnExists('admin_users', 'last_login_at');
+    const hasPosterThumb = await columnExists('competition_posters', 'thumb_bytes');
+    const hasStaff = await tableExists('competition_staff');
+    // 選用資料表不存在（migration 還沒跑）時明確列出來，
+    // 讓儀表板能說明「哪個區塊沒有、為什麼」，而不是靜靜少一個數字。
+    if (!hasStaff) {
+        unavailable.push({ section: 'competition_staff', reason: '資料表尚未建立（migration 未執行）' });
+    }
+    const since30 = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // ── 賽事 ──
+    const comps = await block('competitions', async () => {
+        const { data, error } = await supabase.from('competitions')
+            .select('*')   // 賽事數量少但要推導狀態，直接取全部欄位（欄位缺失時不會讓整個查詢 400）
+            .or('is_deleted.is.null,is_deleted.eq.false');
+        if (error) throw error;
+        return data || [];
+    }) || [];
+
+    // ── 報名（狀態與趨勢）──
+    const reviewReady = await registrationReviewSchemaReady();
+    const regs = await block('registrations', async () => {
+        const { data, error } = await supabase.from('registrations')
+            .select(reviewReady ? 'competition_id,user_id,status,created_at' : 'competition_id,user_id,created_at')
+            .eq('is_deleted', false);
+        if (error) throw error;
+        return data || [];
+    }) || [];
+
+    // ── 使用者（只有角色與時間，不含帳號以外的個資）──
+    const users = await block('users', async () => {
+        const cols = ['role', 'is_active', 'created_at'];
+        if (hasLastLogin) cols.push('last_login_at');
+        const { data, error } = await supabase.from('admin_users').select(cols.join(','));
+        if (error) throw error;
+        return data || [];
+    }) || [];
+
+    // ── 錯誤日誌（近 30 天，趨勢與類別）──
+    const errorRows = await block('errors', async () => {
+        const cols = ['error_type', 'created_at', 'path'];
+        if (hasSeverity) cols.push('severity');
+        if (hasResolved) cols.push('resolved');
+        let q = supabase.from('error_logs').select(cols.join(',')).gt('created_at', since30);
+        if (hasResolved) q = q.eq('resolved', false);
+        const { data, error } = await q.order('created_at', { ascending: false }).limit(2000);
+        if (error) throw error;
+        return data || [];
+    }) || [];
+
+    // ── 推播紀錄 ──
+    const pushRows = await block('push', async () => {
+        const { data, error } = await supabase.from('push_log')
+            .select('sent_count,failed_count,created_at')
+            .order('created_at', { ascending: false }).limit(1000);
+        if (error) throw error;
+        return data || [];
+    }) || [];
+
+    // ── 海報與縮圖（縮圖省下多少流量＝最直接的效能數字）──
+    const posterCols = hasPosterThumb ? 'bytes,thumb_bytes' : 'bytes';
+    const posters = await block('posters', async () => {
+        const { data, error } = await supabase.from('competition_posters').select(posterCols);
+        if (error) throw error;
+        return data || [];
+    }) || [];
+
+    const staffCount = hasStaff ? (await block('staff', async () => {
+        const { data, error } = await supabase.from('competition_staff').select('id');
+        if (error) throw error;
+        return data || [];
+    })) : null;
+
+    // ── 聚合：賽事 ──
+    const regCounts = {};
+    const waitlistCounts = {};
+    regs.forEach((r) => {
+        const key = String(r.competition_id);
+        const status = CMCompetitionState.normalizeRegStatus(r.status);
+        if (status === 'waitlisted') { waitlistCounts[key] = (waitlistCounts[key] || 0) + 1; return; }
+        regCounts[key] = (regCounts[key] || 0) + 1;
+    });
+
+    const stateNow = new Date(now);
+    const stateCounts = {};
+    comps.forEach((c) => {
+        const st = competitionState(c, stateNow, {
+            registeredCount: regCounts[String(c.id)] || 0,
+            waitlistCount: waitlistCounts[String(c.id)] || 0
+        });
+        stateCounts[st.state] = (stateCounts[st.state] || 0) + 1;
+    });
+
+    const categoryTop = CMStats.topN(CMStats.countBy(comps, (c) => c.category || 'other'), 6).map((row) => {
+        const def = COMPETITION_CATEGORIES.find((x) => x.id === row.key);
+        return { key: row.key, label: (def && (def.label || def.name)) || row.key, count: row.count };
+    });
+
+    // ── 聚合：報名 ──
+    const regByStatus = CMStats.countBy(regs, (r) => CMCompetitionState.normalizeRegStatus(r.status));
+    const regTrend = CMStats.trendByDay(regs, { days, now: stateNow });
+
+    // ── 聚合：使用者 ──
+    const activeUsers = users.filter((u) => u.is_active !== false);
+    const activeLast30 = hasLastLogin
+        ? activeUsers.filter((u) => u.last_login_at && new Date(u.last_login_at).getTime() >= now - 30 * 24 * 60 * 60 * 1000).length
+        : null;
+
+    // ── 聚合：錯誤 ──
+    const errorTrend = CMStats.trendByDay(errorRows, { days, now: stateNow });
+    const errorBySeverity = CMStats.countBy(errorRows, (r) => (hasSeverity ? (r.severity || 'error') : 'error'));
+    const errorTopTypes = CMStats.topN(CMStats.countBy(errorRows, (r) => r.error_type || 'unknown'), 5);
+
+    // ── 聚合：推播 ──
+    const sent = CMStats.sum(pushRows, (r) => r.sent_count);
+    const failed = CMStats.sum(pushRows, (r) => r.failed_count);
+    const pushTotal = sent + failed;
+
+    // ── 聚合：海報縮圖省下的量 ──
+    const posterBytes = CMStats.sum(posters, (r) => r.bytes);
+    const thumbBytes = CMStats.sum(posters, (r) => (hasPosterThumb ? r.thumb_bytes : 0));
+    const thumbCount = posters.filter((r) => hasPosterThumb && CMStats.sum([r], (x) => x.thumb_bytes) > 0).length;
+
+    const payload = {
+        success: true,
+        generated_at: new Date(now).toISOString(),
+        cached: false,
+        trend_days: days,
+        unavailable_sections: unavailable,
+        competitions: {
+            total: comps.length,
+            by_state: stateCounts,
+            by_category: categoryTop,
+            by_category_other: Math.max(0, comps.length - CMStats.sum(categoryTop, (c) => c.count)),
+            created_trend: CMStats.trendByDay(comps, { days, now: stateNow })
+        },
+        registrations: {
+            total: regs.length,
+            by_status: regByStatus,
+            confirmed: regByStatus.confirmed || 0,
+            pending: regByStatus.pending || 0,
+            waitlisted: regByStatus.waitlisted || 0,
+            trend: regTrend,
+            last7d: regTrend.slice(-7).reduce((a, d) => a + d.count, 0)
+        },
+        users: {
+            total: users.length,
+            active: activeUsers.length,
+            inactive: users.length - activeUsers.length,
+            by_role: CMStats.countBy(users, (u) => u.role || 'user'),
+            active_last_30d: activeLast30,
+            last_login_available: hasLastLogin
+        },
+        errors: {
+            open_recent_30d: errorRows.length,
+            by_severity: errorBySeverity,
+            top_types: errorTopTypes,
+            trend: errorTrend,
+            severity_available: hasSeverity
+        },
+        push: {
+            notifications: pushRows.length,
+            sent,
+            failed,
+            success_rate: CMStats.percent(sent, pushTotal),
+            success_tone: CMStats.rateTone(CMStats.percent(sent, pushTotal))
+        },
+        perf: {
+            posters: {
+                count: posters.length,
+                total_bytes: posterBytes,
+                total_label: CMStats.formatBytes(posterBytes),
+                thumb_count: thumbCount,
+                thumb_bytes: thumbBytes,
+                thumb_label: CMStats.formatBytes(thumbBytes),
+                thumb_saved: Math.max(0, posterBytes - thumbBytes),
+                thumb_saved_label: CMStats.formatBytes(Math.max(0, posterBytes - thumbBytes)),
+                thumb_available: hasPosterThumb
+            },
+            staff_count: staffCount === null ? null : staffCount.length,
+            paging: {
+                competitions_max: COMPETITIONS_PAGE_MAX,
+                registrations_max: REGISTRATIONS_PAGE_MAX,
+                default_max: CMPaging.DEFAULT_MAX
+            },
+            indexes: OPS_INDEXES,
+            timings,
+            total_ms: Date.now() - now
+        }
+    };
+
+    opsStatsCache = { at: now, days, payload };
+    res.json(payload);
+});
+
+// ==========================================
 // 前端共用設定 API
 // ==========================================
 // 分類清單定義在後端（server.js），前端一律由此取得，避免兩邊各寫一份而不同步。
@@ -3005,14 +3274,31 @@ app.get('/api/meta', (req, res) => {
 // 取得比賽列表 (透過 audit_logs 計算發佈者資訊)
 app.get('/api/competitions', async (req, res) => {
     try {
-        const { data: competitions, error: compErr } = await supabase
+        // v3.0.0：分頁是 opt-in（沒帶 limit 就維持原本「一次回全部」）。
+        // ?state= 是「即時推導」的狀態，資料庫無法過濾 → 有 state 篩選時只能在記憶體切片，
+        // 回應會用 paged_by 標示是 db 還是 memory，讓呼叫端知道這個差別。
+        const paging = CMPaging.parsePaging(req.query, { max: COMPETITIONS_PAGE_MAX });
+        const wanted = String(req.query.state || '').split(',').map(s => s.trim()).filter(Boolean);
+        const pageInDb = paging.paged && wanted.length === 0;
+
+        let compQuery = supabase
             .from('competitions')
-            .select('*')
+            .select('*', pageInDb ? { count: 'exact' } : {})
             .or('is_deleted.is.null,is_deleted.eq.false')
             .order('id', { ascending: false });
+        if (pageInDb) compQuery = compQuery.range(paging.offset, paging.offset + paging.limit - 1);
+
+        const { data: competitions, error: compErr, count: compTotal } = await compQuery;
 
         if (compErr) throw compErr;
-        if (!competitions || competitions.length === 0) return res.json([]);
+        if (!competitions || competitions.length === 0) {
+            if (!paging.paged) return res.json([]);
+            return res.json(CMPaging.pagedResponse([], {
+                limit: paging.limit, offset: paging.offset,
+                total: (typeof compTotal === 'number' ? compTotal : 0),
+                pagedBy: pageInDb ? 'db' : 'memory'
+            }));
+        }
 
         const compIds = competitions.map(c => String(c.id));
 
@@ -3049,10 +3335,14 @@ app.get('/api/competitions', async (req, res) => {
         // 人數上限需要實際報名數 → 一次查回來自己累加（與 /api/registration-counts 同一套規則）。
         // v2.20.0：「佔名額」＝已核准＋待審核（候補不算），所以這裡要一起讀 status
         const reviewReady = await registrationReviewSchemaReady();
-        const { data: activeRegs } = await supabase
+        // v3.0.0：分頁時只撈「這一頁賽事」的報名（原本會把整張 registrations 掃回來），
+        // 這是列表端點最貴的一步，成本因此從 O(全部報名) 變成 O(本頁賽事)。
+        let regQuery = supabase
             .from('registrations')
             .select(reviewReady ? 'competition_id,status' : 'competition_id')
             .eq('is_deleted', false);
+        if (pageInDb) regQuery = regQuery.in('competition_id', compIds);
+        const { data: activeRegs } = await regQuery;
 
         const regCounts = {};
         const waitlistCounts = {};
@@ -3078,6 +3368,10 @@ app.get('/api/competitions', async (req, res) => {
                 // v2.27.0：地圖連結（自訂優先；沒填就用地址自動產生，所以舊賽事也馬上有地圖可按）
                 map_url: CMVenue.mapUrlFor(c),
                 map_url_custom: CMVenue.normalizeMapUrl(c.map_url) || '',
+                // v3.0.0：列表用縮圖（沒有縮圖時前端會自動退回原圖，舊海報不用回填）
+                poster_thumb_url: c.poster_updated_at
+                    ? `/api/competitions/${c.id}/poster?variant=thumb&v=${Date.parse(c.poster_updated_at) || 0}`
+                    : null,
                 map_url_auto: CMVenue.isAutoMapUrl(c),
                 publisher_name: pubName,
                 publisher_role: pubName ? (userRoleMap[pubName] || 'admin') : null,
@@ -3096,10 +3390,17 @@ app.get('/api/competitions', async (req, res) => {
         });
 
         // ?state=registration_open,ongoing 只回這些狀態（前端分頁籤與外部整合都用這個）
-        const wanted = String(req.query.state || '').split(',').map(s => s.trim()).filter(Boolean);
-        const result = wanted.length ? withState.filter(c => wanted.includes(c.state)) : withState;
+        const filtered = wanted.length ? withState.filter(c => wanted.includes(c.state)) : withState;
 
-        res.json(result);
+        if (!paging.paged) return res.json(filtered);
+
+        // pageInDb 時資料庫已經切好這一頁（filtered 就是本頁），不能再切一次
+        const sliced = pageInDb ? filtered : CMPaging.pageSlice(filtered, paging);
+        const total = pageInDb ? (typeof compTotal === 'number' ? compTotal : filtered.length) : filtered.length;
+        res.json(CMPaging.pagedResponse(sliced, {
+            limit: paging.limit, offset: paging.offset, total,
+            pagedBy: pageInDb ? 'db' : 'memory'
+        }));
     } catch (err) {
         await logErrorToDb(req, 'get_competitions_error', err);
         res.status(500).json({ error: err.message });
@@ -4628,25 +4929,51 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
         const isAdmin = ADMIN_ROLES.has(req.user.role);
         const baseCols = 'id,competition_id,user_id,username,team_id,team_name,note,status,created_at';
 
-        const { data, error } = await supabase
+        // v3.0.0：分頁（opt-in，沒帶 limit 就維持原本行為）。
+        // 有 ?status= 時，狀態是「正規化之後」才比對（舊資料可能不合標準值），資料庫層無法可靠過濾，
+        // 所以那種情況改用記憶體切片，並用 page.paged_by 標示（讓呼叫端知道差別）。
+        const paging = CMPaging.parsePaging(req.query, { max: REGISTRATIONS_PAGE_MAX });
+        const wantedStatus = String(req.query.status || '').split(',').map((s) => s.trim()).filter(Boolean);
+        const pageInDb = paging.paged && isAdmin && wantedStatus.length === 0;
+
+        let regQuery = supabase
             .from('registrations')
             .select(reviewReady ? `${baseCols},reviewed_at,reviewed_by,review_note${orderReady ? ',waitlist_order' : ''}` : baseCols)
             .eq('competition_id', competitionId)
             .eq('is_deleted', false)
             .order('id', { ascending: true });
+        if (pageInDb) regQuery = regQuery.range(paging.offset, paging.offset + paging.limit - 1);
+
+        const { data, error } = await regQuery;
         if (error) throw error;
 
-        let rows = data || [];
-        if (!isAdmin) rows = rows.filter((r) => String(r.user_id) === String(req.user.sub));
-
-        rows = rows.map((r) => Object.assign({}, r, {
+        const withLabels = (list) => list.map((r) => Object.assign({}, r, {
             status: CMCompetitionState.normalizeRegStatus(r.status),
             status_label: CMCompetitionState.REG_STATUS_LABELS[CMCompetitionState.normalizeRegStatus(r.status)]
         }));
 
+        let rows = data || [];
+        if (!isAdmin) rows = rows.filter((r) => String(r.user_id) === String(req.user.sub));
+        rows = withLabels(rows);
+
+        // 候補順位與各狀態統計都需要「整場名單」。分頁時另外用輕量查詢取回
+        // （只選計算需要的欄位，不把整份名單的內容撈回來）。
+        let roster = rows;
+        let queueIds = null;
+        if (paging.paged && isAdmin) {
+            const { data: rosterRows } = await supabase
+                .from('registrations')
+                .select(orderReady ? 'id,created_at,status,waitlist_order' : 'id,created_at,status')
+                .eq('competition_id', competitionId)
+                .eq('is_deleted', false)
+                .order('id', { ascending: true });
+            roster = withLabels(rosterRows || []);
+        }
+
         // 候補順位（先報名先排；只有管理員需要看到整份名單的順位）
         if (isAdmin) {
-            const queue = CMCompetitionState.waitlistQueue(rows);
+            const queue = CMCompetitionState.waitlistQueue(roster);
+            queueIds = queue.map((r) => r.id);
             const position = {};
             queue.forEach((r, i) => { position[String(r.id)] = i + 1; });
             rows = rows.map((r) => Object.assign({}, r, {
@@ -4654,16 +4981,32 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
             }));
         }
 
-        const counts = CMCompetitionState.countByStatus(rows);
-        const wanted = String(req.query.status || '').split(',').map((s) => s.trim()).filter(Boolean);
-        const result = wanted.length ? rows.filter((r) => wanted.includes(r.status)) : rows;
+        const counts = CMCompetitionState.countByStatus(roster);
 
+        if (!paging.paged) {
+            const result = wantedStatus.length ? rows.filter((r) => wantedStatus.includes(r.status)) : rows;
+            return res.json({
+                registrations: result,
+                total: result.length,
+                counts,
+                waitlist_queue: isAdmin ? queueIds : undefined,
+                schema_ready: reviewReady
+            });
+        }
+
+        // 分頁：total 是「符合篩選條件的全部筆數」，registrations 只回這一頁
+        const fullList = wantedStatus.length ? roster.filter((r) => wantedStatus.includes(r.status)) : roster;
+        const sliced = pageInDb ? rows : CMPaging.pageSlice(fullList, paging);
         res.json({
-            registrations: result,
-            total: result.length,
+            registrations: sliced,
+            total: fullList.length,
             counts,
-            waitlist_queue: isAdmin ? CMCompetitionState.waitlistQueue(rows).map((r) => r.id) : undefined,
-            schema_ready: reviewReady
+            waitlist_queue: isAdmin ? queueIds : undefined,
+            schema_ready: reviewReady,
+            page: CMPaging.pagedResponse(sliced, {
+                limit: paging.limit, offset: paging.offset, total: fullList.length,
+                pagedBy: pageInDb ? 'db' : 'memory'
+            })
         });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
@@ -4922,6 +5265,11 @@ app.delete('/api/teams/:id/members/:registrationId', requireSuperAdmin, async (r
 // ==========================================
 // v2.10.0：賽事海報（手動上傳，取代自動生成）與 Web Push 推播訂閱
 // ==========================================
+// v3.0.0：列表單次上限（存在＝避免一次要求太多筆把資料庫打爆；預設請求不切片）
+const POSTER_THUMB_MAX_BYTES = 250 * 1024;   // 縮圖上限（前端產生的通常 20–60KB）
+const COMPETITIONS_PAGE_MAX = 100;
+const REGISTRATIONS_PAGE_MAX = 200;
+
 const POSTER_MAX_BYTES = 3 * 1024 * 1024;             // 3MB（前端會先縮圖，通常僅數百 KB）
 const POSTER_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const POSTER_HINT = '資料庫尚未加入海報欄位，請先在 Supabase SQL Editor 執行 migrations/2026-09-24-v2.10.0-poster-and-push.sql';
@@ -5260,25 +5608,51 @@ app.post('/api/competitions/:id/poster', requireAdmin, async (req, res) => {
         const comp = await fetchCompetition(req.params.id);
         if (!comp) return res.status(404).json({ error: '找不到該賽事' });
 
+        // v3.0.0：縮圖（可選）。前端上傳時用 canvas 產生，列表與預覽改載縮圖；
+        // 讀不到 thumb_* 欄位（尚未跑 migration）就照舊只存原圖，功能不受影響。
+        const thumbParsed = parseImageDataUrl(req.body && req.body.thumbDataUrl);
+        // 不論這次有沒有帶縮圖都要知道欄位在不在：沒帶的時候要能「清掉舊縮圖」，
+        // 否則換了海報會留著上一張的縮圖（列表就會顯示錯的圖）。
+        const thumbReady = await columnExists('competition_posters', 'thumb_data');
+        const thumbTooBig = !!(thumbParsed && thumbParsed.buffer.length > POSTER_THUMB_MAX_BYTES);
+        const useThumb = !!(thumbParsed && thumbReady && !thumbTooBig);
+
         const now = new Date().toISOString();
-        const { error: upErr } = await supabase.from('competition_posters').upsert([{
+        const posterRow = {
             competition_id: comp.id,
             mime: parsed.mime,
             bytes: parsed.buffer.length,
             data: parsed.buffer.toString('base64'),
             uploaded_by: req.currentUser ? req.currentUser.username : null,
             updated_at: now
-        }], { onConflict: 'competition_id' });
+        };
+        if (useThumb) {
+            posterRow.thumb_mime = thumbParsed.mime;
+            posterRow.thumb_bytes = thumbParsed.buffer.length;
+            posterRow.thumb_data = thumbParsed.buffer.toString('base64');
+        } else if (thumbReady) {
+            // 這次沒帶縮圖（或超過上限）→ 明確清掉舊縮圖，避免「新海報配舊縮圖」
+            posterRow.thumb_mime = null;
+            posterRow.thumb_bytes = null;
+            posterRow.thumb_data = null;
+        }
+
+        const { error: upErr } = await supabase.from('competition_posters').upsert([posterRow], { onConflict: 'competition_id' });
         if (upErr) throw upErr;
 
         const { error: colErr } = await supabase.from('competitions').update({ poster_updated_at: now }).eq('id', comp.id);
         if (colErr) throw colErr;
 
-        await logAudit(req.user.username, 'UPLOAD_POSTER', comp.id, `上傳自訂海報（${Math.round(parsed.buffer.length / 1024)}KB）`, req.userAgent);
+        await logAudit(req.user.username, 'UPLOAD_POSTER', comp.id,
+            `上傳自訂海報（${Math.round(parsed.buffer.length / 1024)}KB${useThumb ? `，縮圖 ${Math.round(thumbParsed.buffer.length / 1024)}KB` : ''}）`, req.userAgent);
         res.json({
             message: '海報已更新，分享與卡片都會改用手動上傳的海報',
             posterUrl: `/api/competitions/${comp.id}/poster?v=${Date.parse(now)}`,
-            bytes: parsed.buffer.length
+            thumbUrl: useThumb ? `/api/competitions/${comp.id}/poster?variant=thumb&v=${Date.parse(now)}` : null,
+            bytes: parsed.buffer.length,
+            thumb_bytes: useThumb ? thumbParsed.buffer.length : null,
+            thumb_saved: useThumb ? (parsed.buffer.length - thumbParsed.buffer.length) : null,
+            thumb_note: (thumbParsed && thumbTooBig) ? `縮圖超過 ${Math.round(POSTER_THUMB_MAX_BYTES / 1024)}KB，已改存原圖` : null
         });
     } catch (err) {
         if (isMissingTableError(err) || isMissingColumnError(err, ['poster_updated_at'])) {
@@ -5314,13 +5688,32 @@ app.delete('/api/competitions/:id/poster', requireAdmin, async (req, res) => {
 // 取得海報（公開）：同源提供，維持 CSP img-src 'self'，完全不需外部網域
 app.get('/api/competitions/:id/poster', async (req, res) => {
     try {
+        // v3.0.0：?variant=thumb 只回縮圖。沒有縮圖（舊海報，或還沒跑 migration）就退回原圖，
+        // 呼叫端不必自己判斷有沒有縮圖（回應會用 X-Poster-Variant 標示實際回的是哪一種）。
+        const wantsThumb = String(req.query.variant || '') === 'thumb';
+        const thumbColsReady = wantsThumb ? await columnExists('competition_posters', 'thumb_data') : false;
+
         const { data, error } = await supabase
             .from('competition_posters')
-            .select('mime,data')
+            .select(thumbColsReady ? 'mime,data,thumb_mime,thumb_data' : 'mime,data')
             .eq('competition_id', req.params.id)
             .maybeSingle();
         if (error) throw error;
         if (!data || !data.data) return res.status(404).json({ error: '此賽事沒有自訂海報' });
+
+        if (wantsThumb) {
+            const thumbBase64 = thumbColsReady ? data.thumb_data : null;
+            if (thumbBase64) {
+                const thumbBuffer = Buffer.from(thumbBase64, 'base64');
+                res.set('Content-Type', data.thumb_mime || 'image/jpeg');
+                res.set('Content-Length', String(thumbBuffer.length));
+                res.set('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+                res.set('X-Content-Type-Options', 'nosniff');
+                res.set('X-Poster-Variant', 'thumb');
+                return res.send(thumbBuffer);
+            }
+            res.set('X-Poster-Variant', 'full-fallback');
+        }
 
         const buffer = Buffer.from(data.data, 'base64');
         res.set('Content-Type', data.mime || 'image/jpeg');

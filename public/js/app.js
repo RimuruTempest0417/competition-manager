@@ -756,6 +756,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('announcementsBtn')?.addEventListener('click', () => { openAnnouncementModal(); closeNavDropdown(); });
     document.getElementById('closeAnnouncementBtn')?.addEventListener('click', closeAnnouncementModal);
     document.getElementById('closeAnnouncementBtn2')?.addEventListener('click', closeAnnouncementModal);
+    // v3.0.0：營運儀表板
+    document.getElementById('opsStatsBtn')?.addEventListener('click', openOpsStatsModal);
+    document.getElementById('closeOpsStatsBtn')?.addEventListener('click', closeOpsStatsModal);
+    document.getElementById('opsStatsRefreshBtn')?.addEventListener('click', () => loadOpsStats(true));
+    document.getElementById('opsStatsRange')?.addEventListener('click', (event) => {
+        const btn = event.target.closest('[data-ops-days]');
+        if (!btn) return;
+        opsStatsDays = Number(btn.dataset.opsDays) || 14;
+        renderOpsRangeButtons();
+        loadOpsStats();
+    });
     document.getElementById('saveAnnounceCatsBtn')?.addEventListener('click', saveAnnounceCategories);
     document.getElementById('markAllAnnounceReadBtn')?.addEventListener('click', markAllAnnouncementsRead);
     document.getElementById('toggleAnnounceFormBtn')?.addEventListener('click', () => {
@@ -1176,12 +1187,12 @@ function focusCompetitionCard(compId) {
 // 為什麼要這樣寫：過去每個角色分支各自列 classList.add('hidden')，
 // 只要有分支漏寫（例如訪客分支忘了隱藏 CSV 按鈕），登出後就會殘留管理員功能。
 const CM_MENU_PERMISSIONS = {
-    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false, announce: false },
-    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true },
-    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true },
-    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false, announce: true },
-    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true },
-    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true }
+    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false, announce: false },
+    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true },
+    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false, announce: true },
+    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true },
+    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true }
 };
 
 function applyMenuVisibility(role) {
@@ -1199,7 +1210,8 @@ function applyMenuVisibility(role) {
         ['changePwdBtn', perm.changePwd],
         ['twoFactorBtn', perm.twoFactor],
         ['backupBtn', perm.backup],
-        ['announcementsBtn', perm.announce]   // v2.26.0：公告中心（登入即可）
+        ['announcementsBtn', perm.announce],  // v2.26.0：公告中心（登入即可）
+        ['opsStatsBtn', perm.opsStats]        // v3.0.0：營運儀表板（管理員以上）
     ];
     map.forEach(([id, visible]) => {
         const el = document.getElementById(id);
@@ -2750,7 +2762,32 @@ function resizeImageFile(file) {
                 ctx.fillRect(0, 0, width, height);
                 ctx.drawImage(img, 0, 0, width, height);
                 const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                resolve({ dataUrl, width, height, bytes: Math.round(((dataUrl.length - 22) * 3) / 4) });
+
+                // v3.0.0：另外產生列表／預覽用的縮圖（最寬 480px）。
+                // 縮圖只是「讓列表少載很多」，所以失敗就當作沒有縮圖，不要讓整個上傳失敗。
+                let thumbDataUrl = null;
+                let thumbWidth = 0;
+                let thumbHeight = 0;
+                try {
+                    const thumbLimit = 480;
+                    const tScale = Math.min(1, thumbLimit / Math.max(width, height));
+                    thumbWidth = Math.max(1, Math.round(width * tScale));
+                    thumbHeight = Math.max(1, Math.round(height * tScale));
+                    const tCanvas = document.createElement('canvas');
+                    tCanvas.width = thumbWidth;
+                    tCanvas.height = thumbHeight;
+                    const tCtx = tCanvas.getContext('2d');
+                    tCtx.fillStyle = '#ffffff';
+                    tCtx.fillRect(0, 0, thumbWidth, thumbHeight);
+                    tCtx.drawImage(img, 0, 0, thumbWidth, thumbHeight);
+                    thumbDataUrl = tCanvas.toDataURL('image/jpeg', 0.72);
+                } catch (err) {
+                    thumbDataUrl = null;
+                }
+
+                const bytes = Math.round(((dataUrl.length - 22) * 3) / 4);
+                const thumbBytes = thumbDataUrl ? Math.round(((thumbDataUrl.length - 22) * 3) / 4) : 0;
+                resolve({ dataUrl, width, height, bytes, thumbDataUrl, thumbWidth, thumbHeight, thumbBytes });
             };
             img.src = reader.result;
         };
@@ -2815,7 +2852,10 @@ async function handlePosterFileChange(event) {
             preview.classList.remove('hidden');
         }
         document.getElementById('posterRemoveBtn')?.classList.remove('hidden');
-        setPosterHint(`已選擇 ${file.name}（縮圖後 ${result.width}×${result.height}，約 ${Math.round(result.bytes / 1024)}KB），儲存賽事時會一併上傳。`, 'ok');
+        const thumbNote = result.thumbDataUrl
+            ? `，另存列表縮圖 ${result.thumbWidth}×${result.thumbHeight}（約 ${Math.round(result.thumbBytes / 1024)}KB）`
+            : '';
+        setPosterHint(`已選擇 ${file.name}（縮圖後 ${result.width}×${result.height}，約 ${Math.round(result.bytes / 1024)}KB${thumbNote}），儲存賽事時會一併上傳。`, 'ok');
     } catch (err) {
         pendingPoster = null;
         setPosterHint(err.message, 'error');
@@ -2823,11 +2863,12 @@ async function handlePosterFileChange(event) {
     }
 }
 
-async function uploadPoster(competitionId, dataUrl) {
+async function uploadPoster(competitionId, dataUrl, thumbDataUrl) {
+    // v3.0.0：連同縮圖一起上傳（沒有縮圖時只送原圖，後端會自動清掉舊縮圖）
     const res = await customFetch(`/api/competitions/${competitionId}/poster`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataUrl })
+        body: JSON.stringify(thumbDataUrl ? { dataUrl, thumbDataUrl } : { dataUrl })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || '海報上傳失敗');
@@ -3644,6 +3685,223 @@ async function refreshStaffBadges() {
     if (keepOpen !== null) cmStaffState.competitionId = keepOpen;
 }
 
+/* ---------- v3.0.0：後台營運儀表板（管理員以上） ----------
+ * 設計取捨：
+ *   - 圖表是手寫 SVG（CSP 是 script-src 'self'，不裝任何前端套件）；幾何在 public/js/stats.js，
+ *     與後端統計、測試用同一份數學，圖上的數字跟 API 的數字不會有兩套算法。
+ *   - 顏色一律用「現有的 Tailwind 類別 + currentColor」：不新增色系（用不存在的 class 會靜默失效，
+ *     這種坑 v2.27.0 踩過一次），也不寫 inline style（CSP style-src 'self' 會擋掉）。
+ *   - 只呈現聚合數字：這裡不會出現任何帳號或個人資料。
+ */
+const OPS_STATS_RANGES = [7, 14, 30];
+let opsStatsDays = 14;
+let opsStatsLoading = false;
+
+const OPS_TIMING_LABELS = {
+    competitions: '賽事',
+    registrations: '報名',
+    users: '使用者',
+    errors: '錯誤日誌',
+    push: '推播',
+    posters: '海報',
+    staff: '工作人員'
+};
+
+function openOpsStatsModal() {
+    const modal = document.getElementById('opsStatsModal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    renderOpsRangeButtons();
+    loadOpsStats();
+}
+
+function closeOpsStatsModal() {
+    document.getElementById('opsStatsModal')?.classList.add('hidden');
+}
+
+function renderOpsRangeButtons() {
+    const box = document.getElementById('opsStatsRange');
+    if (!box) return;
+    box.innerHTML = OPS_STATS_RANGES.map((d) => `
+        <button type="button" data-ops-days="${d}"
+            class="px-2.5 py-1 rounded-lg text-xs transition ${d === opsStatsDays
+        ? 'bg-blue-600 text-white'
+        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}">${d} 天</button>`).join('');
+}
+
+/* 折線圖（趨勢）。values 為數字陣列，空資料回一句說明而不是畫出一條假線。 */
+function opsLineChartHtml(values, options) {
+    const opts = options || {};
+    const width = 320;
+    const height = 90;
+    const list = Array.isArray(values) ? values : [];
+    if (!list.length) return '<p class="text-[11px] text-slate-400 py-6 text-center">沒有資料</p>';
+    const path = CMStats.linePath(list, { width, height });
+    const points = CMStats.linePoints(list, { width, height });
+    const toneClass = opts.tone === 'bad' ? 'text-red-500' : 'text-blue-600';
+    return `
+        <svg viewBox="0 0 ${width} ${height}" class="w-full h-24 ${toneClass}" role="img"
+            aria-label="${escapeHtml(opts.label || '趨勢圖')}">
+            <line x1="0" y1="${height}" x2="${width}" y2="${height}" stroke="currentColor" stroke-opacity="0.25" stroke-width="1"></line>
+            <path d="${path}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>
+            ${points.map((p) => `<circle cx="${p.x}" cy="${p.y}" r="2.5" fill="currentColor"></circle>`).join('')}
+        </svg>`;
+}
+
+/* 長條圖（分類分佈）。沒有資料時不畫空圖。 */
+function opsBarChartHtml(items) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) return '<p class="text-[11px] text-slate-400 py-6 text-center">沒有資料</p>';
+    const width = 320;
+    const height = 90;
+    const bars = CMStats.barGeometry(list.map((i) => i.count), { width, height, gap: 6 });
+    return `
+        <svg viewBox="0 0 ${width} ${height}" class="w-full h-24 text-emerald-600" role="img" aria-label="賽事分類分佈">
+            ${bars.map((b) => `<rect x="${b.x}" y="${b.y}" width="${b.width}" height="${Math.max(b.height, 1)}"
+                rx="2" fill="currentColor" fill-opacity="${b.value > 0 ? '0.85' : '0.2'}"></rect>`).join('')}
+            <line x1="0" y1="${height}" x2="${width}" y2="${height}" stroke="currentColor" stroke-opacity="0.25" stroke-width="1"></line>
+        </svg>`;
+}
+
+function opsCardHtml(card) {
+    const tones = { good: 'text-emerald-700', warn: 'text-amber-700', bad: 'text-red-700', plain: 'text-slate-800' };
+    return `
+        <div class="rounded-lg border border-slate-200 bg-white p-3">
+            <p class="text-[11px] text-slate-500">${escapeHtml(card.label)}</p>
+            <p class="text-lg font-bold ${tones[card.tone] || tones.plain}">${escapeHtml(String(card.value))}<span
+                class="text-xs font-normal text-slate-500 ml-1">${escapeHtml(card.unit || '')}</span></p>
+            ${card.hint ? `<p class="text-[10px] text-slate-400">${escapeHtml(card.hint)}</p>` : ''}
+        </div>`;
+}
+
+function renderOpsStats(data) {
+    // ── 數字卡 ──
+    const cardsBox = document.getElementById('opsCards');
+    if (cardsBox) {
+        const errorTotal = CMStats.sum(Object.values(data.errors.by_severity || {}), (v) => v);
+        cardsBox.innerHTML = [
+            { label: '賽事總數', value: data.competitions.total, hint: `報名中 ${(data.competitions.by_state || {}).registration_open || 0} 場、已結束 ${(data.competitions.by_state || {}).finished || 0} 場` },
+            { label: '報名總數', value: data.registrations.total, hint: `近 7 天新增 ${data.registrations.last7d} 筆` },
+            { label: '候補中', value: data.registrations.waitlisted, hint: `待審核 ${data.registrations.pending} 筆、已核准 ${data.registrations.confirmed} 筆` },
+            { label: '使用者', value: data.users.total, hint: `啟用 ${data.users.active}${data.users.active_last_30d === null ? '' : `、近 30 天登入 ${data.users.active_last_30d}`}` },
+            {
+                label: '近 30 天未處理錯誤',
+                value: data.errors.open_recent_30d,
+                tone: data.errors.open_recent_30d > 0 ? 'warn' : 'good',
+                hint: `錯誤 ${(data.errors.by_severity || {}).error || 0}／警告 ${(data.errors.by_severity || {}).warn || 0}`
+            },
+            {
+                label: '推播成功率',
+                value: data.push.success_rate,
+                unit: '%',
+                tone: data.push.success_tone,
+                hint: `失敗 ${data.push.failed} 筆（共 ${data.push.notifications} 次推播）`
+            }
+        ].map(opsCardHtml).join('');
+    }
+
+    // ── 趨勢圖 ──
+    const regBox = document.getElementById('opsRegChart');
+    if (regBox) regBox.innerHTML = opsLineChartHtml((data.registrations.trend || []).map((t) => t.count), { label: '報名趨勢' });
+    const regLegend = document.getElementById('opsRegLegend');
+    if (regLegend) {
+        const trend = data.registrations.trend || [];
+        const total = trend.reduce((a, d) => a + d.count, 0);
+        regLegend.textContent = trend.length
+            ? `近 ${data.trend_days} 天共 ${total} 筆（高峰 ${Math.max(...trend.map((t) => t.count))} 筆／日）`
+            : '';
+    }
+
+    const errBox = document.getElementById('opsErrChart');
+    if (errBox) {
+        errBox.innerHTML = opsLineChartHtml((data.errors.trend || []).map((t) => t.count), { label: '錯誤趨勢', tone: 'bad' });
+    }
+    const errLegend = document.getElementById('opsErrLegend');
+    if (errLegend) {
+        const total = (data.errors.trend || []).reduce((a, d) => a + d.count, 0);
+        const top = (data.errors.top_types || [])[0];
+        errLegend.textContent = total
+            ? `近 ${data.trend_days} 天 ${total} 筆${top ? `；最多：${top.key}（${top.count}）` : ''}`
+            : `近 ${data.trend_days} 天沒有未處理錯誤`;
+    }
+
+    // ── 分類分佈 ──
+    const catBox = document.getElementById('opsCatChart');
+    const cats = data.competitions.by_category || [];
+    if (catBox) catBox.innerHTML = opsBarChartHtml(cats);
+    const catLegend = document.getElementById('opsCatLegend');
+    if (catLegend) {
+        catLegend.innerHTML = cats.map((c) => `<span>${escapeHtml(c.label)} ${c.count}</span>`).join('')
+            + (data.competitions.by_category_other
+                ? `<span class="text-slate-400">未分類／其他 ${data.competitions.by_category_other}</span>` : '');
+    }
+
+    // ── 效能現況 ──
+    const perfBox = document.getElementById('opsPerfBox');
+    if (perfBox) {
+        const perf = data.perf || {};
+        const posters = perf.posters || {};
+        const paging = perf.paging || {};
+        const timings = Object.entries(perf.timings || {})
+            .map(([k, v]) => `${OPS_TIMING_LABELS[k] || k} ${v}ms`).join('、');
+        perfBox.innerHTML = `
+            <div class="rounded-lg border border-slate-200 p-3 space-y-1.5 text-[11px] text-slate-600">
+                <p class="text-xs font-semibold text-slate-700">⚡ 效能現況</p>
+                <p>海報：${posters.count} 張、原圖共 ${escapeHtml(posters.total_label || '0 B')}${posters.thumb_count
+            ? `；其中 ${posters.thumb_count} 張有縮圖（${escapeHtml(posters.thumb_label || '')}），列表可少載約 ${escapeHtml(posters.thumb_saved_label || '')}`
+            : '（尚無縮圖；重新上傳海報時會自動產生，舊海報不受影響）'}</p>
+                <p>分頁：賽事列表單次上限 ${paging.competitions_max} 筆、報名名單 ${paging.registrations_max} 筆（沒帶 limit 的請求行為完全不變）</p>
+                <p>這次查詢耗時：${escapeHtml(timings || '—')}，合計 ${perf.total_ms || 0} ms</p>
+                <p>索引：${(perf.indexes || []).length} 個隨 migration 建立（${escapeHtml((perf.indexes || []).map((i) => i.table).filter((v, i, a) => a.indexOf(v) === i).join('、'))}）</p>
+            </div>`;
+    }
+
+    // ── 其他資訊 ──
+    const meta = document.getElementById('opsStatsMeta');
+    if (meta) {
+        const at = data.generated_at ? new Date(data.generated_at) : null;
+        const time = at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString('zh-TW', { hour12: false }) : '';
+        meta.textContent = `${time} 產生${data.cached ? '（快取）' : ''}，涵蓋近 ${data.trend_days} 天`;
+    }
+
+    const hint = document.getElementById('opsStatsHint');
+    if (hint) {
+        const list = data.unavailable_sections || [];
+        if (list.length) {
+            hint.classList.remove('hidden');
+            hint.textContent = `以下區塊暫時讀不到（不影響其他數字）：${list.map((s) => `${s.section}（${s.reason}）`).join('；')}`;
+        } else {
+            hint.classList.add('hidden');
+        }
+    }
+}
+
+async function loadOpsStats(force) {
+    if (opsStatsLoading) return;
+    opsStatsLoading = true;
+    const statusEl = document.getElementById('opsStatsStatus');
+    if (statusEl) {
+        statusEl.classList.remove('hidden');
+        statusEl.className = 'text-[11px] text-slate-500';
+        statusEl.textContent = '載入中…';
+    }
+    try {
+        const res = await customFetch(`/api/admin/stats?days=${opsStatsDays}${force ? '&fresh=1' : ''}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `讀取統計失敗（HTTP ${res.status}）`);
+        renderOpsStats(data);
+        if (statusEl) statusEl.classList.add('hidden');
+    } catch (err) {
+        if (statusEl) {
+            statusEl.classList.remove('hidden');
+            statusEl.className = 'text-[11px] text-red-600';
+            statusEl.textContent = err.message;
+        }
+    } finally {
+        opsStatsLoading = false;
+    }
+}
+
 function competitionCardHtml(item) {
     return `
         <div class="cm-card border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition bg-white shadow-sm flex flex-col md:flex-row justify-between gap-4" data-comp-id="${escapeHtml(String(item.id))}">
@@ -3658,6 +3916,15 @@ function competitionCardHtml(item) {
                     ${getBadgeStatus(item.date)}
                 </div>
                 
+                ${item.poster_thumb_url ? `
+                    <button type="button" data-action="share-poster" data-id="${item.id}"
+                        class="block w-full sm:w-52 text-left rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-300"
+                        title="點一下看完整海報">
+                        <img src="${escapeHtml(item.poster_thumb_url)}" alt="${escapeHtml(item.name)} 的海報"
+                            loading="lazy" decoding="async"
+                            class="w-full sm:w-52 h-28 object-cover rounded-lg border border-slate-200 bg-slate-50">
+                    </button>` : ''}
+
                 <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                     ${item.location ? `<span>📍 ${escapeHtml(item.location)}</span>` : ''}
                     ${mapLinkHtml(item)}
@@ -3769,7 +4036,7 @@ async function handleFormSubmit(e) {
         let posterError = '';
         if (pendingPoster && savedId) {
             try {
-                await uploadPoster(savedId, pendingPoster.dataUrl);
+                await uploadPoster(savedId, pendingPoster.dataUrl, pendingPoster.thumbDataUrl);
             } catch (err) {
                 posterError = err.message;
             }

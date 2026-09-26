@@ -203,12 +203,26 @@ const btnState = `return {
         check(state.tables.audit_logs.some((l) => l.id === 9001), '只預覽、還沒真的刪');
         await browser.screenshot(path.join(SHOTS, '03-清理預覽.png'));
 
+        // 刪除前的總數（用來驗「刪完之後總數真的少 1」，而不是寫死一個數字）
+        const beforeText = await browser.evaluate(`return document.getElementById('auditLogSummary').textContent;`);
+        const beforeTotal = Number((beforeText.match(/共 (\d+) 筆/) || [])[1] || NaN);
+
         await browser.evaluate(`document.getElementById('auditCleanupRunBtn').click(); return true;`);
         await browser.waitFor(`/已刪除 1 筆/.test(document.getElementById('auditCleanupResult').textContent)`, { timeout: 8000 });
         check(!state.tables.audit_logs.some((l) => l.id === 9001), '確認後真的刪除超過保留期的紀錄');
         check(state.tables.audit_logs.some((l) => l.id === 9002), '保留期內的紀錄沒有被誤刪');
-        await browser.waitFor(`/共 152 筆|共 151 筆|可能還有更多/.test(document.getElementById('auditLogSummary').textContent)`, { timeout: 8000 });
-        check(true, '刪除後自動重新載入列表');
+        // v3.0.0：測試替身開始回 count 標頭（更像真的 PostgREST），所以這裡改成比對「相對變化」：
+        // 精確總數在（測試替身或正式站都拿得到）就驗少 1 筆；拿不到才接受「可能還有更多」的誠實說法。
+        await browser.waitFor(`/(共 \\d+ 筆|可能還有更多)/.test(document.getElementById('auditLogSummary').textContent)`, { timeout: 8000 });
+        const afterText = await browser.evaluate(`return document.getElementById('auditLogSummary').textContent;`);
+        const afterTotal = Number((afterText.match(/共 (\d+) 筆/) || [])[1] || NaN);
+        // 清理本身也會留一筆稽核（刪 1 筆、多 1 筆紀錄），所以不能寫死「少 1 筆」；
+        // 改為跟測試替身裡的真實列數對帳——這才是「摘要數字是真的」的驗證。
+        const dbRows = state.tables.audit_logs.length;
+        check(Number.isFinite(afterTotal)
+            ? afterTotal === dbRows
+            : /可能還有更多/.test(afterText),
+            `刪除後自動重新載入，摘要總數與資料庫一致（摘要 ${afterTotal || afterText}／資料庫 ${dbRows} 筆，清理前 ${beforeTotal}）`);
 
         // ---------- 6. 前端例外 ----------
         check(browser.pageErrors.length === 0, '過程中沒有前端例外', browser.pageErrors.join(' | ').slice(0, 200));
