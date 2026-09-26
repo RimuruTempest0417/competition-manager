@@ -344,6 +344,8 @@ function toDateString(input) {
 */
 const CMCompetitionState = require('./public/js/competition-state');
 const CMAnnouncements = require('./public/js/announcements');   // v2.26.0：公告可見性的唯一真實來源
+const CMVenue = require('./public/js/venue');                    // v2.27.0：地圖連結規則的唯一真實來源
+const CMStaff = require('./public/js/staff');                    // v2.27.0：工作人員角色規則的唯一真實來源
 const COMPETITION_STATE_LABELS = CMCompetitionState.LABELS;
 const COMPETITION_STATE_TONES = CMCompetitionState.TONES;
 const competitionTimeline = CMCompetitionState.timeline;
@@ -589,10 +591,16 @@ function assertRoleAssignable(actorRole, targetRole) {
 }
 
 // v2.12.0：未執行 migration 時自動降級（先探測欄位，沒有就不帶）
+// v2.27.0：負結果只快取 60 秒。以前「一發現沒有欄位就永遠記住」，
+// 導致 migration 執行後還在服務的暖實例仍舊看不到新欄位（線上實際發生過），
+// 只能等實例被回收才恢復。正結果照舊快取（欄位不會自己消失）。
+const COLUMN_NEGATIVE_TTL_MS = 60000;
 const columnPresence = new Map();
 async function columnExists(table, column) {
     const key = `${table}.${column}`;
-    if (columnPresence.has(key)) return columnPresence.get(key);
+    const cached = columnPresence.get(key);
+    if (cached === true) return true;
+    if (cached && Date.now() - cached.at < COLUMN_NEGATIVE_TTL_MS) return false;
     if (!hasSupabaseConfig) return false;
     const { error } = await supabase.from(table).select(column).limit(1);
     if (!error) {
@@ -600,10 +608,26 @@ async function columnExists(table, column) {
         return true;
     }
     if (isMissingColumnError(error, [column])) {
-        columnPresence.set(key, false);
+        columnPresence.set(key, { at: Date.now() });
         return false;
     }
     return false; // 暫時性錯誤不快取，下次再試
+}
+
+/* v2.27.0：資料表／欄位探測的一致性快取。
+   正結果快取整輪；負結果只快取 60 秒 —— 理由同上：migration 剛跑完時，
+   暖實例才不會一直回報「尚未啟用」。探測丟出例外（連線問題）時不快取。 */
+function createSchemaProbe(probeFn, ttlMs = COLUMN_NEGATIVE_TTL_MS) {
+    let ready = null;
+    let checkedAt = 0;
+    return async function () {
+        if (ready === true) return true;
+        if (ready === false && Date.now() - checkedAt < ttlMs) return false;
+        const result = await probeFn();
+        ready = !!result;
+        checkedAt = Date.now();
+        return ready;
+    };
 }
 
 async function findAdminById(id) {
@@ -1049,22 +1073,14 @@ app.get('/api/admin/push-logs', requireAdmin, async (req, res) => {
 const ANNOUNCEMENTS_HINT = '站內公告需要資料庫資料表，請先執行 migrations/2026-09-26-v2.26.0-announcements.sql';
 const ANNOUNCEMENT_LIST_MAX = 200;   // 一次最多撈幾則（置頂與最新的都會在裡面）
 
-let announcementsReadyCache = null;
-async function announcementsSchemaReady() {
-    if (announcementsReadyCache !== null) return announcementsReadyCache;
+const announcementsSchemaReady = createSchemaProbe(async () => {
     const { error } = await supabase.from('announcements').select('id').limit(1);
-    if (!error) { announcementsReadyCache = true; return true; }
-    if (isMissingTableError(error)) { announcementsReadyCache = false; return false; }
+    if (!error) return true;
+    if (isMissingTableError(error)) return false;
     throw error;   // 暫時性錯誤（連線…）不快取，否則之後都會以為功能沒開
-}
+});
 
-let announceCategoriesReadyCache = null;
-async function announceCategoriesReady() {
-    if (announceCategoriesReadyCache === null) {
-        announceCategoriesReadyCache = await columnExists('admin_users', 'announce_categories');
-    }
-    return announceCategoriesReadyCache;
-}
+const announceCategoriesReady = createSchemaProbe(() => columnExists('admin_users', 'announce_categories'));
 
 const isAdminRoleName = (role) => ADMIN_ROLES.has(role);
 const categoryChips = (ids) => (Array.isArray(ids) ? ids : [])
@@ -1479,6 +1495,210 @@ app.post('/api/admin/push-logs/:id/resend', requireAdmin, async (req, res) => {
 });
 
 // ==========================================
+// v2.27.0：場地地圖連結＋工作人員指派（Roadmap P1-5）
+// ==========================================
+//
+// ① 地圖連結：賽事多一個 map_url。**沒填不擋**——前端用地址自動產生 Google 地圖搜尋連結
+//    （規則唯一真實來源 public/js/venue.js），所以舊資料不用補、也不會出現「有地點卻沒有地圖」。
+// ② 工作人員：哪個帳號在這場賽事擔任裁判／記錄／攝影（同一場同一人一個角色，
+//    改角色＝更新同一列）。角色與驗證規則走 public/js/staff.js。
+// 未執行 migration 時：地圖改用地址自動產生（功能照常）、工作人員清單回 schema_ready:false＋檔名、
+// 指派／移除回 503，其他功能完全不受影響。
+//
+// 隱私界線：GET 是公開端點（賽事工作人員本來就是公開資訊），但只回帳號名稱與角色；
+// 不帶 email、不帶權限、不帶任何 token。寫入一律 requireAdmin 並留稽核。
+
+const VENUE_STAFF_HINT = '地圖連結與工作人員指派需要資料表欄位，請先執行 migrations/2026-09-26-v2.27.0-venue-staff.sql';
+
+const mapUrlSchemaReady = createSchemaProbe(() => columnExists('competitions', 'map_url'));
+const staffSchemaReady = createSchemaProbe(async () => {
+    const { error } = await supabase.from('competition_staff').select('id').limit(1);
+    if (!error) return true;
+    if (isMissingTableError(error)) return false;
+    throw error;   // 暫時性錯誤不快取
+});
+
+/* 讀一場賽事的工作人員（附帳號名稱）。
+   帳號被刪掉時照樣列出這一列、名稱顯示「（帳號已刪除）」——
+   不要因為帳號不見就讓指派從畫面上消失，賽事當天會少一個人。 */
+async function loadCompetitionStaff(competitionId) {
+    const { data, error } = await supabase
+        .from('competition_staff')
+        .select('id,competition_id,user_id,role,note,assigned_by,created_at,updated_at')
+        .eq('competition_id', competitionId);
+    if (error) throw error;
+
+    const ids = Array.from(new Set((data || []).map((r) => r.user_id)));
+    let userById = new Map();
+    if (ids.length) {
+        const { data: users, error: userError } = await supabase
+            .from('admin_users')
+            .select('id,username,role')
+            .in('id', ids);
+        if (userError) throw userError;
+        userById = new Map((users || []).map((u) => [String(u.id), u]));
+    }
+
+    const rows = (data || []).map((row) => {
+        const user = userById.get(String(row.user_id));
+        return {
+            id: row.id,
+            competition_id: row.competition_id,
+            user_id: row.user_id,
+            username: user ? user.username : null,
+            role: CMStaff.normalizeRole(row.role),
+            role_label: CMStaff.roleLabel(row.role),
+            role_emoji: CMStaff.roleEmoji(row.role),
+            note: row.note || null,
+            assigned_by: row.assigned_by || null,
+            created_at: row.created_at || null,
+            updated_at: row.updated_at || null
+        };
+    });
+    return CMStaff.staffSort(rows);
+}
+
+// 讀取某場賽事的工作人員（公開；只回角色與帳號名稱）
+app.get('/api/competitions/:id/staff', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '賽事編號不對' });
+
+        if (!(await staffSchemaReady())) {
+            return res.json({
+                success: true, staff: [], summary: CMStaff.staffSummary([]),
+                roles: CMStaff.STAFF_ROLES, schema_ready: false, hint: VENUE_STAFF_HINT
+            });
+        }
+
+        const staff = await loadCompetitionStaff(id);
+        res.json({
+            success: true, staff, summary: CMStaff.staffSummary(staff),
+            roles: CMStaff.STAFF_ROLES, schema_ready: true
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: VENUE_STAFF_HINT });
+        await logErrorToDb(req, 'get_competition_staff_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// 指派／調整工作人員（管理員以上）。同一場同一人只有一個角色：已存在就改角色。
+app.post('/api/competitions/:id/staff', requireAdmin, async (req, res) => {
+    try {
+        if (!(await staffSchemaReady())) return res.status(503).json({ error: VENUE_STAFF_HINT });
+
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '賽事編號不對' });
+
+        const parsed = CMStaff.normalizeStaffInput(req.body);
+        if (parsed.error) return res.status(400).json({ error: parsed.error });
+        // 沒帶 note 欄位＝不要動既有備註；帶了就照帶的值（含清空）
+        const noteProvided = Object.prototype.hasOwnProperty.call(req.body || {}, 'note');
+
+        const { data: comp, error: compError } = await supabase
+            .from('competitions').select('id,name').eq('id', id).maybeSingle();
+        if (compError) throw compError;
+        if (!comp) return res.status(404).json({ error: '找不到這筆賽事' });
+
+        const { data: user, error: userError } = await supabase
+            .from('admin_users').select('id,username,is_active').eq('id', parsed.value.user_id).maybeSingle();
+        if (userError) throw userError;
+        if (!user) return res.status(404).json({ error: '找不到這個帳號' });
+        if (user.is_active === false) {
+            return res.status(400).json({ error: `${user.username} 是停用中的帳號，不能指派為工作人員` });
+        }
+
+        const { data: existing, error: existError } = await supabase
+            .from('competition_staff')
+            .select('id,role,note')
+            .eq('competition_id', id)
+            .eq('user_id', parsed.value.user_id)
+            .maybeSingle();
+        if (existError) throw existError;
+
+        const roleLabel = CMStaff.roleLabel(parsed.value.role);
+        const noteText = (noteProvided ? parsed.value.note : (existing && existing.note)) || '';
+        let changed = 'created';
+
+        if (existing) {
+            changed = 'updated';
+            const beforeLabel = CMStaff.roleLabel(existing.role);
+            const { error } = await supabase.from('competition_staff').update({
+                role: parsed.value.role,
+                note: noteProvided ? parsed.value.note : existing.note,
+                assigned_by: req.user.username,
+                updated_at: new Date().toISOString()
+            }).eq('id', existing.id);
+            if (error) throw error;
+            await logAudit(req.user.username, 'ASSIGN_STAFF', id,
+                beforeLabel === roleLabel
+                    ? `更新工作人員 ${user.username}（${roleLabel}）${noteText ? `，備註：${noteText}` : ''}｜賽事：${comp.name}`
+                    : `調整工作人員 ${user.username} 的角色：${beforeLabel} → ${roleLabel}｜賽事：${comp.name}`,
+                req.userAgent);
+        } else {
+            const { error } = await supabase.from('competition_staff').insert([{
+                competition_id: id,
+                user_id: parsed.value.user_id,
+                role: parsed.value.role,
+                note: parsed.value.note,
+                assigned_by: req.user.username,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            }]);
+            if (error) throw error;
+            await logAudit(req.user.username, 'ASSIGN_STAFF', id,
+                `指派工作人員：${user.username} 為「${roleLabel}」${noteText ? `（${noteText}）` : ''}｜賽事：${comp.name}`,
+                req.userAgent);
+        }
+
+        const staff = await loadCompetitionStaff(id);
+        res.json({
+            success: true, changed, staff,
+            summary: CMStaff.staffSummary(staff), roles: CMStaff.STAFF_ROLES,
+            assigned: { user_id: parsed.value.user_id, username: user.username, role: parsed.value.role, role_label: roleLabel }
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: VENUE_STAFF_HINT });
+        await logErrorToDb(req, 'assign_competition_staff_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// 移除工作人員（管理員以上）
+app.delete('/api/staff/:id', requireAdmin, async (req, res) => {
+    try {
+        if (!(await staffSchemaReady())) return res.status(503).json({ error: VENUE_STAFF_HINT });
+
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '工作人員指派編號不對' });
+
+        const { data: row, error } = await supabase
+            .from('competition_staff').select('*').eq('id', id).maybeSingle();
+        if (error) throw error;
+        if (!row) return res.status(404).json({ error: '找不到這筆工作人員指派' });
+
+        // 稽核要寫「誰被移除」，所以先問一次帳號名稱（問不到就用編號）
+        const { data: user } = await supabase
+            .from('admin_users').select('username').eq('id', row.user_id).maybeSingle();
+        const who = (user && user.username) || `帳號 #${row.user_id}`;
+
+        const { error: delError } = await supabase.from('competition_staff').delete().eq('id', id);
+        if (delError) throw delError;
+
+        await logAudit(req.user.username, 'REMOVE_STAFF', row.competition_id,
+            `移除工作人員：${who}（${CMStaff.roleLabel(row.role)}）`, req.userAgent);
+
+        const staff = await loadCompetitionStaff(row.competition_id);
+        res.json({ success: true, removed: { id, user_id: row.user_id, username: who }, staff, summary: CMStaff.staffSummary(staff), roles: CMStaff.STAFF_ROLES });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: VENUE_STAFF_HINT });
+        await logErrorToDb(req, 'remove_competition_staff_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// ==========================================
 // 審計日誌 API
 // ==========================================
 // ==========================================
@@ -1535,6 +1755,8 @@ const AUDIT_ACTION_LABELS = {
     RESEND_PUSH: '重送推播',
     CREATE_ANNOUNCEMENT: '發布公告',
     UPDATE_ANNOUNCEMENT: '修改公告',
+    ASSIGN_STAFF: '指派／調整工作人員',
+    REMOVE_STAFF: '移除工作人員',
     AUTO_PROMOTE_WAITLIST: '自動遞補候補',
     PURGE_AUDIT_LOGS: '清理稽核日誌',
     '2FA_SETUP_STARTED': '開始設定兩步驟驗證',
@@ -2853,6 +3075,10 @@ app.get('/api/competitions', async (req, res) => {
             });
             return {
                 ...c,
+                // v2.27.0：地圖連結（自訂優先；沒填就用地址自動產生，所以舊賽事也馬上有地圖可按）
+                map_url: CMVenue.mapUrlFor(c),
+                map_url_custom: CMVenue.normalizeMapUrl(c.map_url) || '',
+                map_url_auto: CMVenue.isAutoMapUrl(c),
                 publisher_name: pubName,
                 publisher_role: pubName ? (userRoleMap[pubName] || 'admin') : null,
                 state: st.state,
@@ -2933,6 +3159,17 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
     const schemaReviewReady = await registrationReviewSchemaReady();
     const includeReviewFields = schemaReviewReady && hasReviewFlagsContent(req.body);
 
+    // v2.27.0：場地地圖連結。沒填＝用地址自動產生（前端 CMVenue 負責），所以舊資料不用補；
+    // 填了但格式不對要明確回報，不要靜默丟掉——使用者會以為存進去了。
+    const mapProvided = !!(req.body && Object.prototype.hasOwnProperty.call(req.body, 'map_url'));
+    const mapRaw = (mapProvided && req.body.map_url !== undefined && req.body.map_url !== null)
+        ? String(req.body.map_url).trim() : '';
+    const mapUrl = CMVenue.normalizeMapUrl(mapRaw);
+    if (mapRaw && !mapUrl) {
+        return res.status(400).json({ error: '地圖連結格式不對：要 http／https 開頭的網址（想讓地圖指向某個地址，填在「地點」欄位就會自動產生連結）' });
+    }
+    const includeMap = await mapUrlSchemaReady();
+
     try {
         const payload = {
             name: name.trim(),
@@ -2948,6 +3185,8 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
             // 欄位不存在時不帶（回傳 window_saved:false 讓前端誠實告知），時間欄位不該拖垮整筆儲存
             ...(includeWindow && schemaWindowReady ? windowFields : {}),
             ...(includeReviewFields ? reviewFields : {}),
+            // 有帶欄位就照帶的值存（空＝沒有自訂連結，前端改用地址自動產生）；沒帶＝不碰
+            ...(includeMap && mapProvided ? { map_url: mapUrl || null } : {}),
             is_deleted: false,
             created_at: new Date().toISOString()
         };
@@ -2962,9 +3201,18 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
         const newComp = data[0];
         await logAudit(operator.username, 'CREATE_COMPETITION', newComp.id, `發佈賽事: ${newComp.name}`, req.userAgent);
 
-        // 有填報名時間但資料庫沒有欄位時要誠實告知（不要讓使用者以為存進去了）
-        res.json(hasRegistrationWindowContent(windowFields) && !schemaWindowReady
-            ? Object.assign({}, newComp, { registration_window_saved: false, warning: '資料庫缺少報名開始／截止欄位，時間未儲存（請執行 migrations/ 內的 SQL）' })
+        // 有填報名時間或地圖連結、但資料庫沒有欄位時要誠實告知（不要讓使用者以為存進去了）
+        const saveWarnings = [];
+        const windowLost = hasRegistrationWindowContent(windowFields) && !schemaWindowReady;
+        const mapLost = !!mapRaw && !includeMap;
+        if (windowLost) saveWarnings.push('資料庫缺少報名開始／截止欄位，時間未儲存（請執行 migrations/ 內的 SQL）');
+        if (mapLost) saveWarnings.push('資料庫缺少地圖連結欄位，地圖連結未儲存（請執行 migrations/2026-09-26-v2.27.0-venue-staff.sql）');
+        res.json(saveWarnings.length
+            ? Object.assign({}, newComp, {
+                ...(windowLost ? { registration_window_saved: false } : {}),
+                ...(mapLost ? { map_url_saved: false } : {}),
+                warning: saveWarnings.join('；')
+            })
             : newComp);
     } catch (err) {
         if (isMissingColumnError(err, ['category', 'tags'])) {
@@ -3155,6 +3403,17 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
     const schemaReviewReady = await registrationReviewSchemaReady();
     const includeReviewFields = schemaReviewReady && hasReviewFlagsContent(req.body);
 
+    // v2.27.0：場地地圖連結。沒填＝用地址自動產生（前端 CMVenue 負責），所以舊資料不用補；
+    // 填了但格式不對要明確回報，不要靜默丟掉——使用者會以為存進去了。
+    const mapProvided = !!(req.body && Object.prototype.hasOwnProperty.call(req.body, 'map_url'));
+    const mapRaw = (mapProvided && req.body.map_url !== undefined && req.body.map_url !== null)
+        ? String(req.body.map_url).trim() : '';
+    const mapUrl = CMVenue.normalizeMapUrl(mapRaw);
+    if (mapRaw && !mapUrl) {
+        return res.status(400).json({ error: '地圖連結格式不對：要 http／https 開頭的網址（想讓地圖指向某個地址，填在「地點」欄位就會自動產生連結）' });
+    }
+    const includeMap = await mapUrlSchemaReady();
+
     try {
         const payload = {
             name: name.trim(),
@@ -3168,7 +3427,8 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
             ...(includeTaxonomy ? taxonomy : {}),
             ...(includeTeamFields ? teamFields : {}),
             ...(includeWindow && schemaWindowReady ? windowFields : {}),
-            ...(includeReviewFields ? reviewFields : {})
+            ...(includeReviewFields ? reviewFields : {}),
+            ...(includeMap && mapProvided ? { map_url: mapUrl || null } : {})
         };
 
         const { data, error } = await supabase
@@ -3180,10 +3440,20 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
         if (error) throw error;
         if (!data || data.length === 0) return res.status(404).json({ error: '找不到該賽事' });
 
-        await logAudit(operator.username, 'UPDATE_COMPETITION', id, `更新賽事內容: ${name}`, req.userAgent);
+        await logAudit(operator.username, 'UPDATE_COMPETITION', id,
+            `更新賽事內容: ${name}${mapRaw ? `（地圖連結：${mapUrl}）` : ''}`, req.userAgent);
 
-        res.json(hasRegistrationWindowContent(windowFields) && !schemaWindowReady
-            ? Object.assign({}, data[0], { registration_window_saved: false, warning: '資料庫缺少報名開始／截止欄位，時間未儲存（請執行 migrations/ 內的 SQL）' })
+        const updateWarnings = [];
+        const windowLost = hasRegistrationWindowContent(windowFields) && !schemaWindowReady;
+        const mapLost = !!mapRaw && !includeMap;
+        if (windowLost) updateWarnings.push('資料庫缺少報名開始／截止欄位，時間未儲存（請執行 migrations/ 內的 SQL）');
+        if (mapLost) updateWarnings.push('資料庫缺少地圖連結欄位，地圖連結未儲存（請執行 migrations/2026-09-26-v2.27.0-venue-staff.sql）');
+        res.json(updateWarnings.length
+            ? Object.assign({}, data[0], {
+                ...(windowLost ? { registration_window_saved: false } : {}),
+                ...(mapLost ? { map_url_saved: false } : {}),
+                warning: updateWarnings.join('；')
+            })
             : data[0]);
     } catch (err) {
         if (isMissingColumnError(err, ['category', 'tags'])) {
@@ -3337,15 +3607,16 @@ function normalizeRecurrenceRule(value) {
 
 /* 各欄位是否存在（複製時「不存在就不要帶」，免得整筆新增失敗） */
 async function copySchemaReady() {
-    const [taxonomy, teamFields, window, review, notify, recurrence] = await Promise.all([
+    const [taxonomy, teamFields, window, review, notify, recurrence, map] = await Promise.all([
         taxonomySchemaReady(),
         teamSchemaReady(),
         registrationWindowSchemaReady(),
         registrationReviewSchemaReady(),
         waitlistNotifySchemaReady(),
-        recurrenceSchemaReady()
+        recurrenceSchemaReady(),
+        mapUrlSchemaReady()
     ]);
-    return { taxonomy, teamFields, window, review, notify, recurrence };
+    return { taxonomy, teamFields, window, review, notify, recurrence, map };
 }
 
 /* 複製賽事要搬哪些欄位？
@@ -3388,6 +3659,10 @@ function buildDuplicatePayload(source, name, schema, options) {
     }
     if (s.notify) {
         payload.waitlist_notify = source.waitlist_notify !== false;
+    }
+    if (s.map) {
+        // v2.27.0：複製品沿用同一場地的地圖連結（沒填就讓前端用地址自動產生）
+        payload.map_url = CMVenue.normalizeMapUrl(source.map_url) || null;
     }
     if (s.recurrence && opts.series) {
         payload.recurrence = normalizeRecurrenceRule(source.recurrence);
@@ -3657,7 +3932,25 @@ app.get('/api/registration-counts', async (req, res) => {
             counts[key] = (counts[key] || 0) + 1;
         });
 
-        res.json({ counts, waitlist, total: Object.values(counts).reduce((a, b) => a + b, 0) });
+        // v2.27.0：工作人員人數（卡片徽章用）。同樣只有聚合數字，不含誰是誰。
+        let staffCounts = {};
+        try {
+            if (await staffSchemaReady()) {
+                const { data: staffRows, error: staffErr } = await supabase
+                    .from('competition_staff')
+                    .select('competition_id');
+                if (staffErr) throw staffErr;
+                (staffRows || []).forEach((r) => {
+                    const key = String(r.competition_id);
+                    staffCounts[key] = (staffCounts[key] || 0) + 1;
+                });
+            }
+        } catch (staffErr) {
+            // 工作人員人數拿不到不該讓報名人數整包失敗（前端只是少一個徽章）
+            staffCounts = {};
+        }
+
+        res.json({ counts, waitlist, staff: staffCounts, total: Object.values(counts).reduce((a, b) => a + b, 0) });
     } catch (err) {
         // 前端仍可優雅降級，但後台要看得到（原本完全靜默）
         await logErrorToDb(req, 'registration_counts_error', err, { severity: 'warn' });
@@ -4635,14 +4928,11 @@ const POSTER_HINT = '資料庫尚未加入海報欄位，請先在 Supabase SQL 
 const PUSH_HINT = '資料庫尚未加入推播資料表（app_settings / push_subscriptions / push_log），請先執行 migrations/2026-09-24-v2.10.0-poster-and-push.sql';
 // v2.26.0：推播失敗明細與重送需要的欄位
 const PUSH_LOG_DETAIL_HINT = '推播失敗明細與重送需要資料庫欄位，請先執行 migrations/2026-09-26-v2.26.0-push-log-detail.sql';
-let pushLogDetailReadyCache = null;
-async function pushLogDetailSchemaReady() {
-    if (pushLogDetailReadyCache !== null) return pushLogDetailReadyCache;
+const pushLogDetailSchemaReady = createSchemaProbe(async () => {
     const hasFailed = await columnExists('push_log', 'failed_count');
-    const hasPayload = hasFailed ? await columnExists('push_log', 'payload') : false;
-    pushLogDetailReadyCache = hasFailed && hasPayload;
-    return pushLogDetailReadyCache;
-}
+    if (!hasFailed) return false;
+    return columnExists('push_log', 'payload');
+});
 // 站台時區偏移：用於判斷「開賽前 24 小時」。可用 SITE_UTC_OFFSET 覆寫（例如 +08:00）。
 const SITE_UTC_OFFSET = process.env.SITE_UTC_OFFSET || '+08:00';
 

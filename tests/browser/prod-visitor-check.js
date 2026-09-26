@@ -56,6 +56,18 @@ const check = (ok, label, extra = '') => {
         const overflow = await browser.evaluate(`return document.documentElement.scrollWidth - window.innerWidth;`);
         check(overflow <= 1, `手機寬度沒有橫向溢出（${overflow}px）`, `${overflow}px`);
 
+        // v2.27.0：地圖連結真的渲染在卡片上（有地點就該有地圖可按）
+        const mapLinks = JSON.parse(await browser.evaluate(`
+            const links = Array.from(document.querySelectorAll('[data-comp-id] a[href*="maps"]'));
+            return JSON.stringify({
+                count: links.length,
+                allHttps: links.every((a) => /^https:\\/\\//i.test(a.getAttribute('href') || '')),
+                allBlankSafe: links.every((a) => a.getAttribute('target') === '_blank' && (a.getAttribute('rel') || '').includes('noopener'))
+            });
+        `));
+        check(mapLinks.count > 0, `卡片上有地圖連結（${mapLinks.count} 個）`);
+        check(mapLinks.allHttps && mapLinks.allBlankSafe, '地圖連結都是 https 且另開新頁帶 rel=noopener');
+
         const shot = path.join(SHOT_DIR, `visitor-${Date.now()}.png`);
         await browser.screenshot(shot);
         console.log(`\n   📸 截圖：${shot}`);

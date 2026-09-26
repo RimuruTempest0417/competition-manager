@@ -618,6 +618,10 @@ body.bg-slate-100 {
     color: var(--cm-emerald-tx-900);
 }
 
+.hover\:text-amber-900:hover {
+    color: var(--cm-amber-tx-900);
+}
+
 /* ---------- indigo ---------- */
 
 .bg-indigo-50 {

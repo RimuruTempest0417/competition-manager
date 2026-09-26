@@ -203,6 +203,36 @@ function seedState() {
         check(first.kindNew && first.kindReminder, '摘要事件預設都開（新賽事＋開賽提醒）');
         check(first.eventReview && first.eventPromote, '即時通知預設都開（審核結果＋候補遞補）');
         check(first.hintHidden, '沒有資料庫降級提示（設定表正常）');
+
+        // ---------- ②-1 儲存按鈕一定要看得見（v2.27.0 修：bg-sky-600 這個色系在 CSS 裡不存在，
+        //            變成白字配透明底＝按鈕隱形，使用者只看到旁邊的「關閉」） ----------
+        const saveBtn = JSON.parse(await browser.evaluate(`
+            const btn = document.getElementById('savePushSettingsBtn');
+            const cs = getComputedStyle(btn);
+            const rect = btn.getBoundingClientRect();
+            const panel = btn.closest('.cm-modal-panel');
+            const pr = panel ? panel.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+            const closeBtn = document.getElementById('closePushSettingsBtn2');
+            const cr = closeBtn ? closeBtn.getBoundingClientRect() : null;
+            return JSON.stringify({
+                text: btn.textContent.trim(),
+                bg: cs.backgroundColor,
+                color: cs.color,
+                w: Math.round(rect.width),
+                h: Math.round(rect.height),
+                inViewport: rect.top >= 0 && rect.bottom <= window.innerHeight + 1,
+                insidePanel: rect.bottom <= pr.bottom + 1 && rect.top >= pr.top - 1,
+                sameRowAsClose: cr ? Math.abs((cr.top + cr.height / 2) - (rect.top + rect.height / 2)) < 8 : false,
+                closeText: closeBtn ? closeBtn.textContent.trim() : ''
+            });
+        `));
+        check(saveBtn.text.includes('儲存設定'), `「儲存設定」按鈕存在（${saveBtn.closeText ? `關閉旁邊的是「${saveBtn.text}」` : saveBtn.text}）`);
+        check(saveBtn.bg !== 'rgba(0, 0, 0, 0)' && saveBtn.bg !== 'transparent', `按鈕有底色（${saveBtn.bg}）`);
+        check(saveBtn.color !== saveBtn.bg, `按鈕文字與底色不同（字 ${saveBtn.color}／底 ${saveBtn.bg}）`);
+        check(saveBtn.w > 40 && saveBtn.h > 20, `按鈕有實際大小（${saveBtn.w}×${saveBtn.h}）`);
+        check(saveBtn.inViewport && saveBtn.insidePanel && saveBtn.sameRowAsClose,
+            '按鈕在彈窗內、和「關閉」同一排且沒被擠出畫面');
+
         await browser.screenshot(path.join(SHOTS, '01-推播設定彈窗.png'));
 
         // ---------- ③ 改設定並儲存 ----------

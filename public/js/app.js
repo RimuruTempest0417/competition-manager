@@ -15,6 +15,7 @@ let currentPosterItem = null;
 let currentView = 'list';                                        // 'list' | 'calendar'
 let regCounts = {};                                             // 各賽事報名人數（v2.9.0；v2.20.0 起＝佔名額人數）
 let regWaitlistCounts = {};                                     // 各賽事候補人數（v2.20.0）
+let staffCounts = {};                                           // 各賽事工作人員人數（v2.27.0，公開的聚合數字）
 let myRegistrations = [];                                       // 我的報名（v2.9.0）
 let currentRegisterItem = null;                                 // 正在報名的賽事
 let currentTeamComp = null;                                     // 隊伍編排視窗對應的賽事
@@ -782,6 +783,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const btn = e.target.closest('button[data-resend-id]');
         if (btn) resendPushLog(btn.dataset.resendId);
     });
+    // v2.27.0：工作人員指派
+    document.getElementById('closeStaffModalBtn')?.addEventListener('click', closeStaffModal);
+    document.getElementById('staffModal')?.addEventListener('click', (e) => { if (e.target.id === 'staffModal') closeStaffModal(); });
+    document.getElementById('staffAssignBtn')?.addEventListener('click', assignStaff);
+    document.getElementById('staffList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-staff-remove]');
+        if (btn) removeStaff(btn.dataset.staffRemove);
+    });
+    document.getElementById('staffNote')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') assignStaff(); });
     document.getElementById('closePushSettingsBtn')?.addEventListener('click', closePushSettingsModal);
     document.getElementById('closePushSettingsBtn2')?.addEventListener('click', closePushSettingsModal);
     document.getElementById('savePushSettingsBtn')?.addEventListener('click', savePushSettings);
@@ -1037,6 +1047,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             openMyRegsModal();
         } else if (action === 'manage-teams') {
             openTeamModal(id);
+        } else if (action === 'manage-staff') {
+            openStaffModal(id);
         } else if (action === 'copy-comp') {
             copyCompetition(id);
         } else if (action === 'duplicate-comp') {
@@ -1637,6 +1649,7 @@ async function fetchRegistrationCounts() {
             const data = await countsRes.json();
             regCounts = data.counts || {};
             regWaitlistCounts = data.waitlist || {};   // v2.20.0：候補人數（公開的聚合數字）
+            staffCounts = data.staff || {};            // v2.27.0：工作人員人數（沒 migration 時是空的）
         }
         if (cfgRes.ok) {
             const cfg = await cfgRes.json();
@@ -1645,6 +1658,7 @@ async function fetchRegistrationCounts() {
     } catch (e) {
         regCounts = {};            // 未執行 migration 或離線時不影響瀏覽
         regWaitlistCounts = {};
+        staffCounts = {};
     }
 }
 
@@ -3461,6 +3475,175 @@ function renderCompetitionCards(data, targetEl) {
     targetEl.innerHTML = data.map(competitionCardHtml).join('');
 }
 
+/* ---------- v2.27.0：場地地圖連結＋工作人員指派 ---------- */
+
+/* 卡片上的地圖連結：自訂連結優先，沒填就用地址自動產生（規則在 public/js/venue.js，與後端同一份） */
+function mapLinkHtml(item) {
+    const url = item.map_url || (window.CMVenue ? CMVenue.mapUrlFor(item) : '');
+    if (!url) return '';
+    const autoHint = item.map_url_auto ? '（用地址搜尋）' : '';
+    return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="hover:text-blue-700 underline" title="在地圖上開啟${autoHint}">🗺️ 地圖${autoHint}</a>`;
+}
+
+/* 卡片上的工作人員徽章：有人才顯示（管理員另有動作按鈕可以進去指派） */
+function staffChipHtml(item) {
+    const count = staffCounts[String(item.id)] || 0;
+    if (!count) return '';
+    return `<button type="button" data-action="manage-staff" data-id="${item.id}" class="hover:text-blue-700 underline">🧑‍⚖️ 工作人員 ${count}</button>`;
+}
+
+const cmStaffState = { competitionId: null, staff: [], roles: [], schemaReady: true, users: null };
+
+function canManageStaff() {
+    return !!currentUser && ['admin', 'super_admin', 'web_owner'].includes(currentUser.role);
+}
+
+function staffSetStatus(message, isError) {
+    const el = document.getElementById('staffStatus');
+    if (!el) return;
+    el.textContent = message;
+    el.className = isError ? 'text-[11px] text-red-600' : 'text-[11px] text-emerald-700';
+    el.classList.toggle('hidden', !message);
+}
+
+async function openStaffModal(id) {
+    closeNavDropdown();
+    cmStaffState.competitionId = id;
+    const comp = allCompetitions.find((c) => c.id === id);
+    document.getElementById('staffModalComp').textContent = comp ? `｜${comp.name}${comp.date ? `（${comp.date}）` : ''}` : '';
+    document.getElementById('staffModal').classList.remove('hidden');
+    document.getElementById('staffAdminBox').classList.toggle('hidden', !canManageStaff());
+    document.getElementById('staffStatus').classList.add('hidden');
+    document.getElementById('staffSummary').innerHTML = '';
+    document.getElementById('staffList').innerHTML = '<p class="text-center text-slate-400 py-4 text-xs">載入中...</p>';
+    if (canManageStaff() && cmStaffState.users === null) await loadStaffUserOptions();
+    await loadCompetitionStaff(id);
+}
+
+function closeStaffModal() {
+    document.getElementById('staffModal').classList.add('hidden');
+    cmStaffState.competitionId = null;
+}
+
+/* 可指派的帳號（管理員以上才讀得到；停用中的帳號不列） */
+async function loadStaffUserOptions() {
+    const select = document.getElementById('staffUser');
+    try {
+        const data = await apiResult(await customFetch('/api/admin/users'));
+        const users = (data.users || []).filter((u) => u.is_active !== false && u.role !== 'test');
+        cmStaffState.users = users;
+        select.innerHTML = users.length
+            ? users.map((u) => `<option value="${escapeHtml(String(u.id))}">${escapeHtml(u.username)}（${escapeHtml(u.role_label || u.role)}）</option>`).join('')
+            : '<option value="">沒有可指派的帳號</option>';
+    } catch (err) {
+        cmStaffState.users = [];
+        select.innerHTML = '<option value="">讀取帳號清單失敗</option>';
+    }
+}
+
+async function loadCompetitionStaff(id) {
+    try {
+        const data = await apiResult(await customFetch(`/api/competitions/${id}/staff`));
+        if (cmStaffState.competitionId !== id) return;   // 使用者已經換別場了
+        cmStaffState.staff = data.staff || [];
+        cmStaffState.roles = data.roles || [];
+        cmStaffState.schemaReady = data.schema_ready !== false;
+
+        const hintEl = document.getElementById('staffHint');
+        if (!cmStaffState.schemaReady) {
+            hintEl.textContent = '⚠️ ' + (data.hint || '工作人員功能尚未啟用。');
+            hintEl.classList.remove('hidden');
+        } else {
+            hintEl.classList.add('hidden');
+        }
+        renderStaffRoleOptions();
+        renderStaffList();
+    } catch (err) {
+        document.getElementById('staffList').innerHTML = `<p class="text-red-500 text-center py-4 text-xs">載入失敗：${escapeHtml(err.message)}</p>`;
+    }
+}
+
+function renderStaffRoleOptions() {
+    const sel = document.getElementById('staffRole');
+    const roles = cmStaffState.roles.length ? cmStaffState.roles : (window.CMStaff ? CMStaff.STAFF_ROLES : []);
+    sel.innerHTML = roles.map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(`${r.emoji || ''} ${r.label}`.trim())}</option>`).join('');
+}
+
+function renderStaffList() {
+    const summary = window.CMStaff ? CMStaff.staffSummary(cmStaffState.staff) : { total: cmStaffState.staff.length, roles: [] };
+    const chips = summary.roles.filter((r) => r.count > 0)
+        .map((r) => `<span class="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">${escapeHtml(`${r.emoji} ${r.label}`)} ${r.count}</span>`)
+        .join('');
+    document.getElementById('staffSummary').innerHTML = chips || '<span class="text-[11px] text-slate-400">這場還沒有指派工作人員</span>';
+
+    const listEl = document.getElementById('staffList');
+    if (!cmStaffState.staff.length) {
+        listEl.innerHTML = `<p class="text-center text-slate-400 py-3 text-xs">${cmStaffState.schemaReady ? '還沒有指派工作人員' : '功能尚未啟用（請先執行 migrations 內的 SQL）'}</p>`;
+        return;
+    }
+    listEl.innerHTML = cmStaffState.staff.map((s) => `
+        <div class="flex items-start justify-between gap-2 p-2.5 border border-slate-200 rounded-lg">
+            <div class="min-w-0">
+                <p class="text-sm text-slate-800">${escapeHtml(`${s.role_emoji || ''} ${s.role_label || s.role}`)}　<b>${escapeHtml(s.username || `帳號 #${s.user_id}（已刪除）`)}</b></p>
+                ${s.note ? `<p class="text-[11px] text-slate-500">📝 ${escapeHtml(s.note)}</p>` : ''}
+                ${s.assigned_by ? `<p class="text-[10px] text-slate-400">由 ${escapeHtml(s.assigned_by)} 指派</p>` : ''}
+            </div>
+            ${canManageStaff() ? `<button type="button" data-staff-remove="${escapeHtml(String(s.id))}" class="text-[11px] text-red-600 hover:text-red-800 shrink-0">移除</button>` : ''}
+        </div>`).join('');
+}
+
+/* 指派：同一場同一人只有一個角色，再指派一次＝改角色 */
+async function assignStaff() {
+    const id = cmStaffState.competitionId;
+    if (!id) return;
+    const userId = document.getElementById('staffUser').value;
+    const role = document.getElementById('staffRole').value;
+    const note = document.getElementById('staffNote').value;
+    if (!userId) return staffSetStatus('沒有可指派的帳號', true);
+
+    staffSetStatus('指派中...', false);
+    try {
+        const data = await apiResult(await customFetch(`/api/competitions/${id}/staff`, {
+            method: 'POST',
+            body: JSON.stringify({ user_id: Number(userId), role, note })
+        }));
+        cmStaffState.staff = data.staff || [];
+        renderStaffList();
+        document.getElementById('staffNote').value = '';
+        staffSetStatus(data.changed === 'updated'
+            ? `已把 ${data.assigned.username} 的角色改成「${data.assigned.role_label}」`
+            : `已指派 ${data.assigned.username} 為「${data.assigned.role_label}」`, false);
+        await refreshStaffBadges();
+    } catch (err) {
+        staffSetStatus(err.message, true);
+    }
+}
+
+async function removeStaff(staffId) {
+    const row = cmStaffState.staff.find((s) => String(s.id) === String(staffId));
+    const who = row ? `${row.username || `帳號 #${row.user_id}`}（${row.role_label}）` : `指派 #${staffId}`;
+    if (!confirm(`確定要把 ${who} 從這場賽事的工作人員移除？`)) return;
+
+    staffSetStatus('移除中...', false);
+    try {
+        const data = await apiResult(await customFetch(`/api/staff/${staffId}`, { method: 'DELETE' }));
+        cmStaffState.staff = data.staff || [];
+        renderStaffList();
+        staffSetStatus(`已移除 ${data.removed.username}`, false);
+        await refreshStaffBadges();
+    } catch (err) {
+        staffSetStatus(err.message, true);
+    }
+}
+
+/* 指派異動後卡片上的「工作人員 N」要跟著更新 */
+async function refreshStaffBadges() {
+    await fetchRegistrationCounts();
+    const keepOpen = cmStaffState.competitionId;
+    await fetchCompetitions();
+    if (keepOpen !== null) cmStaffState.competitionId = keepOpen;
+}
+
 function competitionCardHtml(item) {
     return `
         <div class="cm-card border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition bg-white shadow-sm flex flex-col md:flex-row justify-between gap-4" data-comp-id="${escapeHtml(String(item.id))}">
@@ -3477,6 +3660,8 @@ function competitionCardHtml(item) {
                 
                 <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
                     ${item.location ? `<span>📍 ${escapeHtml(item.location)}</span>` : ''}
+                    ${mapLinkHtml(item)}
+                    ${staffChipHtml(item)}
                     ${item.date ? `<span>📅 開始：${escapeHtml(item.date)} ${item.time ? format24HourTime(escapeHtml(item.time)) : ''}</span>` : ''}
                     ${item.end_date ? `<span>📅 結束：${escapeHtml(item.end_date)} ${item.end_time ? format24HourTime(escapeHtml(item.end_time)) : ''}</span>` : ''}
                 </div>
@@ -3516,6 +3701,7 @@ function competitionCardHtml(item) {
                     <button data-action="copy-comp" data-id="${item.id}" class="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded transition">複製發佈</button>
                     <button data-action="edit-comp" data-id="${item.id}" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">編輯</button>
                     <button data-action="manage-teams" data-id="${item.id}" class="text-xs text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded transition">👥 報名／隊伍</button>
+                    <button data-action="manage-staff" data-id="${item.id}" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">🧑‍⚖️ 工作人員</button>
                     <button data-action="duplicate-comp" data-id="${item.id}" class="text-xs text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded transition">📄 複製賽事</button>
                     <button data-action="recurrence-comp" data-id="${item.id}" class="text-xs ${item.recurrence ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 font-medium' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'} px-2.5 py-1 rounded transition">🔁 ${item.recurrence ? recurrenceRuleLabel(item.recurrence) : '週期'}</button>
                     <button data-action="delete-comp" data-id="${item.id}" class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition">刪除</button>
@@ -3533,6 +3719,8 @@ async function handleFormSubmit(e) {
     const payload = {
         name: document.getElementById('name').value,
         location: document.getElementById('location').value,
+        // v2.27.0：地圖連結（留空＝用地址自動產生；後端會驗格式，不安全的一律拒絕）
+        map_url: (document.getElementById('mapUrl') || {}).value || '',
         date: document.getElementById('date').value,
         time: getSelectedTime('start_hour', 'start_minute'),
         end_date: document.getElementById('end_date').value,
@@ -3589,9 +3777,10 @@ async function handleFormSubmit(e) {
         clearPendingPoster();
 
         await fetchCompetitions();
+        const saveWarning = (saved && saved.warning) ? `\n\n⚠️ ${saved.warning}` : '';
         alert(posterError
-            ? `賽事已儲存，但海報上傳失敗：${posterError}`
-            : (editingId ? '比賽更新成功！' : '賽事發佈成功！'));
+            ? `賽事已儲存，但海報上傳失敗：${posterError}${saveWarning}`
+            : `${editingId ? '比賽更新成功！' : '賽事發佈成功！'}${saveWarning}`);
     } catch (err) {
         alert('操作失敗：' + err.message);
     }
@@ -3607,6 +3796,7 @@ function startEdit(id) {
     document.getElementById('editingId').value = item.id;
     document.getElementById('name').value = item.name || '';
     document.getElementById('location').value = item.location || '';
+    document.getElementById('mapUrl').value = item.map_url_custom || '';
     document.getElementById('date').value = item.date || '';
     setSelectedTime(item.time || '', 'start_hour', 'start_minute');
     document.getElementById('end_date').value = item.end_date || '';
@@ -3644,6 +3834,7 @@ function copyCompetition(id) {
     document.getElementById('editingId').value = '';
     document.getElementById('name').value = `${item.name} (複製)`;
     document.getElementById('location').value = item.location || '';
+    document.getElementById('mapUrl').value = item.map_url_custom || '';
     document.getElementById('date').value = item.date || '';
     setSelectedTime(item.time || '', 'start_hour', 'start_minute');
     document.getElementById('end_date').value = item.end_date || '';
@@ -4715,12 +4906,12 @@ async function openPushLogsModal() {
                     <span class="text-slate-400 text-[10px]">${l.sent_at ? escapeHtml(new Date(l.sent_at).toLocaleString()) : '—'}</span>
                 </div>
                 <p class="text-slate-600 text-[11px]">
-                    ${l.competition_id ? `賽事 #${escapeHtml(String(l.competition_id))}　` : ''}成功發送 <b>${sent}</b> 則${failed ? `　<span class="text-rose-600 font-bold">失敗 ${failed} 則</span>` : ''}
+                    ${l.competition_id ? `賽事 #${escapeHtml(String(l.competition_id))}　` : ''}成功發送 <b>${sent}</b> 則${failed ? `　<span class="text-rose-700 font-bold">失敗 ${failed} 則</span>` : ''}
                 </p>
-                ${failed && l.error_detail ? `<p class="text-rose-600 text-[10px] break-all">原因：${escapeHtml(String(l.error_detail))}</p>` : ''}
+                ${failed && l.error_detail ? `<p class="text-rose-700 text-[10px] break-all">原因：${escapeHtml(String(l.error_detail))}</p>` : ''}
                 ${l.payload && l.payload.title ? `<p class="text-slate-500 text-[10px]">內容：${escapeHtml(String(l.payload.title))}</p>` : ''}
                 ${resent ? `<p class="text-emerald-700 text-[10px]">已重送 ${resent} 次（最後一次 ${l.resend_at ? escapeHtml(new Date(l.resend_at).toLocaleString()) : '—'}，成功 ${Number(l.resend_sent_count) || 0} 則）</p>` : ''}
-                ${l.payload ? `<div class="flex justify-end"><button type="button" data-resend-id="${escapeHtml(String(l.id))}" class="text-[11px] text-sky-600 hover:text-sky-800">重送給原本的對象</button></div>` : ''}
+                ${l.payload ? `<div class="flex justify-end"><button type="button" data-resend-id="${escapeHtml(String(l.id))}" class="text-[11px] text-blue-600 hover:text-blue-800">重送給原本的對象</button></div>` : ''}
             </div>`;
         }).join('');
     } catch (err) {
@@ -4934,7 +5125,7 @@ function renderAnnounceCategories() {
     const mine = new Set(cmAnnounceState.my_categories || []);
     const options = (cmAnnounceState.all_categories || []).map((c) => `
         <label class="flex items-center gap-1.5">
-            <input type="checkbox" value="${escapeHtml(String(c.id))}" class="w-3.5 h-3.5 accent-sky-600"${mine.has(c.id) ? ' checked' : ''}>
+            <input type="checkbox" value="${escapeHtml(String(c.id))}" class="w-3.5 h-3.5 accent-blue-600"${mine.has(c.id) ? ' checked' : ''}>
             <span>${escapeHtml(c.label || c.id)}</span>
         </label>
     `).join('');
@@ -4961,12 +5152,12 @@ function renderAnnouncementList() {
         return;
     }
     listEl.innerHTML = list.map((a) => `
-        <div class="p-2.5 border rounded space-y-1 ${a.read ? 'bg-slate-50 border-slate-200' : 'bg-white border-sky-300 cm-announce-unread'}"
+        <div class="p-2.5 border rounded space-y-1 ${a.read ? 'bg-slate-50 border-slate-200' : 'bg-white border-blue-300 cm-announce-unread'}"
             data-announce-id="${escapeHtml(String(a.id))}" title="${escapeHtml(a.read ? '' : '點一下標記為已讀')}">
             <div class="flex justify-between items-start gap-2">
                 <div class="flex items-center gap-1.5 flex-wrap">
                     ${a.is_pinned ? '<span class="bg-rose-100 text-rose-700 text-[10px] px-1.5 py-0.5 rounded font-bold">置頂</span>' : ''}
-                    ${a.read ? '' : '<span class="bg-sky-100 text-sky-700 text-[10px] px-1.5 py-0.5 rounded font-bold">未讀</span>'}
+                    ${a.read ? '' : '<span class="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0.5 rounded font-bold">未讀</span>'}
                     <span class="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded">${escapeHtml(a.audience_label || '')}</span>
                 </div>
                 <span class="text-slate-400 text-[10px] shrink-0">${a.publish_at ? escapeHtml(new Date(a.publish_at).toLocaleString()) : ''}</span>
@@ -5150,8 +5341,8 @@ function renderAdminAnnouncementList() {
             <p class="font-semibold text-slate-800">${escapeHtml(a.title || '')}</p>
             <p class="text-slate-500 text-[10px]">發布：${a.publish_at ? escapeHtml(new Date(a.publish_at).toLocaleString()) : '—'}　結束：${a.expires_at ? escapeHtml(new Date(a.expires_at).toLocaleString()) : '—'}</p>
             <div class="flex justify-end gap-3 pt-0.5">
-                <button type="button" class="text-[11px] text-sky-600 hover:text-sky-800" data-action="edit" data-id="${escapeHtml(String(a.id))}">編輯</button>
-                <button type="button" class="text-[11px] ${a.is_active === false ? 'text-emerald-600 hover:text-emerald-800' : 'text-amber-600 hover:text-amber-800'}"
+                <button type="button" class="text-[11px] text-blue-600 hover:text-blue-800" data-action="edit" data-id="${escapeHtml(String(a.id))}">編輯</button>
+                <button type="button" class="text-[11px] ${a.is_active === false ? 'text-emerald-600 hover:text-emerald-900' : 'text-amber-600 hover:text-amber-900'}"
                     data-action="toggle" data-id="${escapeHtml(String(a.id))}" data-active="${a.is_active === false ? '1' : '0'}">${a.is_active === false ? '重新上架' : '下架'}</button>
             </div>
         </div>

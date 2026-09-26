@@ -157,6 +157,32 @@ const get = (p, headers) => fetch(SITE + p, { headers });
         check(`重送不存在的紀錄不會 500（HTTP ${resendMissing.status}）`,
             [400, 404, 503].includes(resendMissing.status), String(resendMissing.status));
 
+        // v2.27.0：場地地圖連結與工作人員（讀取公開；寫入一律要管理員）
+        const compList = await get('/api/competitions');
+        const comps = await compList.json().catch(() => []);
+        check('賽事列表帶地圖連結欄位（v2.27.0）',
+            Array.isArray(comps) && comps.every((c) => typeof c.map_url === 'string' && typeof c.map_url_auto === 'boolean'),
+            JSON.stringify(comps[0] || {}).slice(0, 160));
+        check('地圖連結是 https 且沒有 javascript: 之類的東西',
+            Array.isArray(comps) && comps.every((c) => c.map_url === '' || /^https:\/\//i.test(c.map_url)),
+            JSON.stringify(comps.map((c) => c.map_url).filter(Boolean).slice(0, 3)));
+        const staffAnon = await get('/api/competitions/1/staff');
+        check(`工作人員清單公開可讀（HTTP ${staffAnon.status}）`, staffAnon.status === 200, String(staffAnon.status));
+        const staffBody = await staffAnon.json().catch(() => ({}));
+        check('工作人員回應含 schema_ready 與五種角色',
+            typeof staffBody.schema_ready === 'boolean' && Array.isArray(staffBody.roles) && staffBody.roles.length === 5,
+            JSON.stringify(staffBody).slice(0, 140));
+        check('工作人員清單不帶個資（沒有 password／email／token 之類欄位）',
+            Array.isArray(staffBody.staff) && staffBody.staff.every((row) => !('password' in row) && !('email' in row)
+                && !('totp_secret' in row) && !Object.keys(row).some((k) => /token|secret/i.test(k))),
+            JSON.stringify((staffBody.staff || [])[0] || {}).slice(0, 160));
+        const staffWrite = await fetch(SITE + '/api/competitions/1/staff', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: 1, role: 'referee' })
+        });
+        check(`未登入指派工作人員被拒（HTTP ${staffWrite.status}）`,
+            [401, 403].includes(staffWrite.status), String(staffWrite.status));
+
         const wrongRoleToken = jwt.sign({ sub: 4, username: 'nobody', role: 'user' }, secret, { expiresIn: '10m' });
         const denied = await get('/api/admin/error-logs', { Authorization: `Bearer ${wrongRoleToken}` });
         check(`一般角色讀取錯誤日誌被拒（HTTP ${denied.status}）`, [401, 403].includes(denied.status), String(denied.status));
