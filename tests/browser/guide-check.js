@@ -244,10 +244,11 @@ async function main() {
         check(checklist.stepCount >= 10, `操作清單有 ${checklist.stepCount} 個步驟`);
         check(/開好賽事/.test(checklist.bodyText), '操作清單第一步是「開好賽事」');
         check(/公布結果|公布成績/.test(checklist.bodyText), '操作清單包含賽後公布成績的步驟');
-        // v3.6.2：現場報到已經是系統功能（管理員勾選簽到），所以改驗「說明有沒有寫出真正的位置與限制」，
-        // 而不是驗它標示尚未上線。同時確認說明沒有暗示系統有 QR 掃碼報到（沒有這個功能）。
+        // v3.6.5：掃碼報到已上線 → 改驗「有沒有寫出兩種簽到方式（掃碼／手打）」，
+        // 而不是像 v3.6.2 那樣驗它不可以提到 QR。
         check(/現場報到/.test(checklist.bodyText) && /簽到/.test(checklist.bodyText), '操作清單的現場報到寫出系統位置與操作方式');
-        check(!/QR/.test(checklist.bodyText), '操作清單不可以提到系統沒有的 QR 掃碼報到');
+        check(/掃碼|QR/.test(checklist.bodyText), '操作清單要寫出掃碼報到（已經上線的功能）');
+        check(/報到碼/.test(checklist.bodyText), '操作清單要寫出沒有掃碼功能時改用手打報到碼');
 
         // 搜尋時不應該還留著操作清單（避免搜尋結果裡混進不相關的長清單）
         await browser.evaluate(`

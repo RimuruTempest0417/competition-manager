@@ -117,9 +117,11 @@ test('使用說明：現場報到要寫出真正的規則（v3.6.2 起是系統�
     assert.match(sectionText, /取消簽到/, '要寫可以取消（勾錯是常態）');
     assert.match(sectionText, /現場代報名/, '要寫現場代報名');
     assert.match(sectionText, /名額上限/, '要提醒現場代報名仍守名額上限');
-    // 誠實：系統沒有 QR code 掃描，說明不可以暗示有
-    assert.ok(!/掃\s*QR|QR\s*code 報到|掃碼/.test(sectionText), '不可以寫系統沒有的 QR 掃碼報到');
-    assert.match(sectionText, /沒有 QR/, '要明講沒有 QR 掃描，避免有人以為要準備掃碼');
+    // v3.6.5：掃碼報到已經上線 → 說明必須寫出「怎麼用」，也要誠實寫出「哪些裝置掃不了」
+    assert.match(sectionText, /掃碼報到/, '要寫出掃碼報到怎麼用');
+    assert.match(sectionText, /8 碼報到碼/, '要寫出沒有掃碼功能時改用手打 8 碼');
+    assert.match(sectionText, /iPhone/, '要明講 iPhone／iPad 沒有掃碼 API，避免現場才發現');
+    assert.ok(!/沒有 QR|尚未有系統功能/.test(sectionText), '掃碼已上線，不可以再說沒有這個功能');
 
     // 不要留下佔位文字
     for (const bad of ['TODO', 'XXX', '待補', '（略）', 'lorem']) {

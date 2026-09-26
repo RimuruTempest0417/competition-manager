@@ -11,7 +11,7 @@ const { hashPassword, verifyPassword, needsPasswordUpgrade } = require('../lib/p
 // v2.15.0：兩步驟驗證（TOTP）—— 純手寫實作，只用 Node 內建 crypto，無外部套件
 
 module.exports = function registerRegistrationsRoutes(app, ctx) {
-    const { ATTENDANCE_HINT, ADMIN_ROLES, setAuthCookie, clearAuthCookie, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, attendanceSchemaReady, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady } = ctx;
+    const { ATTENDANCE_HINT, CHECKIN_HINT, ADMIN_ROLES, setAuthCookie, clearAuthCookie, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, attendanceSchemaReady, checkinSchemaReady, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady } = ctx;
 app.get('/api/registration-counts', async (req, res) => {
     try {
         // v2.20.0：公開端點只回「佔名額的人數」與「候補人數」這種聚合數字，不含任何個人資訊
@@ -163,6 +163,17 @@ app.get('/api/my/registrations', authenticateToken, async (req, res) => {
                     .eq('competition_id', cid)
                     .eq('is_deleted', false);
                 queues[cid] = CMCompetitionState.waitlistQueue(all || []).map((r) => String(r.id));
+            }
+        }
+
+        // v3.6.5：正取才有報到碼（現場簽到用）。要用才產生（lazy），
+        // 沒跑 migration 時整段略過、清單照常運作，不會因為新功能壞了既有頁面。
+        const checkinReady = await checkinSchemaReady();
+        for (const r of rows) {
+            if (checkinReady && CMCompetitionState.normalizeRegStatus(r.status) === 'confirmed') {
+                try { r.checkin_code = await ensureCheckinCode(r); } catch (err) { r.checkin_code = null; }
+            } else {
+                r.checkin_code = null;
             }
         }
 
@@ -836,6 +847,39 @@ app.get('/api/competitions/:id/registrations', authenticateToken, async (req, re
  * 為什麼只有管理員：現場名單含個資，而且簽到等於「這人今天到了」，要留下操作者。
  * 為什麼只有「正取」能簽到：候補與待審核還沒拿到資格，先簽到會讓現場名額對不上帳。
  * 取消簽到刻意不做二次確認：勾錯是常態，取消本身也會留稽核紀錄（誰在什麼時候取消）。 */
+/* v3.6.5：報到碼（QR 掃碼與手動輸入共用）
+ *
+ * 字母表刻意去掉 I／L／O／0／1：現場手打最容易看錯的就是這幾個；
+ * 8 碼 × 32 字元 ≈ 1.1 兆種組合，不可猜。同一賽事內唯一（DB unique index 把關），
+ * 撞碼（極少數）就重試；既有資料沒有碼 → 要用才產生（lazy），不批次改寫。
+ */
+const CHECKIN_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const CHECKIN_CODE_RE = /^[A-Z0-9]{8}$/;
+
+function makeCheckinCode() {
+    let out = '';
+    for (let i = 0; i < 8; i += 1) out += CHECKIN_ALPHABET[Math.floor(Math.random() * CHECKIN_ALPHABET.length)];
+    return out;
+}
+
+/* 掃碼內容容錯：使用者可能打小寫、夾空白或連字號（QR 掃出來也可能帶換行） */
+function normalizeCheckinCode(input) {
+    // 去掉 QR 內容可能帶的前綴（CM1:/CM:），也容忍小寫、空白、連字號
+    return String(input || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^CM1?/, '');
+}
+
+async function ensureCheckinCode(reg) {
+    if (reg.checkin_code) return reg.checkin_code;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        const code = makeCheckinCode();
+        const { error } = await supabase.from('registrations').update({ checkin_code: code }).eq('id', reg.id);
+        if (!error) return code;
+        const message = String(error.message || '').toLowerCase();
+        if (!message.includes('duplicate') && !message.includes('unique')) throw error;
+    }
+    return null;
+}
+
 app.post('/api/registrations/:id/attendance', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const body = req.body || {};
@@ -890,6 +934,75 @@ app.post('/api/registrations/:id/attendance', authenticateToken, async (req, res
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
         await logErrorToDb(req, 'registration_attendance_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* v3.6.5：用報到碼簽到（QR 掃碼與手動輸入共用同一個端點）
+ *
+ * 為什麼要有這條：現場簽到原本只能「在名單上找名字點一下」——人一多、字體一小的時候很慢，
+ * 而且排隊的人得報名字給工作人員聽。改成掃手機上的 QR（或手打 8 碼）就快得多。
+ * 規則與逐筆簽到完全一致（只有正取可簽到、留稽核），刻意不另立一套。
+ */
+app.post('/api/registrations/attendance-by-code', authenticateToken, async (req, res) => {
+    const body = req.body || {};
+    const code = normalizeCheckinCode(body.code);
+
+    if (!ADMIN_ROLES.has(req.user.role)) {
+        return res.status(403).json({ error: '權限不足：只有管理員以上可以處理現場報到' });
+    }
+    if (!CHECKIN_CODE_RE.test(code)) {
+        return res.status(400).json({ error: '報到碼格式不對：請掃 QR，或輸入 8 碼代碼（只有英數字）' });
+    }
+
+    try {
+        if (!(await checkinSchemaReady())) return res.status(503).json({ error: CHECKIN_HINT });
+        if (!(await attendanceSchemaReady())) return res.status(503).json({ error: ATTENDANCE_HINT });
+
+        const { data: reg, error } = await supabase
+            .from('registrations')
+            .select('id,competition_id,username,status,is_deleted,attended_at,attended_by,checkin_code')
+            .eq('checkin_code', code)
+            .maybeSingle();
+        if (error) throw error;
+        if (!reg || reg.is_deleted) {
+            return res.status(404).json({ error: `找不到報到碼 ${code} 對應的報名紀錄：請確認是不是這一場的碼` });
+        }
+        if (reg.attended_at) {
+            return res.status(409).json({
+                error: `${reg.username} 已經簽到過了（${new Date(reg.attended_at).toLocaleString('zh-TW', { hour12: false })}，由 ${reg.attended_by || '—'}）`,
+                already: true,
+                registration: { id: reg.id, username: reg.username, attended_at: reg.attended_at }
+            });
+        }
+
+        const comp = await fetchCompetition(reg.competition_id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+        const status = CMCompetitionState.normalizeRegStatus(reg.status);
+        if (status !== 'confirmed') {
+            const label = CMCompetitionState.REG_STATUS_LABELS[status] || status;
+            return res.status(400).json({
+                error: `只有「正取」可以簽到（${reg.username} 目前是${label}）：請先核准或遞補，再回來簽到`,
+                status
+            });
+        }
+
+        const patch = { attended_at: new Date().toISOString(), attended_by: req.user.username };
+        const { error: updateError } = await supabase.from('registrations').update(patch).eq('id', reg.id);
+        if (updateError) throw updateError;
+
+        await logAudit(req.user.username, 'REGISTER_ATTENDED', comp.id,
+            `現場簽到（掃碼／報到碼 ${code}）：${reg.username}（${comp.name}）`, req.userAgent);
+
+        res.json({
+            message: `${reg.username} 已簽到（${comp.name}）`,
+            attended: true,
+            competition: { id: comp.id, name: comp.name },
+            registration: { id: reg.id, username: reg.username, attended_at: patch.attended_at, attended_by: patch.attended_by }
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: REGISTRATION_HINT });
+        await logErrorToDb(req, 'attendance_by_code_error', err);
         res.status(500).json({ error: err.message });
     }
 });

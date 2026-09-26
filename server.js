@@ -1772,6 +1772,16 @@ const ATTENDANCE_HINT =
 
 const attendanceSchemaReady = createSchemaProbe(() => columnExists('registrations', 'attended_at'));
 
+/* ---------- v3.6.5：現場報到的報到碼（QR 掃碼報到的地基）----------
+   為什麼不掃報名編號：編號可以猜到，掃碼內容必須不可猜（否則任何人都能幫別人簽到）；
+   而且要短（QR 越小越好掃）＋能手打（iPhone 沒有 BarcodeDetector，相機掃碼做不到）。
+   ------------------------------------------------------------------ */
+const CHECKIN_HINT =
+    '資料庫尚未執行 v3.6.5 migration（migrations/2026-09-27-v3.6.5-checkin-code.sql）：' +
+    '報到碼需要 registrations.checkin_code 欄位與同賽事內唯一的索引。';
+
+const checkinSchemaReady = createSchemaProbe(() => columnExists('registrations', 'checkin_code'));
+
 
 /* v2.22.0：遞補通知開關也只多一個欄位（competitions.waitlist_notify）。 */
 /* 候補異動紀錄一次最多往回抓幾筆（避免有人用 offset 無限翻） */
@@ -2118,7 +2128,7 @@ async function logPushEvent(competitionId, kind, sentCount, extra) {
 // 各賽事報名人數（公開的彙總資訊，未執行 migration 時回空物件）
 
 /* ---------- 報名、審核、候補與帳號：v3.4.0 起移到 routes/registrations.js ---------- */
-require('./routes/registrations')(app, { ATTENDANCE_HINT, ADMIN_ROLES, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, attendanceSchemaReady, registrationReviewSchemaReady, registrationSummary, clearAuthCookie, requireAdmin, setAuthCookie, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
+require('./routes/registrations')(app, { ATTENDANCE_HINT, CHECKIN_HINT, ADMIN_ROLES, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, attendanceSchemaReady, checkinSchemaReady, registrationReviewSchemaReady, registrationSummary, clearAuthCookie, requireAdmin, setAuthCookie, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
 
 /* ---------- 隊伍與隊員編排：v3.4.0 起移到 routes/teams.js ---------- */
 require('./routes/teams')(app, { ADMIN_ROLES, REGISTRATION_HINT, SUPER_ADMIN_ROLES, attendanceSchemaReady, authenticateToken, cleanText, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, notifyOnPromote, registrationReviewSchemaReady, requireAdmin, requireSuperAdmin, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });

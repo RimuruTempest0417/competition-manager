@@ -174,6 +174,15 @@ const login = async (browser, username, password) => {
         await browser.screenshot(path.join(SHOTS, '02-下拉搬到第3位.png'));
 
         // ---------- 3. 拖拉把最後一列拖到最前面 ----------
+        // ★拖曳前先把名單捲到看得見的位置：拖曳是靠 elementFromPoint(clientX, clientY) 找要放下的那一列，
+        //   名單若被上方的功能擠到可視範圍外／只露出一角，事件座標就命不到列 → 拖曳被丟掉。
+        //   真實使用者拖曳前一定會先看到那一列，所以測試要先做同一件事（不然這支檢查只是在賭版面剛好而已）。
+        await browser.evaluate(`
+            const list = document.getElementById('waitlistList');
+            if (list) list.scrollIntoView({ block: 'center' });
+            return true;
+        `);
+        await new Promise((r) => setTimeout(r, 300));
         await browser.evaluate(`
             const rows = Array.from(document.querySelectorAll('#waitlistList [data-waitlist-id]'));
             const last = rows[rows.length - 1];

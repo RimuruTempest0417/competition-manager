@@ -1036,6 +1036,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const btn = e.target.closest('button');
         if (!btn) return;
         const action = btn.dataset.action;
+        if (action === 'show-checkin-qr') return openCheckinQrModal(btn.dataset.id);
         if (action === 'cancel-reg') return cancelRegistration(Number(btn.dataset.id));
         if (action === 'reg-ics') return downloadRegistrationIcs(Number(btn.dataset.id));
         if (action === 'reg-gcal') return openRegistrationGoogleCalendar(Number(btn.dataset.id));
@@ -1096,6 +1097,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('onsiteCancelBtn')?.addEventListener('click', () => toggleOnsiteForm(false));
     document.getElementById('onsiteSubmitBtn')?.addEventListener('click', submitOnsiteRegistration);
     document.getElementById('attendanceReloadBtn')?.addEventListener('click', () => { if (currentTeamComp) loadTeams(currentTeamComp.id); });
+    // v3.6.5：掃碼報到（按鈕／輸入報到碼／停止掃碼）
+    // 收合面板：預設不佔高度（名單不會被擠下去），按了才展開
+    document.getElementById('attendanceScanToggleBtn')?.addEventListener('click', () => {
+        const wrap = document.getElementById('attendanceScanWrap');
+        if (!wrap) return;
+        const opening = wrap.classList.contains('hidden');
+        wrap.classList.toggle('hidden', !opening);
+        if (opening) {
+            setScanHint(scanSupported() ? '' : '這台裝置的瀏覽器沒有掃碼功能（iPhone／Safari 都沒有）→ 請直接輸入 8 碼報到碼。');
+            document.getElementById('attendanceCodeInput')?.focus();
+        } else {
+            stopCheckinScan();
+        }
+    });
+    document.getElementById('attendanceScanBtn')?.addEventListener('click', () => {
+        if (cmScanStream) stopCheckinScan(); else startCheckinScan();
+    });
+    document.getElementById('attendanceScanStopBtn')?.addEventListener('click', stopCheckinScan);
+    document.getElementById('attendanceCodeBtn')?.addEventListener('click', () => {
+        submitCheckinCode(document.getElementById('attendanceCodeInput')?.value || '');
+    });
+    document.getElementById('attendanceCodeInput')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            submitCheckinCode(e.target.value || '');
+        }
+    });
+    document.getElementById('closeCheckinQrBtn')?.addEventListener('click', closeCheckinQrModal);
     document.getElementById('attendanceSearch')?.addEventListener('input', (e) => {
         attendanceQuery = e.target.value || '';
         renderAttendanceSection(lastTeamsData || {});
@@ -2074,6 +2103,131 @@ function myRegStatusBadge(r) {
     return `<span class="ml-1 align-middle text-xs font-medium px-2 py-0.5 rounded-full ${cls}">${escapeHtml(label)}${extra ? ' ' + extra : ''}</span>`;
 }
 
+/* ---------- v3.6.5：掃碼報到與報到碼 ----------
+ *
+ * 為什麼要有兩條路：BarcodeDetector 這個瀏覽器 API 只有 Android 的 Chrome 有，
+ * iPhone（Safari 與 iOS 的 Chrome）完全沒有——所以「手打 8 碼」不是備援，是另一條主要路徑。
+ * 沒有掃碼能力的裝置**不會**看到一個按了沒反應的按鈕，而是直接被告知要用哪一種方式。
+ */
+let cmScanStream = null;
+let cmScanTimer = null;
+
+function scanSupported() {
+    return typeof window.BarcodeDetector === 'function'
+        && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+
+function setScanHint(message) {
+    const hint = document.getElementById('attendanceScanHint');
+    if (!hint) return;
+    hint.innerText = message || '';
+    hint.classList.toggle('hidden', !message);
+}
+
+/* 送出報到碼。QR 內容會是 CM1:XXXXXXXX，所以先去掉前綴再驗 8 碼 */
+async function submitCheckinCode(rawCode) {
+    const code = String(rawCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^CM1?/, '');
+    if (code.length !== 8) {
+        setTeamMsg('報到碼是 8 碼英數字（QR 內容也接受）：請確認後再試', 'error');
+        return false;
+    }
+    try {
+        const res = await customFetch('/api/registrations/attendance-by-code', {
+            method: 'POST',
+            body: JSON.stringify({ code })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '簽到失敗');
+        setTeamMsg(data.message || '已簽到', 'success');
+        setScanHint('');
+        const input = document.getElementById('attendanceCodeInput');
+        if (input) input.value = '';
+        if (currentTeamComp) await loadTeams(currentTeamComp.id);   // 名單立刻更新（已簽到幾人）
+        return true;
+    } catch (err) {
+        setTeamMsg(err.message || '簽到失敗', 'error');
+        return false;
+    }
+}
+
+function stopCheckinScan() {
+    if (cmScanTimer) { clearTimeout(cmScanTimer); cmScanTimer = null; }
+    if (cmScanStream) {
+        try { cmScanStream.getTracks().forEach((track) => track.stop()); } catch (err) { /* 忽略 */ }
+        cmScanStream = null;
+    }
+    const box = document.getElementById('attendanceScanBox');
+    const video = document.getElementById('attendanceScanVideo');
+    if (video) video.srcObject = null;
+    if (box) box.classList.add('hidden');
+}
+
+async function startCheckinScan() {
+    if (!scanSupported()) {
+        setScanHint('這台裝置的瀏覽器沒有掃碼功能（iPhone／Safari 都沒有）→ 請直接輸入 8 碼報到碼，或請對方把手機給你手動核對。');
+        return;
+    }
+    try {
+        cmScanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    } catch (err) {
+        setScanHint(`拿不到相機權限（${err && err.name ? err.name : '未知'}）：請允許相機後再試，或改用輸入報到碼。`);
+        return;
+    }
+    const video = document.getElementById('attendanceScanVideo');
+    const box = document.getElementById('attendanceScanBox');
+    if (!video || !box) return;
+    video.srcObject = cmScanStream;
+    try { await video.play(); } catch (err) { /* 某些瀏覽器要使用者手勢，忽略 */ }
+    box.classList.remove('hidden');
+    setScanHint('把鏡頭對準選手的 QR，不需要按快門。');
+
+    const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+    const tick = async () => {
+        if (!cmScanStream) return;
+        try {
+            const found = await detector.detect(video);
+            if (found && found.length) {
+                const raw = found[0].rawValue || '';
+                stopCheckinScan();
+                await submitCheckinCode(raw);
+                return;
+            }
+        } catch (err) { /* 單一格畫面失敗就繼續掃 */ }
+        cmScanTimer = setTimeout(tick, 350);
+    };
+    tick();
+}
+
+function openCheckinQrModal(id) {
+    const r = (myRegistrations || []).find((x) => String(x.id) === String(id));
+    if (!r) return;
+    const comp = r.competitions || {};
+    const code = r.checkin_code || '';
+    const label = document.getElementById('checkinQrComp');
+    if (label) label.innerText = `${comp.name || ''}${comp.date ? `｜${comp.date}${comp.time ? ' ' + comp.time : ''}` : ''}`;
+    const codeEl = document.getElementById('checkinQrCode');
+    if (codeEl) codeEl.innerText = code || '—';
+    const box = document.getElementById('checkinQrBox');
+    if (box) {
+        if (code && window.CMQr) {
+            try {
+                box.innerHTML = CMQr.svg(`CM1:${code}`, { scale: 6, margin: 3, alt: `${comp.name || '賽事'} 報到碼 ${code}` });
+            } catch (err) {
+                box.innerHTML = '<p class="text-xs text-red-600">QR 產生失敗，請直接把下方 8 碼報到碼給工作人員</p>';
+            }
+        } else {
+            box.innerHTML = `<p class="text-xs text-slate-500">${code
+                ? '這個瀏覽器載不到 QR 模組，請直接把下方 8 碼報到碼給工作人員。'
+                : '這筆報名目前沒有報到碼（只有正取會有；候補請先遞補為正取）。'}</p>`;
+        }
+    }
+    document.getElementById('checkinQrModal')?.classList.remove('hidden');
+}
+
+function closeCheckinQrModal() {
+    document.getElementById('checkinQrModal')?.classList.add('hidden');
+}
+
 function renderMyRegs() {
     const list = document.getElementById('myRegsList');
     if (!list) return;
@@ -2099,6 +2253,10 @@ function renderMyRegs() {
                 <p class="text-xs text-slate-500 mt-0.5">📅 ${escapeHtml(comp.date || '')}${comp.time ? ' ' + escapeHtml(comp.time) : ''}${comp.location ? ' ｜ 📍 ' + escapeHtml(comp.location) : ''}</p>
                 ${comp.is_team_event && r.team_name ? `<p class="text-xs text-indigo-600 mt-0.5">👥 隊伍：${escapeHtml(r.team_name)}</p>` : ''}
                 ${r.note ? `<p class="text-xs text-slate-500 mt-0.5">📝 ${escapeHtml(r.note)}</p>` : ''}
+                ${r.checkin_code ? `<div class="mt-1.5">
+                    <button type="button" data-action="show-checkin-qr" data-id="${r.id}"
+                        class="text-xs text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded transition">📷 報到碼 / QR（現場出示）</button>
+                </div>` : ''}
                 ${myResultHtml(r.competition_id)}
                 <p class="text-xs text-slate-400 mt-0.5">報名時間：${escapeHtml(String(r.created_at || '').slice(0, 16).replace('T', ' '))}</p>
             </div>
