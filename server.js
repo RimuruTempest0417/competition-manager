@@ -347,6 +347,8 @@ const COMPETITION_STATE_LABELS = CMCompetitionState.LABELS;
 const COMPETITION_STATE_TONES = CMCompetitionState.TONES;
 const competitionTimeline = CMCompetitionState.timeline;
 const parseTimestamp = CMCompetitionState.parseTimestamp;
+// v2.24.0：週期性賽事的判斷規則（與前端同一份純函式）
+const planRecurringCreation = CMCompetitionState.planRecurringCreation;
 
 function competitionState(comp, now, options) {
     return CMCompetitionState.evaluate(comp, now, options);
@@ -1077,6 +1079,9 @@ const AUDIT_ACTION_LABELS = {
     PROMOTE_WAITLIST: '手動遞補候補',
     REORDER_WAITLIST: '調整候補順位',
     WAITLIST_NOTIFY: '調整遞補通知設定',
+    DUPLICATE_COMPETITION: '複製賽事',
+    SET_RECURRENCE: '設定賽事週期',
+    CREATE_RECURRING_COMPETITION: '週期性賽事建立下一場',
     AUTO_PROMOTE_WAITLIST: '自動遞補候補',
     PURGE_AUDIT_LOGS: '清理稽核日誌',
     '2FA_SETUP_STARTED': '開始設定兩步驟驗證',
@@ -2522,6 +2527,147 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
     }
 });
 
+// v2.24.0：複製賽事（設定照抄；報名、隊伍、海報都不搬）
+app.post('/api/competitions/:id/duplicate', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const operator = req.currentUser;
+    try {
+        const { data: rows, error } = await supabase.from('competitions').select('*').eq('id', id);
+        if (error) throw error;
+        const src = rows && rows[0];
+        if (!src) return res.status(404).json({ error: '找不到這筆賽事' });
+
+        const schema = await copySchemaReady();
+        const baseName = String(src.name || '').trim() || '未命名賽事';
+        // 名稱一律加「（複製）」；原本就已經是複製品的話不會變成「（複製）（複製）」
+        const copyName = (baseName.replace(/（複製）$/, '') + '（複製）').slice(0, 190);
+        const payload = buildDuplicatePayload(src, copyName, schema, { series: false });
+
+        const { data: created, error: insErr } = await supabase.from('competitions').insert([payload]).select();
+        if (insErr) throw insErr;
+        const row = created[0];
+        await logAudit(
+            operator.username,
+            'DUPLICATE_COMPETITION',
+            row.id,
+            `複製賽事：${baseName} → ${copyName}（日期 ${row.date || '未填'}；報名與隊伍不搬）`,
+            req.userAgent
+        );
+        res.status(201).json(Object.assign({}, row, {
+            copied_from: src.id,
+            copied_from_name: baseName,
+            copied_fields: Object.keys(schema).filter((k) => schema[k])
+        }));
+    } catch (err) {
+        if (isMissingColumnError(err, ['category', 'tags', 'is_team_event', 'team_size', 'max_registrations', 'registration_deadline'])) {
+            return res.status(503).json({ error: '資料庫欄位不足，請先執行 migrations/ 內的 SQL' });
+        }
+        await logErrorToDb(req, 'duplicate_competition_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// v2.24.0：設定／取消賽事週期（自動建立下一場的開關）
+app.post('/api/competitions/:id/recurrence', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const operator = req.currentUser;
+    if (!(await recurrenceSchemaReady())) return res.status(503).json({ error: RECURRENCE_HINT });
+
+    const body = req.body || {};
+    const rule = body.recurrence ? normalizeRecurrenceRule(body.recurrence) : null;
+    if (body.recurrence && !rule) {
+        return res.status(400).json({ error: '週期只能是每週（weekly）、每兩週（biweekly）或每月（monthly）' });
+    }
+    const untilRaw = body.recurrence_until ? String(body.recurrence_until).trim().slice(0, 10) : null;
+    if (untilRaw && !/^\d{4}-\d{2}-\d{2}$/.test(untilRaw)) {
+        return res.status(400).json({ error: '週期結束日格式要像 2026-12-31' });
+    }
+
+    try {
+        const { data: rows, error } = await supabase.from('competitions').select('*').eq('id', id);
+        if (error) throw error;
+        const comp = rows && rows[0];
+        if (!comp) return res.status(404).json({ error: '找不到這筆賽事' });
+
+        const compDate = String(comp.date || '').slice(0, 10);
+        if (rule && untilRaw && /^\d{4}-\d{2}-\d{2}$/.test(compDate) && untilRaw < compDate) {
+            return res.status(400).json({ error: '週期結束日不能早於賽事日期' });
+        }
+
+        const { data: updated, error: upErr } = await supabase
+            .from('competitions')
+            .update({ recurrence: rule, recurrence_until: rule ? untilRaw : null })
+            .eq('id', id)
+            .select();
+        if (upErr) throw upErr;
+        const row = (updated && updated[0]) || comp;
+
+        // 週期是「整個系列」的設定：同一系列的其他場次一起同步，
+        // 否則每一場各記一份週期，之後改其中一場會出現兩種說法。
+        const rootId = String(comp.recurrence_parent_id || comp.id);
+        let synced = 0;
+        const { data: allRows } = await supabase.from('competitions').select('*');
+        const members = (allRows || []).filter((c) => !c.is_deleted && (
+            String(c.id) === rootId || String(c.recurrence_parent_id || '') === rootId
+        ));
+        for (const member of members) {
+            if (String(member.id) === String(id)) continue;
+            const { error: memberErr } = await supabase
+                .from('competitions')
+                .update({ recurrence: rule, recurrence_until: rule ? untilRaw : null })
+                .eq('id', member.id);
+            if (!memberErr) synced++;
+        }
+
+        await logAudit(
+            operator.username,
+            'SET_RECURRENCE',
+            id,
+            (rule
+                ? `設定週期：${RECURRENCE_RULE_LABELS[rule]}${untilRaw ? `（到 ${untilRaw} 為止）` : '（一直重複）'}`
+                : '取消週期設定') + (members.length > 1 ? `（系列共 ${members.length} 場同步）` : ''),
+            req.userAgent
+        );
+        res.json(Object.assign({}, row, {
+            recurrence_label: rule ? RECURRENCE_RULE_LABELS[rule] : null,
+            series_synced: synced
+        }));
+    } catch (err) {
+        if (isMissingColumnError(err, ['recurrence', 'recurrence_until'])) {
+            recurrenceSchemaCache = false;
+            return res.status(503).json({ error: RECURRENCE_HINT });
+        }
+        await logErrorToDb(req, 'set_recurrence_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// v2.24.0：立刻建立下一場（與每日 cron 共用同一份判斷；不需要等排程）
+app.post('/api/competitions/:id/recurrence/next', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    if (!(await recurrenceSchemaReady())) return res.status(503).json({ error: RECURRENCE_HINT });
+    try {
+        const { data: rows, error } = await supabase.from('competitions').select('*').eq('id', id);
+        if (error) throw error;
+        const comp = rows && rows[0];
+        if (!comp) return res.status(404).json({ error: '找不到這筆賽事' });
+
+        const result = await createNextOccurrence(comp, req.currentUser, req.userAgent);
+        if (!result.created) {
+            // 409：不是錯誤，是「現在還不需要建立」——把原因照實回給介面顯示
+            return res.status(409).json({ error: result.reason || '現在還不需要建立下一場', date: result.date, overdue: !!result.overdue });
+        }
+        res.status(201).json(Object.assign({}, result.competition, { created_from: id, next_date: result.date }));
+    } catch (err) {
+        if (isMissingColumnError(err, ['recurrence', 'recurrence_until', 'recurrence_parent_id'])) {
+            recurrenceSchemaCache = false;
+            return res.status(503).json({ error: RECURRENCE_HINT });
+        }
+        await logErrorToDb(req, 'create_recurring_competition_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // 編輯比賽
 app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
@@ -2708,6 +2854,200 @@ async function waitlistNotifySchemaReady() {
         console.warn('⚠️ 尚未執行 v2.22.0 migration：遞補通知開關停用（一律通知）');
     }
     return waitlistNotifySchemaCache;
+}
+
+/* ── v2.24.0：複製賽事與週期性賽事 ──────────────────────────────
+   規則本身在 public/js/competition-state.js（前後端共用同一份），
+   這裡只負責：探測欄位、組出複製用的 payload、把「下一場」寫進資料庫。 */
+
+const RECURRENCE_HINT =
+    '資料庫尚未執行 v2.24.0 migration（migrations/2026-09-26-v2.24.0-recurrence.sql）：' +
+    '週期性賽事需要 competitions.recurrence／recurrence_until／recurrence_parent_id 欄位（未執行時仍可手動複製賽事）。';
+
+const RECURRENCE_RULE_LABELS = { weekly: '每週', biweekly: '每兩週', monthly: '每月' };
+
+let recurrenceSchemaCache = null;
+
+async function recurrenceSchemaReady() {
+    if (recurrenceSchemaCache !== null) return recurrenceSchemaCache;
+    recurrenceSchemaCache = await columnExists('competitions', 'recurrence');
+    if (!recurrenceSchemaCache) {
+        console.warn('⚠️ 尚未執行 v2.24.0 migration：週期性賽事自動建立停用（手動複製不受影響）');
+    }
+    return recurrenceSchemaCache;
+}
+
+function normalizeRecurrenceRule(value) {
+    const v = String(value == null ? '' : value).trim().toLowerCase();
+    return RECURRENCE_RULE_LABELS[v] ? v : null;
+}
+
+/* 各欄位是否存在（複製時「不存在就不要帶」，免得整筆新增失敗） */
+async function copySchemaReady() {
+    const [taxonomy, teamFields, window, review, notify, recurrence] = await Promise.all([
+        taxonomySchemaReady(),
+        teamSchemaReady(),
+        registrationWindowSchemaReady(),
+        registrationReviewSchemaReady(),
+        waitlistNotifySchemaReady(),
+        recurrenceSchemaReady()
+    ]);
+    return { taxonomy, teamFields, window, review, notify, recurrence };
+}
+
+/* 複製賽事要搬哪些欄位？
+   設定照搬（地點／時間／分類／隊伍設定／報名窗／審核與候補／通知開關），
+   進度不搬（報名、隊伍、海報檔都不帶）。
+   options.series = true 時連週期設定一起帶（自動建立下一場用）；
+   手動複製則不帶（複製品視為獨立的一場，不會被 cron 當成系列的一員）。 */
+function buildDuplicatePayload(source, name, schema, options) {
+    const s = schema || {};
+    const opts = options || {};
+    const payload = {
+        name,
+        location: source.location || '',
+        date: source.date || '',
+        time: source.time || '',
+        end_date: source.end_date || null,
+        end_time: source.end_time || null,
+        description: source.description || '',
+        is_registration_open: !!source.is_registration_open,
+        is_deleted: false,
+        created_at: new Date().toISOString()
+    };
+    if (s.taxonomy) {
+        payload.category = source.category == null ? null : source.category;
+        payload.tags = source.tags == null ? null : source.tags;
+    }
+    if (s.teamFields) {
+        payload.is_team_event = !!source.is_team_event;
+        payload.team_size = source.team_size == null ? null : source.team_size;
+        payload.registration_deadline = source.registration_deadline == null ? null : source.registration_deadline;
+        payload.max_registrations = source.max_registrations == null ? null : source.max_registrations;
+    }
+    if (s.window) {
+        payload.registration_start_at = source.registration_start_at == null ? null : source.registration_start_at;
+        payload.registration_end_at = source.registration_end_at == null ? null : source.registration_end_at;
+    }
+    if (s.review) {
+        payload.requires_approval = !!source.requires_approval;
+        payload.waitlist_enabled = !!source.waitlist_enabled;
+    }
+    if (s.notify) {
+        payload.waitlist_notify = source.waitlist_notify !== false;
+    }
+    if (s.recurrence && opts.series) {
+        payload.recurrence = normalizeRecurrenceRule(source.recurrence);
+        payload.recurrence_until = source.recurrence_until == null ? null : source.recurrence_until;
+    }
+    return payload;
+}
+
+/* 把時間欄位往後挪 N 天（只動日期部分，時間與時區寫法原樣保留） */
+function shiftDateField(value, days) {
+    const raw = String(value == null ? '' : value);
+    if (!raw) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})([\s\S]*)$/.exec(raw);
+    if (!m) return raw;
+    const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    if (isNaN(dt.getTime())) return raw;
+    dt.setUTCDate(dt.getUTCDate() + days);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}${m[4]}`;
+}
+
+function daysBetween(fromDate, toDate) {
+    const one = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(fromDate || '').slice(0, 10));
+    const two = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(toDate || '').slice(0, 10));
+    if (!one || !two) return null;
+    const a = Date.UTC(Number(one[1]), Number(one[2]) - 1, Number(one[3]));
+    const b = Date.UTC(Number(two[1]), Number(two[2]) - 1, Number(two[3]));
+    return Math.round((b - a) / 86400000);
+}
+
+/* 建立系列的下一場（每日 cron 與介面「立即建立下一場」共用同一條路）
+   回 { created, date, reason, overdue, competition } */
+async function createNextOccurrence(seriesComp, operator, userAgent) {
+    if (!(await recurrenceSchemaReady())) {
+        return { created: false, date: null, reason: RECURRENCE_HINT, overdue: false, competition: null };
+    }
+    // 路徑參數是字串、資料庫 id 是數字：一律用字串比對，否則系列成員會認不出彼此
+    const rootId = String(seriesComp.recurrence_parent_id || seriesComp.id);
+    const { data: rows, error } = await supabase
+        .from('competitions')
+        .select('*');   // 這裡刻意全欄位取回再自己篩（欄位投影在不同 Supabase 版本行為不一）
+    if (error) throw error;
+    const all = (rows || []).filter((c) => !c.is_deleted);
+    const seriesRows = all.filter((c) => String(c.id) === rootId || String(c.recurrence_parent_id || '') === rootId);
+    // 以系列中「日期最新」的那一場當範本：手動改過的最新設定才會延續
+    const latest = seriesRows.reduce((best, c) => (!best || String(c.date || '') > String(best.date || '') ? c : best), null);
+    const source = seriesRows.find((c) => String(c.id) === String(seriesComp.id)) || seriesComp;
+    const template = latest && String(latest.date || '') >= String(source.date || '') ? latest : source;
+    const plan = planRecurringCreation(template, seriesRows.map((c) => c.date), new Date());
+    if (!plan.create) {
+        return { created: false, date: plan.date, reason: plan.reason, overdue: !!plan.overdue, competition: null };
+    }
+
+    const schema = await copySchemaReady();
+    // 範本要完整的欄位，這裡再讀一次那一列
+    const { data: fullRows, error: fullErr } = await supabase.from('competitions').select('*').eq('id', template.id);
+    if (fullErr) throw fullErr;
+    const full = (fullRows && fullRows[0]) || template;
+    const name = String(full.name || '').replace(/（複製）$/, '').slice(0, 190) || '未命名賽事';
+    const payload = buildDuplicatePayload(full, name, schema, { series: true });
+    payload.date = plan.date;
+    // 寫入時盡量給數字（欄位是 integer）；給不出數字才原樣帶
+    const rootNum = Number(rootId);
+    payload.recurrence_parent_id = Number.isFinite(rootNum) && rootId !== '' ? rootNum : rootId;
+
+    // 日期往後挪幾天，報名窗與截止日一起挪，免得新場次的報名時間還停在舊日期
+    const delta = daysBetween(full.date, plan.date);
+    if (schema.window && delta) {
+        payload.registration_start_at = shiftDateField(full.registration_start_at, delta);
+        payload.registration_end_at = shiftDateField(full.registration_end_at, delta);
+        if (schema.teamFields) payload.registration_deadline = shiftDateField(full.registration_deadline, delta);
+    }
+
+    const { data: created, error: insErr } = await supabase.from('competitions').insert([payload]).select();
+    if (insErr) throw insErr;
+    const row = created[0];
+    await logAudit(
+        (operator && operator.username) || 'system',
+        'CREATE_RECURRING_COMPETITION',
+        row.id,
+        `週期性賽事建立下一場：${row.name}（${plan.date}；週期 ${RECURRENCE_RULE_LABELS[full.recurrence] || '未設定'}）`,
+        userAgent
+    );
+    return { created: true, date: plan.date, reason: '', overdue: false, competition: row };
+}
+
+/* 每日 cron 用：每個系列看一次，該建就建 */
+async function runRecurringCompetitions() {
+    if (!(await recurrenceSchemaReady())) return { checked: 0, created: 0, skipped: 0, schema: 'missing' };
+    const { data: rows, error } = await supabase
+        .from('competitions')
+        .select('*');
+    if (error) {
+        if (isMissingColumnError(error, ['recurrence', 'recurrence_until', 'recurrence_parent_id'])) {
+            recurrenceSchemaCache = false;
+            return { checked: 0, created: 0, skipped: 0, schema: 'missing' };
+        }
+        throw error;
+    }
+    const series = new Map();
+    for (const row of (rows || []).filter((c) => !c.is_deleted && c.recurrence)) {
+        const rootId = String(row.recurrence_parent_id || row.id);
+        const cur = series.get(rootId);
+        if (!cur || String(row.date || '') > String(cur.date || '')) series.set(rootId, row);
+    }
+    let created = 0;
+    let skipped = 0;
+    for (const latest of series.values()) {
+        const result = await createNextOccurrence(latest, { username: 'system' }, 'cron');
+        if (result.created) created++;
+        else skipped++;
+    }
+    return { checked: series.size, created, skipped };
 }
 
 /* 這個賽事遞補時要不要通知？（欄位不存在 → 通知；NULL → 通知） */
@@ -4268,6 +4608,8 @@ app.get('/api/cron/reminders', async (req, res) => {
                 }
             }
         }
+        // v2.24.0：每日排程順便看「有沒有哪個系列該開下一場了」（沒設定週期的賽事完全不影響）
+        result.recurring = await runRecurringCompetitions();
         res.json(Object.assign({ ok: true, ranAt: new Date().toISOString() }, result));
     } catch (err) {
         if (isMissingTableError(err) || /migration/.test(err.message || '')) {

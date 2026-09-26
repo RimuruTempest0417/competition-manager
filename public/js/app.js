@@ -861,6 +861,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // v2.10.0：海報上傳與推播訂閱
     document.getElementById('posterFile')?.addEventListener('change', handlePosterFileChange);
     document.getElementById('posterRemoveBtn')?.addEventListener('click', handlePosterRemove);
+    // v2.24.0：週期性賽事
+    document.getElementById('closeRecurrenceModalBtn')?.addEventListener('click', closeRecurrenceModal);
+    document.getElementById('closeRecurrenceBtn')?.addEventListener('click', closeRecurrenceModal);
+    document.getElementById('recurrenceSaveBtn')?.addEventListener('click', saveRecurrence);
+    document.getElementById('recurrenceNextBtn')?.addEventListener('click', createNextOccurrenceNow);
+    document.getElementById('recurrenceRule')?.addEventListener('change', () => updateRecurrenceHint());
     document.getElementById('pushSubscribeBtn')?.addEventListener('click', handlePushSubscribe);
     document.getElementById('pushUnsubscribeBtn')?.addEventListener('click', handlePushUnsubscribe);
     document.getElementById('pushTestBtn')?.addEventListener('click', handlePushTest);
@@ -997,6 +1003,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             openTeamModal(id);
         } else if (action === 'copy-comp') {
             copyCompetition(id);
+        } else if (action === 'duplicate-comp') {
+            duplicateCompetition(id);
+        } else if (action === 'recurrence-comp') {
+            openRecurrenceModal(id);
         } else if (action === 'edit-comp') {
             startEdit(id);
         } else if (action === 'delete-comp') {
@@ -3455,6 +3465,8 @@ function competitionCardHtml(item) {
                     <button data-action="copy-comp" data-id="${item.id}" class="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded transition">複製發佈</button>
                     <button data-action="edit-comp" data-id="${item.id}" class="text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded transition">編輯</button>
                     <button data-action="manage-teams" data-id="${item.id}" class="text-xs text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded transition">👥 報名／隊伍</button>
+                    <button data-action="duplicate-comp" data-id="${item.id}" class="text-xs text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 px-2.5 py-1 rounded transition">📄 複製賽事</button>
+                    <button data-action="recurrence-comp" data-id="${item.id}" class="text-xs ${item.recurrence ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 font-medium' : 'text-slate-600 bg-slate-100 hover:bg-slate-200'} px-2.5 py-1 rounded transition">🔁 ${item.recurrence ? recurrenceRuleLabel(item.recurrence) : '週期'}</button>
                     <button data-action="delete-comp" data-id="${item.id}" class="text-xs text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded transition">刪除</button>
                 ` : ''}
             </div>
@@ -3639,6 +3651,113 @@ async function deleteCompetition(id) {
         fetchCompetitions();
     } catch (err) {
         alert(err.message);
+    }
+}
+
+/* ── v2.24.0：複製賽事與週期性賽事 ── */
+let recurrenceComp = null;
+
+function recurrenceRuleLabel(rule) {
+    const rules = window.CMCompetitionState && window.CMCompetitionState.RECURRENCE_RULES;
+    return (rules && rules[rule]) || '';
+}
+
+const findCompetitionById = (id) => allCompetitions.find((c) => String(c.id) === String(id));
+
+/* 複製賽事：設定照抄、報名與隊伍不搬（後端負責，這裡只負責問清楚與回報） */
+async function duplicateCompetition(id) {
+    const item = findCompetitionById(id);
+    const name = item ? item.name : '這場賽事';
+    if (!confirm(`要複製「${name}」嗎？\n\n會複製賽事的設定（日期、地點、分類、隊伍設定、報名時間、審核與候補），\n但不會複製報名紀錄與隊伍。`)) return;
+    try {
+        const res = await customFetch(`/api/competitions/${id}/duplicate`, { method: 'POST', body: JSON.stringify({}) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '複製失敗');
+        await fetchCompetitions();
+        alert(`已複製成「${data.name}」\n\n別忘了改日期與報名時間。`);
+    } catch (err) {
+        alert(`複製失敗：${err.message}`);
+    }
+}
+
+function updateRecurrenceHint(text) {
+    const el = document.getElementById('recurrenceHint');
+    if (!el) return;
+    if (text) {
+        el.textContent = text;
+        return;
+    }
+    const rule = document.getElementById('recurrenceRule').value;
+    el.textContent = rule
+        ? `會用「${recurrenceRuleLabel(rule) || rule}」自動往後排：日期往後推一個週期，報名時間也一起挪。`
+            + '每天一次的排程會在下一場前 30 天內建好，也可以按「立即建立下一場」馬上建。'
+            + '同一個系列一次只保留一場還沒到的場次，不會一次開出好幾場。'
+        : '沒有設定週期就不會自動建立任何場次；複製賽事（📄）是一次性的複製，兩者不衝突。';
+}
+
+function openRecurrenceModal(id) {
+    const item = findCompetitionById(id);
+    if (!item) return;
+    recurrenceComp = item;
+    document.getElementById('recurrenceCompName').textContent = `${item.name}（${item.date || '未填日期'}）`;
+    document.getElementById('recurrenceRule').value = item.recurrence || '';
+    document.getElementById('recurrenceUntil').value = String(item.recurrence_until || '').slice(0, 10);
+    updateRecurrenceHint();
+    document.getElementById('recurrenceModal').classList.remove('hidden');
+}
+
+function closeRecurrenceModal() {
+    document.getElementById('recurrenceModal').classList.add('hidden');
+    recurrenceComp = null;
+}
+
+async function saveRecurrence() {
+    if (!recurrenceComp) return;
+    const rule = document.getElementById('recurrenceRule').value;
+    const until = document.getElementById('recurrenceUntil').value;
+    const btn = document.getElementById('recurrenceSaveBtn');
+    if (btn) btn.disabled = true;
+    try {
+        const res = await customFetch(`/api/competitions/${recurrenceComp.id}/recurrence`, {
+            method: 'POST',
+            body: JSON.stringify({ recurrence: rule || null, recurrence_until: until || null })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '儲存失敗');
+        await fetchCompetitions();
+        const synced = data.series_synced ? `（同系列 ${data.series_synced} 場一起同步）` : '';
+        alert(rule ? `已設定週期：${recurrenceRuleLabel(rule)}${until ? `，重複到 ${until}` : '，一直重複'}${synced}` : '已取消週期設定');
+        closeRecurrenceModal();
+    } catch (err) {
+        alert(`設定週期失敗：${err.message}`);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+/* 立即建立下一場：後端說「還不用建」時（409）把原因顯示在視窗裡，不當成錯誤 */
+async function createNextOccurrenceNow() {
+    if (!recurrenceComp) return;
+    const btn = document.getElementById('recurrenceNextBtn');
+    if (btn) btn.disabled = true;
+    try {
+        const res = await customFetch(`/api/competitions/${recurrenceComp.id}/recurrence/next`, {
+            method: 'POST',
+            body: JSON.stringify({})
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 409) {
+            updateRecurrenceHint(`目前還不會建立下一場：${data.error}${data.date ? `（推算出的下一場是 ${data.date}）` : ''}`);
+            return;
+        }
+        if (!res.ok) throw new Error(data.error || '建立失敗');
+        await fetchCompetitions();
+        alert(`已建立下一場：${data.name}（${data.date}）`);
+        closeRecurrenceModal();
+    } catch (err) {
+        alert(`建立下一場失敗：${err.message}`);
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 

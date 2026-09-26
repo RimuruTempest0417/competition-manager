@@ -335,6 +335,89 @@
         return rest.slice(0, at).concat(picked, rest.slice(at));
     }
 
+    /* ── v2.24.0：週期性賽事（複製與自動建立下一場） ── */
+
+    const RECURRENCE_RULES = { weekly: '每週', biweekly: '每兩週', monthly: '每月' };
+    const RECURRENCE_LEAD_DAYS = 30;   // 提前幾天把下一場開好
+
+    /* 依週期算出下一個日期（'YYYY-MM-DD'）。認不得的規則或日期回 null。
+       每月：日期不存在就夾到當月最後一天（1/31 → 2/28），不會跳到下個月。 */
+    function nextOccurrenceDate(dateStr, rule) {
+        const raw = String(dateStr || '').slice(0, 10);
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+        if (!m || !RECURRENCE_RULES[rule]) return null;
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+        const pad = (n) => String(n).padStart(2, '0');
+        const fmt = (dt) => `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+
+        if (rule === 'weekly' || rule === 'biweekly') {
+            const days = rule === 'weekly' ? 7 : 14;
+            const dt = new Date(Date.UTC(y, mo - 1, d));
+            dt.setUTCDate(dt.getUTCDate() + days);
+            return fmt(dt);
+        }
+        // 每月：先算下個月的目標日，月份天數不足時夾到月底
+        const targetMonth = mo === 12 ? 0 : mo;
+        const targetYear = mo === 12 ? y + 1 : y;
+        const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+        return fmt(new Date(Date.UTC(targetYear, targetMonth, Math.min(d, lastDay))));
+    }
+
+    const dateNum = (s) => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || '').slice(0, 10));
+        return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+    };
+
+    /* 該不該幫這個系列建立下一場？
+       回 { create, date, reason, overdue }；純函式，cron 與「立即建立下一場」共用同一份判斷。 */
+    function planRecurringCreation(latest, existingDates, today, options) {
+        const opts = options || {};
+        const leadDays = Number.isFinite(opts.leadDays) ? opts.leadDays : RECURRENCE_LEAD_DAYS;
+        const rule = latest && latest.recurrence;
+        if (!rule || !RECURRENCE_RULES[rule]) {
+            return { create: false, date: null, reason: '這場賽事沒有設定週期', overdue: false };
+        }
+        const next = nextOccurrenceDate(latest.date, rule);
+        if (!next) return { create: false, date: null, reason: '賽事日期不完整，無法推算下一場', overdue: false };
+
+        const until = latest.recurrence_until ? String(latest.recurrence_until).slice(0, 10) : null;
+        if (until && dateNum(next) > dateNum(until)) {
+            return { create: false, date: next, reason: `已超過週期結束日（${until}）`, overdue: false };
+        }
+        const existing = (existingDates || []).map((d) => String(d || '').slice(0, 10));
+        if (existing.includes(next)) {
+            return { create: false, date: next, reason: `下一場（${next}）已經存在`, overdue: false };
+        }
+        const todayNum = dateNum(fmtLocalDate(today));
+        // 判斷順序：① 沒有週期 ② 日期壞掉 ③ 結束日已過 ④ 下一場存在 ⑤ 系列已排定 ⑥ 落後 ⑦ 還太早
+        // （結束日放前面：系列已經結束時，「已經有排定的場次」這種說法會讓人誤會）
+        // 一次只排一場：系列裡只要還有「今天以後」的場次，就先不開新的
+        // （否則每天跑一次 cron 會一路把 30 天內每一場都開出來）
+        const future = existing.filter((d) => todayNum !== null && dateNum(d) !== null && dateNum(d) > todayNum);
+        if (future.length) {
+            const last = future.sort().slice(-1)[0];
+            return { create: false, date: next, reason: `系列已經有排定的場次（${last}），等它結束後才會再往後排`, overdue: false };
+        }
+        if (todayNum !== null && dateNum(next) < todayNum) {
+            return { create: false, date: next, reason: `週期已落後：推算出的下一場（${next}）已經過期，請手動調整日期或關閉週期`, overdue: true };
+        }
+        if (todayNum !== null && dateNum(next) - todayNum > leadDays * 86400000) {
+            return { create: false, date: next, reason: `還沒到建立時間（提前 ${leadDays} 天建立，下一場是 ${next}）`, overdue: false };
+        }
+        return { create: true, date: next, reason: '', overdue: false };
+    }
+
+    /* 今天的本地日期字串（cron 在伺服器端用 Date；測試可以自己傳日期） */
+    function fmtLocalDate(d) {
+        const dt = d instanceof Date ? d : new Date(d);
+        if (Number.isNaN(dt.getTime())) return '';
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+    }
+
     /* 有人讓出名額時，該遞補誰？（第一個候補，可排除剛取消的那筆） */
     function nextWaitlist(rows, excludeId) {
         const queue = waitlistQueue(rows).filter((r) => excludeId === undefined || String(r.id) !== String(excludeId));
@@ -362,6 +445,8 @@
         // v2.22.0：一次搬動到指定位置（拖拉排序與下拉共用）
         moveInQueue,
         // v2.23.0：多選一次搬多筆
-        moveGroup
+        moveGroup,
+        // v2.24.0：週期性賽事
+        RECURRENCE_RULES, RECURRENCE_LEAD_DAYS, nextOccurrenceDate, planRecurringCreation, fmtLocalDate
     };
 }));
