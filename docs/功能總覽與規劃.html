@@ -1,5 +1,5 @@
-✅ docs/功能總覽與規劃.md → docs/功能總覽與規劃.html（83551 字元，27 張表格、271 列）
-劃</title>
+<!DOCTYPE html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><title>比賽管理系統 — 功能總覽與規劃</title>
 <style>body{font-family:-apple-system,"PingFang TC",Arial,sans-serif;line-height:1.6;max-width:1000px;margin:0 auto;padding:24px}
 table{border:1px solid #cbd5e1;border-collapse:collapse;width:100%;margin:10px 0 18px}
 th{border:1px solid #cbd5e1;background:#f1f5f9;text-align:left;padding:6px 8px;font-size:14px}
@@ -382,7 +382,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <p><strong>掃描衛生（下次掃描前請調整）</strong>：</p>
 <ol><li><strong>把範圍限制在自家網域</strong>：這次報告裡有 <code>update.googleapis.com</code>（Chrome 自動更新的服務）——掃描第三方服務可能違反對方條款，那份結果也與我們無關（唯一的「低風險」就是它）。</li><li>保持<strong>被動掃描</strong>即可：被動掃描不會對正式站送出攻擊性請求，適合現在的正式環境。</li><li><strong>報告不要進 repo</strong>：本次報告內含登入請求（明碼密碼）與有效權杖，一旦提交就等於把憑證寫進版本歷史（撤不掉）。要留存就放在 repo 外、加密保存。</li></ol>
 <h2>九、自動偵測到的問題（待修復清單）</h2>
-<blockquote><p>本節由 <code>scripts/error-log-triage.js</code> 自動產生並覆寫（最後更新：2026/9/27 01:19:52）。資料來源：線上錯誤日誌（透過自家 API 讀取）。</p><p>狀態欄的「新增」代表我還沒看到你決定優先度；「已排入 Roadmap」代表第八節已有對應項目。</p></blockquote>
+<blockquote><p>本節由 <code>scripts/error-log-triage.js</code> 自動產生並覆寫（最後更新：2026/9/27 01:30:47）。資料來源：線上錯誤日誌（透過自家 API 讀取）。</p><p>狀態欄的「新增」代表我還沒看到你決定優先度；「已排入 Roadmap」代表第八節已有對應項目。</p></blockquote>
 <blockquote><p>🏷️ 本輪巡檢已把讀到的 0 筆未處理紀錄標記為已處理（rimuru）。首頁提示橫幅只會針對「下一批新錯誤」再提醒。</p></blockquote>
 <h3>9.1 需要處理的問題</h3>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
