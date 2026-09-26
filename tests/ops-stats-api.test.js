@@ -13,6 +13,7 @@ const path = require('node:path');
 const { once } = require('node:events');
 const jwt = require('jsonwebtoken');
 const { startFakeSupabase } = require('./support/fake-supabase');
+const CMStats = require('../public/js/stats');   // 與伺服器共用同一份趨勢算法（唯一真實來源）
 
 const SECRET = 'v300-stats-secret';
 process.env.NODE_ENV = 'production';
@@ -124,7 +125,13 @@ test('報名統計：狀態分佈、候補不佔名額、趨勢長度固定', as
     assert.strictEqual(body.registrations.trend.reduce((a, d) => a + d.count, 0), 3,
         '趨勢只算得進 14 天內的 3 筆（第 20 天那筆在窗外）');
     assert.strictEqual(body.registrations.last7d, 3, '近 7 天：3 筆（第 20 天那筆不算）');
-    assert.ok(body.registrations.trend[13].date <= new Date().toISOString().slice(0, 10));
+    /* 趨勢最後一天的日期＝§伺服器同一份 stats.js 算出來的「今天」§。
+     * ⚠️ 不要拿 `new Date().toISOString().slice(0,10)` 比：那是 **UTC** 日期，
+     * 澳門時間 00:00–08:00 之間會比本地日期少一天 → 每天凌晨固定假失敗（2026-09-27 00:15 實際發生）。
+     * 用共用模組算期望值，兩邊永遠同一個時區定義。 */
+    const expectedLastDay = CMStats.trendByDay([], { days: 14, now: new Date() })[13].date;
+    assert.strictEqual(body.registrations.trend[13].date, expectedLastDay,
+        `趨勢最後一天應等於伺服器的今天（實際 ${body.registrations.trend[13].date}／預期 ${expectedLastDay}）`);
 });
 
 test('天數可以調整，但一定夾在 7–30 天之間', async () => {

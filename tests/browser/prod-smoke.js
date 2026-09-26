@@ -365,21 +365,36 @@ globalThis.fetch = (url, options = {}) => {
     if (secret) {
         const smokeAuth = { Authorization: 'Bearer ' + jwt.sign({ sub: 1, username: 'rimuru', role: 'web_owner' }, secret, { expiresIn: '10m' }) };
 
-        const health2 = await get('/api/admin/error-logs/health', smokeAuth);
-        const h2 = await health2.json().catch(() => ({}));
-        check(`伺服器認得檢查流量標記（已略過 ${h2.self_test_skipped} 筆錯誤日誌）`,
-            typeof h2.self_test_skipped === 'number' && h2.self_test_skipped >= 1,
-            `self_test_skipped=${JSON.stringify(h2.self_test_skipped)}`);
+        /* 這裡刻意用**行為**驗證，而不是只看 health 的計數：
+         * Vercel 是 serverless 多實例，`self_test_skipped` 是「單一實例記憶體內的累計」，
+         * 讀它的請求很可能落到另一個實例 → 讀到 0 不代表標記沒生效（v3.5.2 上線當天就誤判過一次）。
+         * 可靠的說法只有一個：**實際去送幾個標記過的預期錯誤請求，再看日誌有沒有變多**。 */
+        const before = await get('/api/admin/error-logs?limit=1', smokeAuth);
+        const beforeTotal = ((await before.json().catch(() => ({}))).total) || 0;
+        const probeStartedAt = Date.now();
 
-        const listed = await get('/api/admin/error-logs?limit=100', smokeAuth);
+        // 一次標記過的壞 JSON（本來會寫 malformed_json_body）＋ 一次標記過的無效權杖（本來會寫 auth_invalid_token）
+        await fetch(SITE + '/api/auth/login', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{ 這不是合法 JSON'
+        });
+        await fetch(SITE + '/api/admin/users', { headers: { Authorization: 'Bearer definitely-wrong' } });
+        await new Promise((r) => setTimeout(r, 1500));   // logErrorToDb 是非阻塞
+
+        const listed = await get('/api/admin/error-logs?limit=20', smokeAuth);
         const body = await listed.json().catch(() => ({}));
         const rows = Array.isArray(body.logs) ? body.logs : [];
-        const noise = rows.filter((r) => {
+        const afterTotal = typeof body.total === 'number' ? body.total : rows.length;
+
+        const newAutoRows = rows.filter((r) => {
             const at = Date.parse(r.created_at || '');
-            return Number.isFinite(at) && at >= RUN_STARTED_AT - 5000 && /node|curl/i.test(r.user_agent || '');
+            return Number.isFinite(at) && at >= probeStartedAt - 3000 && /node|curl/i.test(r.user_agent || '');
         });
-        check(`本趟檢查沒有留下任何錯誤日誌（實際 ${noise.length} 筆）`, noise.length === 0,
-            noise.slice(0, 3).map((r) => `${r.error_type}@${r.path}`).join(', '));
+        check(`標記過的預期錯誤請求沒有寫入日誌（新增 ${newAutoRows.length} 筆）`, newAutoRows.length === 0,
+            newAutoRows.slice(0, 3).map((r) => `${r.error_type}@${r.path}`).join(', '));
+        check(`本趟檢查（含上述兩個探測）沒有讓日誌總數增加（${beforeTotal} → ${afterTotal}）`,
+            afterTotal <= beforeTotal,
+            `before=${beforeTotal} after=${afterTotal}`);
+        console.log(`  ℹ️ 這趟檢查共送出的除錯探測都沒有留下日誌；health 的 self_test_skipped 為單實例計數，僅供參考`);
     } else {
         console.log('  ⚠️ 找不到本機 JWT_SECRET，跳過「檢查流量不留下日誌」這一節');
     }

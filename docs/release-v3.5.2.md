@@ -69,6 +69,9 @@ X-CM-Self-Test: <用 JWT_SECRET 簽的短效權杖，payload = { purpose: 'self_
 | 既有測試 | `npm test` 591 項（590 通過 / 0 失敗、1 項深夜跨午夜情境略過） |
 | 真實瀏覽器 | `npm run check:browser` 621 項全綠 |
 | 正式站 | `npm run check:prod`（含上述第 6 節兩個新斷言）＋冒煙前後比對錯誤日誌筆數 |
+
+> **更正（v3.5.3）**：第 6 節原本還斷言 `self_test_skipped >= 1`，那項在 Vercel（serverless 多實例）會讀到 0 而誤判失敗——
+> 該計數器只是單一實例記憶體內的累計。已改成純行為驗證（實測 33 筆 → 33 筆、專用探測新增 0 筆），詳見 `docs/release-v3.5.3.md`。
 | 路由守門 | 快照維持 101 條（只多了 ctx 欄位與回應欄位，無路由變動） |
 
 ## 檔案
