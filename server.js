@@ -303,7 +303,9 @@ const serverState = {
     registrationReview: null, waitlistOrder: null,
     webpush: null, vapid: null,
     opsStatsCache: { at: 0, days: 0, payload: null },
-    lastCronRun: 0
+    lastCronRun: 0,
+    // v3.5.2：被辨識為「自動化檢查流量」而沒有寫入的錯誤日誌筆數（健康端點會回報，用來證明標記生效）
+    selfTestSkipped: 0
 };
 
 
@@ -570,7 +572,41 @@ function noteErrorLogFailure(errorType, message) {
     if (ERROR_LOG_FAILURES.length > 20) ERROR_LOG_FAILURES.shift();
 }
 
+/* ---------- v3.5.2：自動化檢查流量不寫系統錯誤日誌 ----------
+ *
+ * 為什麼需要：`tests/browser/prod-smoke.js` 會對正式站「故意」送出壞 JSON、無效權杖來驗證拒絕行為。
+ * 那些是預期中的回應，不是系統異常，但伺服器照規矩記錄 → 2026-09-26 觀察到 28 筆 `malformed_json_body`
+ * （全來自 node、都在 /api/auth/login），把提示橫幅與巡檢清單灌成假訊號，讓真正的錯誤被雜訊蓋掉。
+ *
+ * 做法：這類流量帶 `X-CM-Self-Test: <用 JWT_SECRET 簽的短效權杖>`（payload 帶 purpose:'self_test'），
+ * 伺服器驗簽通過就不寫錯誤日誌（但**回應行為完全不變**——該 400 還是 400、該 401 還是 401）。
+ *
+ * 為什麼用 JWT_SECRET 簽、而不是固定字串或新環境變數：
+ *   - 固定字串任何人都能冒充，等於給攻擊者一個「讓自己不被記錄」的開關；
+ *   - 用 JWT_SECRET 則不需要新增任何環境變數（本機 .env 與 Vercel 都已經有了），
+ *     而且能拿到 JWT_SECRET 的人本來就能簽出管理員權杖，不因此多任何權限。
+ * 簽章不對或沒帶 → 照常記錄（fail-safe：寧可多記，不可漏記）。
+ */
+const SELF_TEST_HEADER = 'x-cm-self-test';
+
+function isSelfTestRequest(req) {
+    const raw = (req && req.headers) ? req.headers[SELF_TEST_HEADER] : '';
+    if (!raw) return false;
+    try {
+        const payload = jwt.verify(String(raw), JWT_SECRET);
+        return Boolean(payload && payload.purpose === 'self_test');
+    } catch (e) {
+        return false;
+    }
+}
+
 async function logErrorToDb(req, errorType, err, options = {}) {
+    // v3.5.2：自動化檢查（prod-smoke 等）刻意製造的預期錯誤不進系統錯誤日誌，見 isSelfTestRequest
+    if (isSelfTestRequest(req)) {
+        serverState.selfTestSkipped += 1;
+        return;
+    }
+
     try {
         if (!hasSupabaseConfig) return;
 
@@ -873,8 +909,12 @@ function authenticateToken(req, res, next) {
         req.user = payload;
         next();
     } catch (err) {
-        // v2.12.0：無效／過期權杖也要留下紀錄（每 IP 每分鐘最多一筆，避免掃描器灌爆資料庫）
-        if (shouldLogAuthFailure(req.ip)) {
+        /* v3.5.2：自動化檢查流量（prod-smoke 用亂打的權杖驗證拒絕行為）**不佔用**那個「每 IP 每分鐘一筆」
+         * 的額度，也不寫日誌。順序很重要：若先問 shouldLogAuthFailure，一次檢查就會把該 IP 的額度用掉，
+         * 讓緊接而來的真實權杖失敗被靜默吞掉（測試就是靠這一點抓到的）。 */
+        if (isSelfTestRequest(req)) {
+            serverState.selfTestSkipped += 1;
+        } else if (shouldLogAuthFailure(req.ip)) {
             logErrorToDb(req, 'auth_invalid_token', err, {
                 severity: 'warn',
                 context: { reason: 'Token 驗證失敗', ua: (req.headers['user-agent'] || '').slice(0, 120) }
@@ -1006,7 +1046,7 @@ function parseResolveIds(input) {
 }
 
 /* ---------- 錯誤日誌與系統日誌 API：v3.4.0 起移到 routes/error-logs.js ---------- */
-require('./routes/error-logs')(app, { ERROR_LOG_FAILURES, ERROR_LOG_RESOLVE_ALL_MAX, GENERIC_DB_ERROR, PUSH_HINT, PUSH_LOG_DETAIL_HINT, USER_MIGRATION_HINT, allowPublicWrite, columnExists, errorLogAlertSummary, hasSupabaseConfig, isMissingTableError, logAudit, logErrorToDb, parseResolveIds, pushLogDetailSchemaReady, requireAdmin, requireSuperAdmin, supabase, supabaseKeyType });
+require('./routes/error-logs')(app, { ERROR_LOG_FAILURES, ERROR_LOG_RESOLVE_ALL_MAX, GENERIC_DB_ERROR, PUSH_HINT, PUSH_LOG_DETAIL_HINT, USER_MIGRATION_HINT, allowPublicWrite, columnExists, errorLogAlertSummary, hasSupabaseConfig, isMissingTableError, logAudit, logErrorToDb, parseResolveIds, pushLogDetailSchemaReady, requireAdmin, requireSuperAdmin, supabase, supabaseKeyType, selfTestSkippedCount: () => serverState.selfTestSkipped });
 
 
 const ANNOUNCEMENTS_HINT = '站內公告需要資料庫資料表，請先執行 migrations/2026-09-26-v2.26.0-announcements.sql';

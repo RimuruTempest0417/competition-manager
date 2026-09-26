@@ -10,7 +10,7 @@ const { hashPassword, verifyPassword, needsPasswordUpgrade } = require('../lib/p
 // v2.15.0：兩步驟驗證（TOTP）—— 純手寫實作，只用 Node 內建 crypto，無外部套件
 
 module.exports = function registerErrorLogsRoutes(app, ctx) {
-    const { ERROR_LOG_FAILURES, ERROR_LOG_RESOLVE_ALL_MAX, GENERIC_DB_ERROR, PUSH_HINT, PUSH_LOG_DETAIL_HINT, USER_MIGRATION_HINT, allowPublicWrite, columnExists, errorLogAlertSummary, hasSupabaseConfig, isMissingTableError, logAudit, logErrorToDb, parseResolveIds, pushLogDetailSchemaReady, requireAdmin, requireSuperAdmin, supabase, supabaseKeyType } = ctx;
+    const { ERROR_LOG_FAILURES, ERROR_LOG_RESOLVE_ALL_MAX, GENERIC_DB_ERROR, PUSH_HINT, PUSH_LOG_DETAIL_HINT, USER_MIGRATION_HINT, allowPublicWrite, columnExists, errorLogAlertSummary, hasSupabaseConfig, isMissingTableError, logAudit, logErrorToDb, parseResolveIds, pushLogDetailSchemaReady, requireAdmin, requireSuperAdmin, selfTestSkippedCount, supabase, supabaseKeyType } = ctx;
 app.post('/api/logs/error', async (req, res) => {
     // v2.12.0：未登入就能寫入，必須節流並限制欄位長度（避免匿名灌爆資料庫）
     if (!allowPublicWrite(req.ip, 'logs-error', 30, 60000)) {
@@ -122,7 +122,9 @@ app.get('/api/admin/error-logs/health', requireSuperAdmin, async (req, res) => {
             severity: await columnExists('error_logs', 'severity'),
             resolved: await columnExists('error_logs', 'resolved')
         },
-        plaintext_passwords: plaintextPasswords
+        plaintext_passwords: plaintextPasswords,
+        // v3.5.2：被辨識為「自動化檢查流量」而沒有寫入的筆數（檢查腳本據此證明標記生效）
+        self_test_skipped: typeof selfTestSkippedCount === 'function' ? selfTestSkippedCount() : null
     });
 });
 

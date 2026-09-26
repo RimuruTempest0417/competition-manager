@@ -131,13 +131,28 @@ const STUB_DIALOGS = `
         check(chips.some((c) => /報名已截止 1/.test(c)) && chips.some((c) => /尚未開放 2/.test(c)),
             '「報名已截止 1」「尚未開放 2」（含邊界兩筆）', JSON.stringify(chips));
 
+        /* ⚠️ 不要寫死預期 id：606 的「報名開始」是「執行當下 +30 秒」的邊界案例，
+         * 檢查跑得慢一點它的狀態就會翻面（2026-09-26 23:59 就發生過一次假失敗，
+         * 同一份程式碼重跑兩次都 30/30）。權威來源是伺服器：先問 /api/competitions 取得
+         * state === 'ongoing' 的 id，再等畫面收斂到同一個集合。 */
+        const ongoingIds = await browser.evaluate(`
+            return fetch('/api/competitions')
+                .then((r) => r.json())
+                .then((d) => (Array.isArray(d) ? d : (d.competitions || []))
+                    .filter((c) => c.state === 'ongoing').map((c) => String(c.id)));
+        `);
         await browser.evaluate(`
             document.querySelector('#stateFilterBar [data-state-filter="ongoing"]').click();
             return true;
         `);
-        await browser.waitFor(`document.querySelectorAll('[data-comp-id]').length === 1`, { timeout: 8000 });
-        const ongoingOnly = await browser.evaluate(`return document.querySelector('[data-comp-id]').getAttribute('data-comp-id');`);
-        check(ongoingOnly === '603', `點「進行中」只留下進行中的賽事（實際 ${ongoingOnly}）`);
+        const expectSet = ongoingIds.slice().sort().join(',');
+        await browser.waitFor(
+            `Array.from(document.querySelectorAll('[data-comp-id]')).map((el) => el.getAttribute('data-comp-id')).sort().join(',') === ${JSON.stringify(expectSet)}`,
+            { timeout: 8000 }
+        );
+        const ongoingShown = await browser.evaluate(`return Array.from(document.querySelectorAll('[data-comp-id]')).map((el) => el.getAttribute('data-comp-id')).sort();`);
+        check(ongoingIds.length > 0 && ongoingShown.join(',') === expectSet,
+            `點「進行中」只留下伺服器認定為進行中的賽事（顯示 ${JSON.stringify(ongoingShown)}／預期 ${JSON.stringify(ongoingIds)}）`);
         check(await browser.evaluate(`return document.querySelector('#stateFilterBar [data-state-filter="ongoing"]').getAttribute('aria-pressed');`) === 'true',
             '被選取的籤有 aria-pressed=true（無障礙）');
         await browser.screenshot(path.join(SHOTS, '02-狀態篩選.png'));

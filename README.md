@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v3.5.1
+# 🏆 比賽管理系統 (Competition Manager) v3.5.2
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -182,6 +182,17 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v3.5.2 (2026-09-26) - 驗證流程不再製造假錯誤日誌（Roadmap 8.6 ③）
+
+**背景**：正式站 33 筆錯誤日誌裡有 **30 筆（91%）是自動化檢查自己造成的**（`malformed_json_body` 29 筆全在 `/api/auth/login`、`auth_invalid_token` 2 筆，UA 全是 node）——`npm run check:prod` 每跑一次就多一筆，把提示橫幅與巡檢清單灌成假訊號。
+
+- **檢查流量表明身分**：`tests/browser/prod-smoke.js` 對正式站的所有請求都帶 `X-CM-Self-Test: <JWT_SECRET 簽、purpose='self_test'>`；伺服器驗簽通過就**不寫** `error_logs`，但**回應行為完全不變**（該 400 還是 400、該 401 還是 401）。
+- **為什麼不用固定字串或新環境變數**：固定字串任何人都能冒充（等於送攻擊者一個靜音鍵）；用 `JWT_SECRET` 簽則不需新增任何環境變數，且能拿到該密鑰的人本來就能簽管理員權杖。沒帶／亂帶／簽章不對 → **照常記錄**（fail-safe，三種情況都有測試）。
+- **順序修正**：無效權杖本來有「同 IP 每分鐘最多記一筆」的節流；若先問節流再判斷標記，一次檢查就會吃掉該 IP 的額度，讓真實的權杖失敗被靜默吞掉 → 自檢流量改為不佔額度、不記錄。
+- **可觀測**：`GET /api/admin/error-logs/health` 新增 `self_test_skipped`。
+- **自動守門**：`check:prod` 第 6 節斷言「標記生效」且「本次執行期間沒有新增任何 node/curl 來源的錯誤日誌」。
+- **順手修掉檢查腳本的邊界競態**（不是本版改壞的）：`competition-state-check.js` 把「進行中」的預期寫死 `603`，而種子賽事 `606` 的報名開始是「執行當下 +30 秒」→ 跑得慢就在檢查途中翻面造成假失敗。改用伺服器權威狀態（打 `/api/competitions` 取 `state==='ongoing'` 的 id 再等畫面收斂）；以 v3.5.1 worktree 重現確認與本版無關，並做了 RED 驗證。
 
 ### v3.5.1 (2026-09-26) - 熱修：反代後面自家請求被誤判成跨站（CORS／CSRF）
 

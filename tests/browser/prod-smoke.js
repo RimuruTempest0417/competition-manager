@@ -35,6 +35,29 @@ function localJwtSecret() {
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const get = (p, headers) => fetch(SITE + p, { headers });
 
+/* ---------- v3.5.2：對正式站表明「這是自動化檢查」 ----------
+ * 本檔會**故意**送出壞 JSON、無效權杖、越權請求來驗證拒絕行為——那是預期中的回應，不是系統異常。
+ * 以前這些探測會寫進正式站的 error_logs（2026-09-26 實測：28 筆 malformed_json_body 全是本檔造成的），
+ * 把提示橫幅與巡檢清單灌成假訊號。
+ * 現在所有打向 SITE 的請求都帶 `X-CM-Self-Test`（用本機 JWT_SECRET 簽、payload purpose:'self_test'），
+ * 伺服器驗簽通過就略過錯誤日誌——**回應行為完全不變**（該 400 還是 400、該 401 還是 401）。
+ * 找不到 JWT_SECRET 時不帶標頭：最壞情況只是照舊留下日誌（fail-safe，不會因此漏記真實錯誤）。
+ */
+const SELF_TEST_SECRET = localJwtSecret();
+const SELF_TEST_HEADER = SELF_TEST_SECRET
+    ? jwt.sign({ sub: 0, username: 'prod-smoke', purpose: 'self_test' }, SELF_TEST_SECRET, { expiresIn: '10m' })
+    : '';
+const RUN_STARTED_AT = Date.now();
+const rawFetch = globalThis.fetch;
+globalThis.fetch = (url, options = {}) => {
+    if (typeof url === 'string' && url.startsWith(SITE) && SELF_TEST_HEADER) {
+        options = Object.assign({}, options, {
+            headers: Object.assign({}, options.headers || {}, { 'X-CM-Self-Test': SELF_TEST_HEADER })
+        });
+    }
+    return rawFetch(url, options);
+};
+
 (async () => {
     console.log(`\n🧪 正式站煙霧測試：${SITE}（預期版本 v${EXPECTED_VERSION}）`);
 
@@ -336,6 +359,30 @@ const get = (p, headers) => fetch(SITE + p, { headers });
     }
     const missingPoster = await get('/api/posters/999999999');
     check(`不存在的海報回 404（HTTP ${missingPoster.status}）`, missingPoster.status === 404);
+
+    // ---------- 6. 這趟檢查沒有在正式站留下假錯誤日誌（v3.5.2） ----------
+    console.log('\n【6】自動化檢查不留下假錯誤日誌');
+    if (secret) {
+        const smokeAuth = { Authorization: 'Bearer ' + jwt.sign({ sub: 1, username: 'rimuru', role: 'web_owner' }, secret, { expiresIn: '10m' }) };
+
+        const health2 = await get('/api/admin/error-logs/health', smokeAuth);
+        const h2 = await health2.json().catch(() => ({}));
+        check(`伺服器認得檢查流量標記（已略過 ${h2.self_test_skipped} 筆錯誤日誌）`,
+            typeof h2.self_test_skipped === 'number' && h2.self_test_skipped >= 1,
+            `self_test_skipped=${JSON.stringify(h2.self_test_skipped)}`);
+
+        const listed = await get('/api/admin/error-logs?limit=100', smokeAuth);
+        const body = await listed.json().catch(() => ({}));
+        const rows = Array.isArray(body.logs) ? body.logs : [];
+        const noise = rows.filter((r) => {
+            const at = Date.parse(r.created_at || '');
+            return Number.isFinite(at) && at >= RUN_STARTED_AT - 5000 && /node|curl/i.test(r.user_agent || '');
+        });
+        check(`本趟檢查沒有留下任何錯誤日誌（實際 ${noise.length} 筆）`, noise.length === 0,
+            noise.slice(0, 3).map((r) => `${r.error_type}@${r.path}`).join(', '));
+    } else {
+        console.log('  ⚠️ 找不到本機 JWT_SECRET，跳過「檢查流量不留下日誌」這一節');
+    }
 
     console.log(`\n══════ 正式站煙霧測試：${pass} 通過 / ${fail} 失敗 ══════`);
     process.exit(fail === 0 ? 0 : 1);
