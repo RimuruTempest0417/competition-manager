@@ -196,7 +196,7 @@ competition-manager/
 - **順手修掉**：權限對應表少一個逗號，兩行被合成 `['opsStatsBtn', …]['guideBtn', …]`，`applyMenuVisibility` 讀到 `undefined` 直接 `TypeError`
   （`node --check` 看不出來，是新瀏覽器檢查登入後炸出來的）；`var(--cm-border, #e2e8f0)` 的變數名專案裡不存在，但「有 fallback 就不算未定義」的規則放行了它（深色模式下會出現亮線）→ 改用 `--cm-bd-200`，並在 `scripts/class-coverage.py` 新增②-b提示列出來；`tests/browser/lib/cdp.js` 過去沒有處理原生對話框，
   一旦 `alert`／`confirm` 彈出就整頁卡住、之後每個 `evaluate` 都只會逾時——現在一律記錄到 `browser.dialogs` 並自動以「取消」結束。
-- 測試：`npm test` **601 通過 / 0 失敗**；瀏覽器檢查 **21 支套件、695 項全綠**（新增 `guide-check.js` 38 項）；正式站訪客視角新增 3 項。
+- 測試：`npm test` **601 通過 / 0 失敗**；瀏覽器檢查 **21 支套件、695 項全綠**（新增 `guide-check.js` 38 項）；正式站訪客視角 12 項（新增說明 3 項）。
 
 ### v3.5.4 (2026-09-27) - 選單彈窗在電腦上不再細成一條 ＋ 補齊 8 條沒有測試的端點
 
