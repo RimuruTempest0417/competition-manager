@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.24.0</title>
+    <title>比賽管理系統 v2.25.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -52,7 +52,7 @@
                 <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2 cm-app-title">
                     🏆 比賽管理系統
                 </h1>
-                <p class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊 (v2.18.0)</p>
+                <p id="appSubtitle" class="text-xs text-slate-500 mt-0.5 cm-app-subtitle">發佈與管理各類賽事資訊</p>
             </div>
 
             <!-- 頂部導覽列右側選單區塊 -->
@@ -130,6 +130,12 @@
                         <button id="pushLogsBtn"
                             class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
                             📤 推播紀錄
+                        </button>
+
+                        <!-- 管理員以上：推播設定（v2.25.0：發送時間與事件可設定） -->
+                        <button id="pushSettingsBtn"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition">
+                            ⏰ 推播設定
                         </button>
 
                         <!-- 管理員以上：兩步驟驗證（v2.15.0） -->
@@ -967,6 +973,72 @@
             <div class="flex justify-end pt-3 border-t">
                 <button id="closePushLogsBtn2"
                     class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈出視窗：推播設定（v2.25.0：發送時間與事件可設定） -->
+    <div id="pushSettingsModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 cm-modal-panel flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800">⏰ 推播設定</h3>
+                <button id="closePushSettingsBtn" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <p class="text-[11px] text-slate-500">這裡是整個站台的推播開關，改的是「系統會發什麼、什麼時候發」；已經訂閱推播的人才會收到。</p>
+            <div id="pushSettingsHint"
+                class="hidden rounded-lg bg-amber-50 border border-amber-200 p-3 text-[11px] text-amber-800"></div>
+
+            <div class="space-y-3 text-sm max-h-[60vh] overflow-y-auto pr-1">
+                <div class="flex items-center justify-between gap-3 rounded-lg border border-slate-200 p-3">
+                    <div>
+                        <p class="font-semibold text-slate-700">每日摘要</p>
+                        <p class="text-[11px] text-slate-500">每天固定時間發送一次，不會重複發。</p>
+                    </div>
+                    <input id="pushDigestEnabled" type="checkbox" class="w-5 h-5 accent-sky-600">
+                </div>
+
+                <div class="flex items-center justify-between gap-3 rounded-lg border border-slate-200 p-3">
+                    <div>
+                        <p class="font-semibold text-slate-700">摘要發送時間</p>
+                        <p class="text-[11px] text-slate-500">澳門時間；伺服器每天檢查兩次，過時會補發一次。</p>
+                    </div>
+                    <input id="pushDigestTime" type="time" step="60"
+                        class="rounded-lg border border-slate-300 px-2 py-1 text-sm text-slate-700">
+                </div>
+
+                <div class="rounded-lg border border-slate-200 p-3 space-y-2">
+                    <p class="font-semibold text-slate-700">摘要要包含哪些事件</p>
+                    <label class="flex items-center gap-2 text-[13px] text-slate-600">
+                        <input id="pushDigestKindNew" type="checkbox" class="w-4 h-4 accent-sky-600">
+                        <span>新發布的賽事</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-[13px] text-slate-600">
+                        <input id="pushDigestKindReminder" type="checkbox" class="w-4 h-4 accent-sky-600">
+                        <span>即將開賽提醒</span>
+                    </label>
+                </div>
+
+                <div class="rounded-lg border border-slate-200 p-3 space-y-2">
+                    <p class="font-semibold text-slate-700">即時通知的事件</p>
+                    <label class="flex items-center gap-2 text-[13px] text-slate-600">
+                        <input id="pushEventReview" type="checkbox" class="w-4 h-4 accent-sky-600">
+                        <span>報名審核結果（核准／未錄取）</span>
+                    </label>
+                    <label class="flex items-center gap-2 text-[13px] text-slate-600">
+                        <input id="pushEventPromote" type="checkbox" class="w-4 h-4 accent-sky-600">
+                        <span>候補遞補通知</span>
+                    </label>
+                    <p class="text-[11px] text-slate-500">關掉只是「不通知」，遞補本身照常運作。</p>
+                </div>
+            </div>
+
+            <div id="pushSettingsStatus" class="hidden text-[11px] text-emerald-700"></div>
+            <div class="flex justify-end gap-2 pt-3 border-t">
+                <button id="closePushSettingsBtn2"
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition">關閉</button>
+                <button id="savePushSettingsBtn"
+                    class="px-4 py-2 text-sm bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition">儲存設定</button>
             </div>
         </div>
     </div>

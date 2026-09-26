@@ -37,7 +37,11 @@ const state = {
         registrations: [],
         competition_teams: [],
         competition_posters: [],
-        app_settings: [],
+        app_settings: [
+            // v2.25.0：「每日摘要」預設 09:00 才發，測試要能隨時跑 → 明確設成 00:00
+            { key: 'push_digest_time', value: '00:00', updated_at: '2026-01-01T00:00:00.000Z' },
+            { key: 'push_digest_enabled', value: 'true', updated_at: '2026-01-01T00:00:00.000Z' }
+        ],
         push_subscriptions: [],
         push_log: [],
         audit_logs: []
@@ -178,6 +182,12 @@ test('v2.10.0 海報上傳與推播 API', async (t) => {
     });
 
     await t.test('定時推播：需 CRON_SECRET、只挑即將開賽者、同一賽事只推一次', async () => {
+        // v2.25.0：每日摘要一天只發一次，這裡每次呼叫前先把「今天已發」清掉
+        const resetDigestDate = () => {
+            const row = state.tables.app_settings.find((s) => s.key === 'push_last_digest_date');
+            if (row) row.value = '2000-01-01';
+        };
+        resetDigestDate();
         assert.strictEqual((await fetch(`${base}/api/cron/reminders`)).status, 401, '未帶正確權杖應 401');
         assert.strictEqual((await fetch(`${base}/api/cron/reminders`, { headers: { Authorization: 'Bearer wrong' } })).status, 401);
 
@@ -195,12 +205,15 @@ test('v2.10.0 海報上傳與推播 API', async (t) => {
         assert.ok(state.tables.app_settings.some((s) => s.key === 'push_last_run'), '應記錄最後執行時間');
 
         // 第二次執行：已推過 → 不再重複
+        resetDigestDate();
         const second = await (await fetch(`${base}/api/cron/reminders`, { headers: { Authorization: 'Bearer cron-secret-for-tests' } })).json();
         assert.strictEqual(second.candidates, 0, '同一賽事同一類型不得重複推播');
         assert.strictEqual(state.tables.push_log.filter((l) => l.competition_id === 100 && l.kind === 'reminder').length, 1);
     });
 
     await t.test('定時推播：沒有訂閱時不報錯，明確回報原因', async () => {
+        const row = state.tables.app_settings.find((s) => s.key === 'push_last_digest_date');
+        if (row) row.value = '2000-01-01';
         state.tables.push_subscriptions.forEach((s) => { s.is_active = false; });
         const res = await (await fetch(`${base}/api/cron/reminders`, { headers: { Authorization: 'Bearer cron-secret-for-tests' } })).json();
         assert.strictEqual(res.sent, 0);

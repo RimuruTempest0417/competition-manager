@@ -1082,6 +1082,7 @@ const AUDIT_ACTION_LABELS = {
     DUPLICATE_COMPETITION: '複製賽事',
     SET_RECURRENCE: '設定賽事週期',
     CREATE_RECURRING_COMPETITION: '週期性賽事建立下一場',
+    UPDATE_PUSH_SETTINGS: '更新推播設定',
     AUTO_PROMOTE_WAITLIST: '自動遞補候補',
     PURGE_AUDIT_LOGS: '清理稽核日誌',
     '2FA_SETUP_STARTED': '開始設定兩步驟驗證',
@@ -3114,8 +3115,15 @@ async function countRegistrations(competitionId) {
 
 /* 針對單一使用者的推播（審核結果、候補遞補）。
    沒有訂閱／沒有金鑰都不是錯誤：回 { sent: 0 } 讓呼叫端照常完成動作。 */
-async function notifyUser(userId, payload) {
+async function notifyUser(userId, payload, options) {
     if (userId === null || userId === undefined) return { sent: 0, total: 0 };
+    // v2.25.0：站台層的事件開關（每賽事的「遞補通知」是第二層，兩層都開才會推）
+    // 事件種類可以放在第三個參數，也可以直接寫在 payload 裡（呼叫端兩種寫法都支援）
+    const opts = options || {};
+    const kind = opts.kind || (payload && payload.kind);
+    if (kind && !(await pushEventEnabled(kind))) {
+        return { sent: 0, total: 0, skipped: `站台設定已關閉「${PUSH_SETTING_LABELS[`event_${kind}`] || kind}」` };
+    }
     try {
         const { data, error } = await supabase
             .from('push_subscriptions')
@@ -3444,6 +3452,7 @@ app.post('/api/registrations/:id/review', authenticateToken, async (req, res) =>
         }
 
         const push = await notifyUser(reg.user_id, {
+            kind: 'review',
             title: action === 'approve' ? '報名已核准' : '報名結果通知',
             body: action === 'approve'
                 ? `${comp.name}：你的報名已通過審核`
@@ -3504,6 +3513,7 @@ app.post('/api/competitions/:id/registrations/promote', authenticateToken, async
             `手動遞補候補: ${next.username}（第 ${plan.position} 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}）${notify ? '' : '｜未通知（依賽事設定）'}`, req.userAgent);
 
         const push = notify ? await notifyUser(next.user_id, {
+            kind: 'promote',
             title: '候補遞補通知',
             body: `${comp.name}：你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}`,
             url: '/?view=myregs',
@@ -3567,6 +3577,7 @@ app.post('/api/registrations/:id/promote', authenticateToken, async (req, res) =
             req.userAgent);
 
         const push = notify ? await notifyUser(reg.user_id, {
+            kind: 'promote',
             title: '候補遞補通知',
             body: `${comp.name}：你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[plan.status]}`,
             url: '/?view=myregs',
@@ -3795,6 +3806,7 @@ app.delete('/api/registrations/:id', authenticateToken, async (req, res) => {
                             req.userAgent);
 
                         const push = autoNotify ? await notifyUser(next.user_id, {
+                            kind: 'promote',
                             title: '候補遞補通知',
                             body: `${comp.name}：有人取消報名，你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}`,
                             url: '/?view=myregs',
@@ -4162,8 +4174,10 @@ function competitionStartMs(item, offset) {
 }
 
 // 需要推播的項目（純函式）：開賽前 24 小時內＝reminder；上次執行後新發布＝new
+// v2.25.0：可用 options.kinds 只挑要發的種類（站台設定可以個別關掉）
 function pushCandidates(competitions, options) {
     const opts = options || {};
+    const wants = Array.isArray(opts.kinds) ? opts.kinds : ['reminder', 'new'];
     const nowMs = opts.now instanceof Date ? opts.now.getTime() : Number(opts.now) || Date.now();
     const windowMs = opts.windowMs || 24 * 3600 * 1000;
     const lastRunMs = opts.lastRunMs || 0;
@@ -4175,11 +4189,11 @@ function pushCandidates(competitions, options) {
         const key = (kind) => `${item.id}:${kind}`;
 
         const start = competitionStartMs(item, opts.offset);
-        if (start !== null && start >= nowMs && start - nowMs <= windowMs && !done.has(key('reminder'))) {
+        if (wants.includes('reminder') && start !== null && start >= nowMs && start - nowMs <= windowMs && !done.has(key('reminder'))) {
             out.push({ kind: 'reminder', competition: item, startMs: start });
         }
         const createdMs = item.created_at ? Date.parse(item.created_at) : null;
-        if (createdMs && lastRunMs && createdMs > lastRunMs && !done.has(key('new'))) {
+        if (wants.includes('new') && createdMs && lastRunMs && createdMs > lastRunMs && !done.has(key('new'))) {
             out.push({ kind: 'new', competition: item, startMs: start });
         }
     });
@@ -4222,6 +4236,220 @@ async function setSetting(key, value) {
     );
     if (error) throw error;
 }
+
+// ---------- 版本資訊 ----------
+// v2.25.0：頁面上的版本字串一律由這裡取，避免又多一處手動更新的版本號忘了改
+// （頁面副標曾經停在 v2.18.0 好幾版，就是因為它寫死在 HTML 裡）
+const APP_VERSION = (() => {
+    try {
+        return require('./package.json').version;
+    } catch (err) {
+        return 'unknown';
+    }
+})();
+
+const versionHandler = (req, res) => {
+    res.json({ version: APP_VERSION });
+};
+
+app.get('/api/version', versionHandler);
+
+// ---------- v2.25.0：推播設定（時間與事件）----------
+//
+// 存在既有的 app_settings 鍵值表裡（不新增資料表、不需要 migration）。
+// 讀不到（例如資料庫少這張表）時一律用預設值，絕不讓推播整個壞掉。
+
+const PUSH_SETTINGS_DEFAULTS = {
+    push_digest_enabled: true,        // 每日摘要總開關
+    push_digest_time: '09:00',        // 每日摘要發送時間（澳門時間 UTC+8）
+    push_digest_kind_new: true,       // 摘要：新發佈的賽事
+    push_digest_kind_reminder: true,  // 摘要：即將開賽提醒（24 小時內）
+    push_event_review: true,          // 即時：報名審核結果（核准／拒絕）
+    push_event_promote: true          // 即時：候補遞補（含手動、指定、自動）
+};
+
+const PUSH_EVENT_SETTING_KEYS = {
+    review: 'push_event_review',
+    promote: 'push_event_promote'
+};
+
+const PUSH_SETTINGS_HINT =
+    '推播設定需要資料庫的 app_settings 表（讀不到時會用預設值繼續運作）。';
+
+/* 字串（設定表的 value）→ 布林；只有明確的 false 才算關閉 */
+function pushSettingBool(value, fallback) {
+    if (value === null || value === undefined || value === '') return fallback;
+    if (value === true || value === 'true') return true;
+    if (value === false || value === 'false') return false;
+    return fallback;
+}
+
+const isClockTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
+
+/* 把 app_settings 讀回來的原始值整理成好用的設定物件 */
+function pushSettingsFromRows(rows) {
+    const raw = rows || {};
+    return {
+        digest_enabled: pushSettingBool(raw.push_digest_enabled, PUSH_SETTINGS_DEFAULTS.push_digest_enabled),
+        digest_time: isClockTime(raw.push_digest_time) ? String(raw.push_digest_time) : PUSH_SETTINGS_DEFAULTS.push_digest_time,
+        digest_kind_new: pushSettingBool(raw.push_digest_kind_new, PUSH_SETTINGS_DEFAULTS.push_digest_kind_new),
+        digest_kind_reminder: pushSettingBool(raw.push_digest_kind_reminder, PUSH_SETTINGS_DEFAULTS.push_digest_kind_reminder),
+        event_review: pushSettingBool(raw.push_event_review, PUSH_SETTINGS_DEFAULTS.push_event_review),
+        event_promote: pushSettingBool(raw.push_event_promote, PUSH_SETTINGS_DEFAULTS.push_event_promote)
+    };
+}
+
+/* 驗證前端送來的設定；有錯就回 { error }，不偷偷改掉使用者的輸入 */
+function normalizePushSettingsInput(body, current) {
+    // 基準值一律用「整理過」的預設值＋目前設定（欄位名才一致），
+    // 否則沒帶到的欄位會變成 undefined 而被當成新值寫回去
+    const base = Object.assign({}, pushSettingsFromRows({}), current || {});
+    const b = body || {};
+    const out = Object.assign({}, base);
+    const boolFields = ['digest_enabled', 'digest_kind_new', 'digest_kind_reminder', 'event_review', 'event_promote'];
+    for (const field of boolFields) {
+        if (b[field] === undefined) continue;
+        if (typeof b[field] !== 'boolean') return { error: `「${field}」只能是 true 或 false` };
+        out[field] = b[field];
+    }
+    if (b.digest_time !== undefined) {
+        if (!isClockTime(b.digest_time)) return { error: '發送時間格式要像 09:00 或 21:30' };
+        out.digest_time = String(b.digest_time);
+    }
+    return { settings: out };
+}
+
+/* 現在在網站時區（預設 +08:00）是幾點、哪一天 */
+function pushLocalParts(nowMs, offset) {
+    const match = /^([+-])(\d{2}):?(\d{2})$/.exec(String(offset || SITE_UTC_OFFSET));
+    const deltaMinutes = match
+        ? (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3]))
+        : 8 * 60;
+    const local = new Date(Number(nowMs) + deltaMinutes * 60000);
+    const pad = (n) => String(n).padStart(2, '0');
+    return {
+        date: `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`,
+        time: `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`
+    };
+}
+
+/* 現在該不該發每日摘要？（純函式）
+   排程不是每分鐘都在跑，所以用「補送」語意：時間過了就發，但一天只發一次；
+   設定的時間落在兩次排程之間時，由下一次排程補上。 */
+function shouldRunDigest(options) {
+    const opts = options || {};
+    const parts = pushLocalParts(opts.nowMs === undefined ? Date.now() : opts.nowMs, opts.offset);
+    if (!opts.enabled) return { run: false, reason: '每日摘要已關閉', date: parts.date, time: parts.time };
+    if (opts.lastDigestDate && String(opts.lastDigestDate).slice(0, 10) === parts.date) {
+        return { run: false, reason: '今天已經發送過', date: parts.date, time: parts.time };
+    }
+    const scheduled = isClockTime(opts.scheduledTime) ? String(opts.scheduledTime) : PUSH_SETTINGS_DEFAULTS.push_digest_time;
+    if (parts.time < scheduled) {
+        return { run: false, reason: `還沒到發送時間（設定 ${scheduled}，現在 ${parts.time}）`, date: parts.date, time: parts.time };
+    }
+    return { run: true, reason: '', date: parts.date, time: parts.time };
+}
+
+/* 摘要要發哪幾種事件（都關掉就沒有東西可發） */
+function digestKindsFromSettings(settings) {
+    const kinds = [];
+    if (settings.digest_kind_reminder) kinds.push('reminder');
+    if (settings.digest_kind_new) kinds.push('new');
+    return kinds;
+}
+
+/* 讀取推播設定；讀不到就回預設值並標記 ready=false（讓介面誠實說明） */
+async function readPushSettings() {
+    const keys = Object.keys(PUSH_SETTINGS_DEFAULTS);
+    try {
+        const values = await Promise.all(keys.map((key) => getSetting(key)));
+        const raw = {};
+        keys.forEach((key, index) => { raw[key] = values[index]; });
+        return { settings: pushSettingsFromRows(raw), ready: true, error: null };
+    } catch (err) {
+        // 用「整理過」的預設值（欄位名與正常路徑一致），否則摘要會被誤判成關閉
+        return { settings: pushSettingsFromRows({}), ready: false, error: err.message };
+    }
+}
+
+async function writePushSettings(settings) {
+    // 逐一明確對應，避免鍵名拼錯（設定表的 key ↔ 介面欄位）
+    const map = {
+        push_digest_enabled: settings.digest_enabled,
+        push_digest_time: settings.digest_time,
+        push_digest_kind_new: settings.digest_kind_new,
+        push_digest_kind_reminder: settings.digest_kind_reminder,
+        push_event_review: settings.event_review,
+        push_event_promote: settings.event_promote
+    };
+    for (const key of Object.keys(map)) {
+        await setSetting(key, map[key] === true ? 'true' : map[key] === false ? 'false' : String(map[key]));
+    }
+}
+
+/* 這一種即時事件現在要不要推播？（讀不到設定時一律視為要，行為不變） */
+async function pushEventEnabled(kind) {
+    const key = PUSH_EVENT_SETTING_KEYS[kind];
+    if (!key) return true;
+    try {
+        const value = await getSetting(key);
+        return pushSettingBool(value, true);
+    } catch (err) {
+        return true;
+    }
+}
+
+// 管理員以上：讀取／更新推播設定
+app.get('/api/push/settings', requireAdmin, async (req, res) => {
+    const { settings, ready } = await readPushSettings();
+    res.json({ settings, schema_ready: ready, hint: ready ? null : PUSH_SETTINGS_HINT });
+});
+
+app.post('/api/push/settings', requireAdmin, async (req, res) => {
+    const current = await readPushSettings();
+    const normalized = normalizePushSettingsInput(req.body, current.settings);
+    if (normalized.error) return res.status(400).json({ error: normalized.error });
+
+    try {
+        await writePushSettings(normalized.settings);
+    } catch (err) {
+        await logErrorToDb(req, 'save_push_settings_error', err);
+        return res.status(503).json({ error: PUSH_SETTINGS_HINT });
+    }
+
+    const changes = [];
+    for (const key of Object.keys(PUSH_SETTINGS_DEFAULTS)) {
+        const field = {
+            push_digest_enabled: 'digest_enabled',
+            push_digest_time: 'digest_time',
+            push_digest_kind_new: 'digest_kind_new',
+            push_digest_kind_reminder: 'digest_kind_reminder',
+            push_event_review: 'event_review',
+            push_event_promote: 'event_promote'
+        }[key];
+        if (String(current.settings[field]) !== String(normalized.settings[field])) {
+            changes.push(`${PUSH_SETTING_LABELS[field]}：${formatPushSettingValue(field, current.settings[field])} → ${formatPushSettingValue(field, normalized.settings[field])}`);
+        }
+    }
+
+    await logAudit(req.currentUser.username, 'UPDATE_PUSH_SETTINGS', null,
+        changes.length ? `更新推播設定：${changes.join('；')}` : '更新推播設定（沒有變更）', req.userAgent);
+
+    res.json({ success: true, settings: normalized.settings, changes });
+});
+
+const PUSH_SETTING_LABELS = {
+    digest_enabled: '每日摘要',
+    digest_time: '發送時間',
+    digest_kind_new: '摘要含新賽事',
+    digest_kind_reminder: '摘要含開賽提醒',
+    event_review: '報名審核結果通知',
+    event_promote: '候補遞補通知'
+};
+
+const formatPushSettingValue = (field, value) => (typeof value === 'boolean'
+    ? (value ? '開啟' : '關閉')
+    : String(value));
 
 // ---------- 賽事海報 ----------
 
@@ -4472,7 +4700,8 @@ app.post('/api/push/test', async (req, res) => {
 
 // 定時推播核心：找出「即將開賽（24 小時內）」與「上次執行後新發布」的賽事，
 // 對所有有效訂閱發送，並以 push_log 去重（同一賽事同一類型只送一次）。
-async function runPushDigest(now) {
+async function runPushDigest(now, options) {
+    const opts = options || {};
     const nowDate = now instanceof Date ? now : new Date();
     const keys = await getVapidKeys();
     if (!keys) throw new Error(PUSH_HINT);
@@ -4498,7 +4727,8 @@ async function runPushDigest(now) {
         now: nowDate,
         done: done,
         lastRunMs: Number.isNaN(lastRunMs) ? 0 : lastRunMs,
-        offset: SITE_UTC_OFFSET
+        offset: SITE_UTC_OFFSET,
+        kinds: opts.kinds
     });
 
     const result = { candidates: candidates.length, sent: 0, failed: 0, deactivated: 0, subscriptions: subs.length, details: [] };
@@ -4535,7 +4765,10 @@ async function runPushDigest(now) {
     return result;
 }
 
-// Vercel Cron 會以 CRON_SECRET 作為 Bearer 權杖呼叫此端點（vercel.json 已設定每日一次）。
+// Vercel Cron 會以 CRON_SECRET 作為 Bearer 權杖呼叫此端點。
+// v2.25.0：vercel.json 設了兩個時段（01:00 與 13:00 UTC＝澳門 09:00 與 21:00），
+// 「推播設定」的發送時間落在兩者之間時，由下一次排程補送（一天只發一次）。
+// （Vercel 免費方案的 cron 限制是每天一次、最多兩個，所以用兩個固定時段＋補送語意）
 // 未設定 CRON_SECRET 時，為避免被有心人反覆觸發，限制每 10 分鐘一次。
 let lastCronRun = 0;
 
@@ -4581,13 +4814,65 @@ app.get('/api/cron/reminders', async (req, res) => {
     lastCronRun = Date.now();
 
     try {
-        const result = await runPushDigest(new Date());
-        // v2.19.0：批次推播「有真的送出」才留紀錄（sent=0 不留，避免每天一筆空紀錄）
-        if (result && result.sent > 0) {
-            await logAudit('system', 'SEND_PUSH', null, {
-                source: 'cron', sent: result.sent, subscriptions: result.subscriptions, details: result.details
-            }, 'cron');
+        // v2.25.0：先看「現在該不該發每日摘要」（時間可設定；一天只發一次；時間過了會補送）
+        const pushSettings = await readPushSettings();
+        const kinds = digestKindsFromSettings(pushSettings.settings);
+        let lastDigestDate = null;
+        try {
+            lastDigestDate = await getSetting('push_last_digest_date');
+        } catch (err) {
+            lastDigestDate = null;   // 讀不到就當作今天還沒發（最壞情況是多發一次，不會漏發）
         }
+        const gate = shouldRunDigest({
+            enabled: pushSettings.settings.digest_enabled,
+            scheduledTime: pushSettings.settings.digest_time,
+            lastDigestDate,
+            nowMs: Date.now(),
+            offset: SITE_UTC_OFFSET
+        });
+        const digestInfo = {
+            ran: false,
+            reason: gate.reason,
+            scheduled: pushSettings.settings.digest_time,
+            local_date: gate.date,
+            local_time: gate.time,
+            kinds
+        };
+
+        let result;
+        if (!gate.run) {
+            result = { sent: 0, subscriptions: 0, candidates: 0, details: [] };
+        } else if (kinds.length === 0) {
+            digestInfo.reason = '摘要的事件都關掉了（新賽事／開賽提醒）';
+            result = { sent: 0, subscriptions: 0, candidates: 0, details: [] };
+        } else {
+            try {
+                result = await runPushDigest(new Date(), { kinds });
+                digestInfo.ran = true;
+            } catch (digestErr) {
+                // 推播這一段失敗（例如憑證或資料表問題）不該讓整個排程回 503：
+                // 稽核清理與週期性賽事都還要跑，失敗原因照實回報在 digest.reason
+                result = { sent: 0, subscriptions: 0, candidates: 0, details: [], reason: digestErr.message };
+                digestInfo.reason = `推播暫時無法發送：${digestErr.message}`;
+                await logErrorToDb(req, 'cron_push_digest_error', digestErr).catch(() => {});
+            }
+            // v2.19.0：批次推播「有真的送出」才留紀錄（sent=0 不留，避免每天一筆空紀錄）
+            if (result && result.sent > 0) {
+                await logAudit('system', 'SEND_PUSH', null, {
+                    source: 'cron', sent: result.sent, subscriptions: result.subscriptions, details: result.details
+                }, 'cron');
+            }
+            // 今天發過了（不論送出去幾則）——一天只發一次，不會因為排程多跑幾次就重複發
+            // 記錄失敗不該讓整個排程回 503（設定表可能沒建好）：最壞情況是當天再發一次
+            try {
+                await setSetting('push_last_digest_date', gate.date);
+                digestInfo.marked = true;
+            } catch (markErr) {
+                digestInfo.marked = false;
+                console.warn('⚠️ 無法記錄每日摘要日期（app_settings）：', markErr.message);
+            }
+        }
+        result.digest = digestInfo;
         // v2.16.0：稽核日誌保留天數清理（**預設不啟用**：只有設了 AUDIT_RETENTION_DAYS 才會刪東西）
         result.audit_purged = null;   // 欄位固定存在，未啟用時明確回 null
         const retention = Number.parseInt(process.env.AUDIT_RETENTION_DAYS, 10);
@@ -4823,6 +5108,14 @@ module.exports = app;
 // 供單元測試使用的內部函式（Vercel 只取 app 本身，掛額外屬性不影響部署）。
 // 測試時請設 NODE_ENV=production，這樣 require 本檔才不會真的 app.listen 佔用 port。
 app.__test__ = {
+    versionHandler,
+    pushSettingsFromRows,
+    normalizePushSettingsInput,
+    shouldRunDigest,
+    pushLocalParts,
+    digestKindsFromSettings,
+    pushSettingBool,
+    APP_VERSION,
     verifyBackupIntegrity,
     backupChecksum,
     resolveBackupTables,

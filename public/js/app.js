@@ -692,6 +692,7 @@ function cycleTheme() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    loadAppVersion();
     initTimeSelects();
     updateThemeButton(getStoredTheme());
     renderTagPreview();
@@ -749,6 +750,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('btn-error-logs')?.addEventListener('click', () => { openErrorLogsModal(); closeNavDropdown(); });
     document.getElementById('adminMgmtBtn')?.addEventListener('click', () => { openAdminModal(); closeNavDropdown(); });
     document.getElementById('pushLogsBtn')?.addEventListener('click', () => { openPushLogsModal(); closeNavDropdown(); });
+    document.getElementById('pushSettingsBtn')?.addEventListener('click', () => { openPushSettingsModal(); closeNavDropdown(); });
+    document.getElementById('closePushSettingsBtn')?.addEventListener('click', closePushSettingsModal);
+    document.getElementById('closePushSettingsBtn2')?.addEventListener('click', closePushSettingsModal);
+    document.getElementById('savePushSettingsBtn')?.addEventListener('click', savePushSettings);
     document.getElementById('changePwdBtn')?.addEventListener('click', () => { openChangePasswordModal(); closeNavDropdown(); });
     // v2.15.0：兩步驟驗證設定
     document.getElementById('twoFactorBtn')?.addEventListener('click', () => { openTwoFactorModal(); });
@@ -1117,12 +1122,12 @@ function focusCompetitionCard(compId) {
 // 為什麼要這樣寫：過去每個角色分支各自列 classList.add('hidden')，
 // 只要有分支漏寫（例如訪客分支忘了隱藏 CSV 按鈕），登出後就會殘留管理員功能。
 const CM_MENU_PERMISSIONS = {
-    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false },
-    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false },
-    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false },
-    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false },
-    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true },
-    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true }
+    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false },
+    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false },
+    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false },
+    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true },
+    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true }
 };
 
 function applyMenuVisibility(role) {
@@ -1134,6 +1139,7 @@ function applyMenuVisibility(role) {
         ['btn-error-logs', perm.errorLogs],
         ['adminMgmtBtn', perm.adminMgmt],
         ['pushLogsBtn', perm.pushLogs],
+        ['pushSettingsBtn', perm.pushSettings],
         ['createSection', perm.create],
         ['myRegsBtn', perm.myRegs],
         ['changePwdBtn', perm.changePwd],
@@ -3654,6 +3660,22 @@ async function deleteCompetition(id) {
     }
 }
 
+/* v2.25.0：頁面副標的版本號一律跟後端要（不要再寫死在 HTML，才不會又忘了改） */
+async function loadAppVersion() {
+    const el = document.getElementById('appSubtitle');
+    if (!el) return;
+    try {
+        const res = await fetch('/api/version');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.version && data.version !== 'unknown') {
+            el.textContent = `發佈與管理各類賽事資訊 (v${data.version})`;
+        }
+    } catch (err) {
+        /* 取不到就維持原文字（不顯示錯的版本號） */
+    }
+}
+
 /* ── v2.24.0：複製賽事與週期性賽事 ── */
 let recurrenceComp = null;
 
@@ -4651,6 +4673,80 @@ async function openAdminModal() {
 
 function closeAdminModal() {
     document.getElementById('adminModal').classList.add('hidden');
+}
+
+/* ==========================================
+   推播設定（v2.25.0，管理員以上）
+   - 每日摘要：開關、發送時間（澳門時間）、要包含哪幾種事件
+   - 即時通知：報名審核結果、候補遞補（關掉只是不通知，流程照常）
+   ========================================== */
+const CM_PUSH_SETTING_FIELDS = [
+    ['pushDigestEnabled', 'digest_enabled'],
+    ['pushDigestKindNew', 'digest_kind_new'],
+    ['pushDigestKindReminder', 'digest_kind_reminder'],
+    ['pushEventReview', 'event_review'],
+    ['pushEventPromote', 'event_promote']
+];
+
+async function openPushSettingsModal() {
+    document.getElementById('pushSettingsModal').classList.remove('hidden');
+    document.getElementById('pushSettingsStatus').classList.add('hidden');
+    await loadPushSettings();
+}
+
+function closePushSettingsModal() {
+    document.getElementById('pushSettingsModal').classList.add('hidden');
+}
+
+async function loadPushSettings() {
+    const hintEl = document.getElementById('pushSettingsHint');
+    try {
+        const data = await apiResult(await customFetch('/api/push/settings'));
+        const s = data.settings || {};
+        CM_PUSH_SETTING_FIELDS.forEach(([id, key]) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = s[key] !== false;
+        });
+        const timeEl = document.getElementById('pushDigestTime');
+        if (timeEl) timeEl.value = s.digest_time || '09:00';
+
+        if (data.schema_ready === false) {
+            hintEl.textContent = '⚠️ ' + (data.hint || '推播設定目前讀不到，系統會先用預設值運作。');
+            hintEl.classList.remove('hidden');
+        } else {
+            hintEl.classList.add('hidden');
+        }
+    } catch (err) {
+        hintEl.textContent = '❌ 讀取設定失敗：' + err.message;
+        hintEl.classList.remove('hidden');
+    }
+}
+
+async function savePushSettings() {
+    const statusEl = document.getElementById('pushSettingsStatus');
+    const timeEl = document.getElementById('pushDigestTime');
+    const payload = { digest_time: (timeEl && timeEl.value) || '09:00' };
+    CM_PUSH_SETTING_FIELDS.forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (el) payload[key] = el.checked;
+    });
+
+    statusEl.classList.add('hidden');
+    try {
+        const data = await apiResult(await customFetch('/api/push/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }));
+        const changes = data.changes || [];
+        statusEl.textContent = changes.length
+            ? '✅ 設定已儲存：' + changes.join('、')
+            : '✅ 設定已儲存（這次沒有變動）';
+        statusEl.classList.remove('hidden');
+        await loadPushSettings();   // 回讀一次，確認畫面與資料庫一致
+    } catch (err) {
+        alert('❌ 儲存失敗：' + err.message);
+    }
 }
 
 /* ==========================================
