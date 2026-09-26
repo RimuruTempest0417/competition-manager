@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v3.5.0
+# 🏆 比賽管理系統 (Competition Manager) v3.5.1
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -182,6 +182,16 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v3.5.1 (2026-09-26) - 熱修：反代後面自家請求被誤判成跨站（CORS／CSRF）
+
+**背景**：v3.5.0 上線後對正式站實測 7 項安全性質，發現**自家網域的 POST 被 CSRF 擋成 403**——登入使用者無法做任何寫入操作。
+
+- **根因**：判斷「是否自家來源」時比對了 scheme（`req.protocol`）。伺服器跑在 Vercel 的 proxy 後面且未設 `trust proxy`，`req.protocol` 是 `http`，於是瀏覽器送來的 `https://…` Origin 永遠對不上。**主機名稱不同才是真正的跨站**。
+- **修法**：`allowedRequestOrigins(req)` 同時接受 `https://<host>`、`http://<host>`、`X-Forwarded-Proto://<host>`、`SITE_URL` 與 `CORS_ALLOWED_ORIGINS`；比對只看主機。
+- **CORS 改自寫中介層**（移除 `cors` 套件）：非白名單來源完全不設 ACAO；白名單反射來源＋`Allow-Credentials`＋`Vary: Origin`；`OPTIONS` 預檢回 204 帶方法／標頭清單。
+- **移除 `vercel.json` 對所有路徑硬塞的 ACAO**：那條套用到 `/(.*)`（含靜態檔），與 Express 的標頭並存會造成重複標頭（瀏覽器視為無效）。CORS 標頭現在只有一個主人＝Express。
+- **新增迴歸測試**：以 `X-Forwarded-Proto: https` ＋ `Origin: https://<host>` 重現代理形狀，斷言不可 403、ACAO 不得重複、永不出現 `*`。
 
 ### v3.5.0 (2026-09-26) - P0 安全修復：CORS 白名單＋登入憑證改 HttpOnly Cookie
 

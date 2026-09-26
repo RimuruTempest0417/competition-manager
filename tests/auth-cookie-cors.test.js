@@ -182,3 +182,59 @@ test('v3.5.0 登出會清掉 cookie，且 Bearer 仍然可用（向後相容）'
     assert.strictEqual(stageRes.status, 401, '帶 stage 的權杖放在 cookie 也要被拒');
     assert.ok(stage);
 });
+
+test('v3.5.1 反代後面（Vercel）同源請求不可被誤判成跨站', async (t) => {
+    const state = baseState();
+    const { stub, server, base } = await bootApp(state);
+    t.after(() => { server.close(); stub.close(); });
+
+    const post = req(base, 'POST');
+    const login = await post('/api/auth/login', { username: 'owner', password: 'plain-owner123' });
+    const cookie = cookieHeader(login);
+    const host = base.replace('http://', '');
+
+    /* 正式站在 Vercel 的 proxy 後面：本機連線是 http、但瀏覽器看到的是 https。
+     * v3.5.0 首次上線就是用 `req.protocol` 組自我來源 → 自家 https 的 Origin 對不上 → 同源 POST 全被 403。
+     * 這裡把代理的形狀重現出來：X-Forwarded-Proto: https ＋ Origin 是 https 版的自家網域。 */
+    const proxied = await post('/api/push/test', {},
+        Object.assign({ Origin: `https://${host}`, 'X-Forwarded-Proto': 'https' }, cookie));
+    assert.notStrictEqual(proxied.status, 403, '自家 https 的請求（經代理）不可被 CSRF 檢查擋下');
+
+    // CORS 也一樣：自家 https 的 Origin 必須被反射，而且只能有一個 ACAO 值、永遠不會是 *
+    const corsRes = await fetch(`${base}/api/competitions`, {
+        headers: { Origin: `https://${host}`, 'X-Forwarded-Proto': 'https' }
+    });
+    const acao = corsRes.headers.get('access-control-allow-origin');
+    assert.strictEqual(acao, `https://${host}`, '自家 https 來源應被反射');
+    assert.ok(!acao.includes(','), '不可出現重複的 ACAO 值');
+
+    // 任何情況下都不該出現 *
+    const wildcard = await fetch(`${base}/api/competitions`, { headers: { Origin: 'https://evil.example' } });
+    assert.notStrictEqual(wildcard.headers.get('access-control-allow-origin'), '*', '永遠不可回 ACAO: *');
+    assert.strictEqual(wildcard.headers.get('access-control-allow-origin'), null);
+});
+
+test('v3.5.1 CORS 預檢（OPTIONS）：白名單回應 204＋標頭，非白名單不給 ACAO', async (t) => {
+    const state = baseState();
+    const { stub, server, base } = await bootApp(state);
+    t.after(() => { server.close(); stub.close(); });
+
+    const allowed = await fetch(`${base}/api/competitions`, {
+        method: 'OPTIONS',
+        headers: {
+            Origin: 'https://preview.example',
+            'Access-Control-Request-Method': 'POST',
+            'Access-Control-Request-Headers': 'content-type'
+        }
+    });
+    assert.strictEqual(allowed.status, 204, '白名單預檢應回 204');
+    assert.strictEqual(allowed.headers.get('access-control-allow-origin'), 'https://preview.example');
+    assert.match(allowed.headers.get('access-control-allow-methods') || '', /POST/);
+    assert.match(allowed.headers.get('access-control-allow-headers') || '', /content-type/i);
+
+    const denied = await fetch(`${base}/api/competitions`, {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST' }
+    });
+    assert.strictEqual(denied.headers.get('access-control-allow-origin'), null, '非白名單預檢不得給 ACAO');
+});

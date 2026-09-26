@@ -2,7 +2,6 @@ require('dotenv').config();
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const express = require('express');
-const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 
@@ -47,18 +46,25 @@ function siteOrigin() {
         return '';
     }
 }
-function isAllowedCorsOrigin(origin) {
-    if (!origin) return false;
-    const o = String(origin).replace(/\/+$/, '');
-    const site = siteOrigin();
-    return (!!site && o === site) || allowedCorsOrigins().includes(o);
+function corsMiddleware(req, res, next) {
+    const origin = normalizeOrigin(req.headers.origin);
+    // 同源或非瀏覽器（curl、腳本）：CORS 規格根本不適用，不帶任何 CORS 標頭
+    if (!origin) return next();
+    // 非白名單：完全不給 Access-Control-Allow-Origin（瀏覽器自然讀不到回應）
+    if (!isAllowedRequestOrigin(req, origin)) return next();
+
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.append('Vary', 'Origin');
+    if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        res.setHeader('Access-Control-Max-Age', '600');
+        return res.status(204).end();
+    }
+    return next();
 }
-app.use('/api', cors((req, callback) => {
-    const origin = req.headers.origin || '';
-    const selfOrigin = `${req.protocol}://${req.get('host')}`;
-    const ok = !!origin && (origin === selfOrigin || isAllowedCorsOrigin(origin));
-    callback(null, { origin: ok, credentials: ok, maxAge: 600 });
-}));
+app.use('/api', corsMiddleware);
 
 /* v3.5.0：CSRF，見 csrfCookieGuard 的說明 */
 app.use('/api', csrfCookieGuard);
@@ -118,15 +124,45 @@ function csrfCookieGuard(req, res, next) {
     return res.status(403).json({ error: '跨站請求已被拒絕（CSRF 保護），請從本站操作' });
 }
 
+/* 判斷「這個請求是不是來自自家」。**刻意不比對 scheme**：
+ * Vercel 是在 proxy 後面跑（本專案沒設 trust proxy，req.protocol 會是 http），
+ * 用 scheme 比對會把自家 https 的請求誤判成跨站——v3.5.0 首次上線就是踩到這個坑：
+ * 同源 POST 一律被 CSRF 檢查擋成 403（v3.5.1 修正）。
+ * 主機名稱不同才是真正的跨站，所以只比對 host（含 X-Forwarded-Proto 的版本）＋白名單。 */
+function allowedRequestOrigins(req) {
+    const host = req.get('host') || '';
+    const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const proto = forwarded || req.protocol || 'https';
+    const set = new Set();
+    if (host) {
+        set.add(`https://${host}`);
+        set.add(`http://${host}`);
+        set.add(`${proto}://${host}`);
+    }
+    try {
+        const site = new URL(process.env.SITE_URL || '').origin;
+        if (site) set.add(site);
+    } catch (e) { /* SITE_URL 未設定或格式不對：略過 */ }
+    for (const o of allowedCorsOrigins()) set.add(o);
+    return set;
+}
+
+function normalizeOrigin(value) {
+    return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function isAllowedRequestOrigin(req, origin) {
+    const o = normalizeOrigin(origin);
+    return !!o && allowedRequestOrigins(req).has(o);
+}
+
 function isSameSiteRequest(req) {
-    const selfOrigin = `${req.protocol}://${req.get('host')}`;
     const origin = req.headers.origin || '';
-    if (origin) return origin === selfOrigin || isAllowedCorsOrigin(origin);
+    if (origin) return isAllowedRequestOrigin(req, origin);
     const referer = req.headers.referer || '';
     if (!referer) return true;
     try {
-        const refOrigin = new URL(referer).origin;
-        return refOrigin === selfOrigin || isAllowedCorsOrigin(refOrigin);
+        return isAllowedRequestOrigin(req, new URL(referer).origin);
     } catch (e) {
         return false;
     }
