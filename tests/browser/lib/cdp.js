@@ -217,7 +217,11 @@ class Browser {
         throw new Error(`等待逾時：${expression}${lastErr ? `（最後錯誤：${lastErr.message}）` : ''}`);
     }
 
+    /* 截圖：**預設完全不寫檔**（使用者 2026-09-26 指示：不要保留任何 screenshot）。
+     * 需要親眼看畫面時才用 `CM_KEEP_SCREENSHOTS=1` 跑一次，看完自行刪掉；
+     * 檢查本身不依賴截圖檔（判定都來自 evaluate 量到的數值），所以預設不寫不影響結果。 */
     async screenshot(file) {
+        if (process.env.CM_KEEP_SCREENSHOTS !== '1') return null;
         const shot = await this.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
         fs.writeFileSync(file, Buffer.from(shot.data, 'base64'));
         return file;

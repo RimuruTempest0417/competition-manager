@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v3.3.0
+# 🏆 比賽管理系統 (Competition Manager) v3.4.0
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -165,13 +165,32 @@ competition-manager/
 │   └── 安全性檢查-v2.12.0.md  # 路由逐項安全性盤點、修復清單與刻意保留的限制
 ├── lib/
 │   └── passwords.js          # 密碼雜湊（scrypt）與驗證；伺服器與升級腳本共用同一份實作
+├── routes/                   # API 路由模組（v3.4.0 起，19 支；原本全擠在 server.js）
+│   ├── competitions.js       # 賽事 CRUD、複製、週期性、匯入匯出
+│   ├── registrations.js      # 報名、審核、候補與遞補、收尾
+│   ├── cron.js               # 週期性賽事排程、開賽提醒與每日摘要（CRON_SECRET 授權）
+│   └── ...                   # auth／results／push／posters／docs（規程）／admin-users／backup／audit-logs…
 ├── scripts/
-│   └── hash-legacy-passwords.js # 一次性把舊帳號的明碼密碼升級為雜湊（支援 --dry-run）
-├── server.js                 # Express 後端伺服器、API 路由與 Error 中間件
+│   ├── hash-legacy-passwords.js # 一次性把舊帳號的明碼密碼升級為雜湊（支援 --dry-run）
+│   └── route-inventory.js    # 產生／更新「路由清單」快照（--write），重構時用來守門
+├── server.js                 # Express 後端伺服器本體：連線、共用函式、中間件、掛載 routes/（v3.4.0 起 2,551 行）
 └── README.md                 # 專案說明文件
 ```
 
 # 版本紀錄 (Changelog)
+
+### v3.4.0 (2026-09-26) - `server.js` 拆模組（P4，重構但不變行為）
+
+**一句話**：6,979 行的 `server.js` 拆成 **19 個路由模組**，`server.js` 剩 **2,551 行**（−63%），對外行為完全不變。
+
+- **重構範圍**：只搬家、不改邏輯也不改行為——路由數量、順序、權限、回應一律相同。
+- **怎麼掛**：`require('./routes/docs')(app, { ...依賴 })`，模組以 `ctx` 取得共用函式與資料庫連線（避免圓形 require）。
+- **掛載順序＝原本的路由順序**：Express 依註冊順序比對，順序一變就可能被前面的 catch-all 攔走，而且**不會報錯**。
+- **共用可變狀態集中**：原本散落的 12 個 `let`（schema 探測快取、`opsStatsCache`、`lastCronRun`、`webpush`…）改成同一個 `serverState` 物件，確保 `server.js` 與模組讀寫的是同一格。
+- **新增守門測試**：`tests/route-inventory.test.js` 凍結 93 條路由＋7 層中間件的**數量與順序**（快照在 `tests/fixtures/route-inventory.json`），重構期間必須保持不變。
+- **順手修掉兩個既有測試缺陷**（在 v3.3.0 的程式碼上也會失敗，與本次重構無關）：深夜跨午夜時摘要測試前提不成立、候選賽事寫死「今天 23:00」。
+- **驗證**：`npm test` **581 通過 / 0 失敗**（1 項因環境時間跨午夜而略過）；`npm run check:browser` **618 項**；正式站 `npm run check:prod` 煙霧 **95**＋訪客 **8**＋線上樣式 **15**。
+- **無**資料庫變更、**無** CSP 變更、**無**前端變更。細節見 `docs/release-v3.4.0.md`。
 
 ### v3.3.0 (2026-09-26) - 賽事規程 PDF 附件（P1-6）
 

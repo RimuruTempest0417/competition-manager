@@ -36,6 +36,10 @@ const hoursFromNow = (h) => localOf(new Date(Date.now() + h * 3600 * 1000));
 const NOW_LOCAL = localOf(new Date());
 const SOON = hoursFromNow(2);          // 2 小時後開賽 → 摘要的「開賽提醒」對象
 const EVEN_LATER = hoursFromNow(3);    // 拿來當「還沒到發送時間」的設定值
+/* v3.4.0：`shouldRunDigest` 用 "HH:MM" 字串比較（同一天內正確）。深夜跑測試時，
+   3 小時後會跨到隔天 → 字串比較失去意義（"23:06" > "02:06"），這條測試的前提不成立。
+   這種情況直接跳過，並在訊息說明原因；白天跑則照常驗證。 */
+const EVEN_LATER_WRAPPED = EVEN_LATER.time <= NOW_LOCAL.time;
 
 const state = {
     tables: {
@@ -199,7 +203,11 @@ test('把「報名審核結果通知」打開後，會真的去查推播訂閱',
 
 /* ── 每日摘要的時間與事件 ── */
 
-test('每日摘要：時間還沒到就不發（也不會去查訂閱）', async () => {
+test('每日摘要：時間還沒到就不發（也不會去查訂閱）', async (t) => {
+    if (EVEN_LATER_WRAPPED) {
+        t.skip(`現在是本機時間 ${NOW_LOCAL.time}，3 小時後會跨到隔天，"HH:MM" 字串比較不適用 → 略過此情境`);
+        return;
+    }
     await api('POST', '/api/push/settings', { digest_time: EVEN_LATER.time, digest_enabled: true }, adminToken());
     const before = subscriptionQueries();
     const res = await runCron();

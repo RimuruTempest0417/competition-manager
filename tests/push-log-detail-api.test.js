@@ -172,8 +172,18 @@ test('權限：一般使用者看不到紀錄也不能重送、未登入 401', a
 });
 
 test('每日摘要的失敗也會留下明細', async () => {
+    /* v3.4.0：讓這條測試與「現在幾點」無關。
+       - 摘要的「已發送」旗標寫在 app_settings.push_last_digest_date：先清掉，否則同一輪前面跑過摘要就不再發。
+       - 候選賽事改成「1 小時後開賽」（原本寫死今天 23:00，深夜跑時已成過去，永遠不會進候選）。 */
+    state.tables.app_settings = state.tables.app_settings.filter((r) => r.key !== 'push_last_digest_date');
+    const ofs = 8 * 60;   // 澳門 UTC+8（與伺服器 SITE_UTC_OFFSET 相同）
+    const soonAt = new Date(Date.now() + 60 * 60000 + ofs * 60000);
+    const soon = {
+        date: soonAt.toISOString().slice(0, 10),
+        time: `${String(soonAt.getUTCHours()).padStart(2, '0')}:${String(soonAt.getUTCMinutes()).padStart(2, '0')}`
+    };
     state.tables.competitions.push({
-        id: 862, name: '明天開賽盃', date: new Date().toISOString().slice(0, 10), time: '23:00',
+        id: 862, name: '一小時後開賽盃', date: soon.date, time: soon.time,
         is_deleted: false, is_registration_open: true, created_at: '2026-01-01T00:00:00.000Z'
     });
     const before = state.tables.push_log.length;

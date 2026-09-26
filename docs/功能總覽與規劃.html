@@ -10,7 +10,7 @@ blockquote{background:#f8fafc;border-left:4px solid #94a3b8;margin:0 0 18px;padd
 hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <body>
 <h1>🏆 比賽管理系統 — 功能總覽與規劃</h1>
-<p>文件版本：2026-09-26（對應網站 v3.2.0）</p>
+<p>文件版本：2026-09-26（對應網站 v3.4.0）</p>
 <p>線上網址：https://competition-manager-hazel.vercel.app</p>
 <p>程式碼：https://github.com/RimuruTempest0417/competition-manager</p>
 <p>本文件已重新整理：修正原本過時或標示錯誤的狀態、補上 v2.7.0～v2.13.0 的實際完成內容、新增「資料庫 Migration」「版本歷程」「測試方式」「已知限制」與「建議下一步」。</p>
@@ -160,6 +160,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>v2.15.0</td><td>管理員兩步驟驗證（TOTP，手寫不引套件、RFC 官方測試向量驗證、登入兩段式、備援碼只存雜湊、防重放、暴力嘗試計入鎖定、上級可重設）、正式站「訪客視角」檢查（真實 Chrome 確認資料真的渲染，補上 HTTP 煙霧測試看不到的盲點）</td></tr>
 <tr><td>v2.16.0</td><td>稽核日誌強化：依使用者／動作／時間區間／關鍵字篩選、分頁瀏覽、匯出 CSV（公式注入防護＋BOM）、保留天數清理（最少 30 天、可先預覽、預設不自動刪；設 <code>AUDIT_RETENTION_DAYS</code> 才由每日排程順便清）、每筆匯出與清理都留下稽核</td></tr>
 <tr><td>v2.17.0</td><td>每次更新巡檢後<strong>自動把讀到的錯誤日誌標記為已處理</strong>：新增批次標記端點（單次上限 500 筆、一定留稽核、未執行 migration 時回 503 降級）、<code>npm run triage</code> 讀取→分析→標記一次完成、錯誤日誌視窗加「🏷️ 全部標記已處理」按鈕、標記不等於刪除（可切換檢視）、首頁提示只針對下一批新錯誤</td></tr>
+<tr><td><strong>v3.4.0</strong></td><td><strong><code>server.js</code> 拆模組（P4，重構不變行為）</strong>：6,979 行 → <strong>2,551 行</strong>，88 條路由拆成 <code>routes/</code> 下 <strong>19 個模組</strong>，以 <code>require(&#x27;./routes/x&#x27;)(app, ctx)</code> 依原本順序掛載；共用可變狀態集中為 <code>serverState</code>；新增 <strong>路由清單守門測試</strong>（93 條路由＋7 層中間件的數量與順序快照，順序錯了不會報錯、只有它抓得到）；順手修掉兩個與時間有關的既有測試缺陷。無資料庫／CSP／前端變更。測試：<code>npm test</code> 581 通過 / 0 失敗（1 略過）＋瀏覽器 618 項＋正式站 95＋8＋15。</td></tr>
 <tr><td><strong>v3.3.0</strong></td><td><strong>賽事規程 PDF 附件（P1-6）</strong>：新增 <code>competition_docs</code> 表（一場一份）＋公開讀取／管理員上傳／管理員移除三個端點；卡片「📘 規程」按鈕（另開新視窗、可另存）、編輯表單可上傳／更換／移除；檔案把關＝<strong>看檔頭 <code>%PDF-</code></strong>（不看副檔名／MIME）＋上限 3MB（Vercel 4.5MB 請求上限與 base64 膨脹）；列表只帶中介資料不撈檔案內容。測試：單元 18 項＋真 Chrome 32 項（含假 PDF 被後端擋下、訪客位元組相同、大檔在畫面就被擋）＋正式站煙霧 4 項。</td></tr>
 <tr><td><strong>v3.2.1</strong></td><td><strong>版面空間優化</strong>：桌機卡片內容欄原本被右側按鈕區擠到只剩 84px（7%）、資訊一行一行直排、大螢幕主容器固定 1280px。修正：按鈕區限寬 <code>min(30rem, 44%)</code>、資訊列改自動欄數格狀、內容欄可壓縮、大螢幕容器放到 1560px。結果：桌機內容欄 84→660px、卡片高 612→219px；手機維持兩欄且 13 顆按鈕全可見。新增 <code>tests/browser/layout-check.js</code>（37 項，四種尺寸），並實測拿掉修正會亮紅。</td></tr>
 <tr><td><strong>v3.2.0</strong></td><td><strong>名單列印版（P1-7）</strong>：新增列印預覽視窗（<code>public/js/printdoc.js</code> 規則 UMD＋<code>public/css/print.css</code>）；名單只印已錄取、候補另段標示順位、可切換含候補／含待審核／簽到欄／橫向；成績表名次照原值；<code>@page A4</code> 且列印時只留那張紙（表頭每頁重複、單列不跨頁）；不連外、不含個資。測試：單元 16 項＋真 Chrome 32 項（含用 CDP 模擬列印媒介實測介面被隱藏、<code>Page.printToPDF</code> 真的產出 PDF 但不落地）。</td></tr>
@@ -190,7 +191,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>回歸測試</td><td>每次發版都重跑 v2.7.0～v2.13.0 的瀏覽器實測，確認舊功能未被破壞；另有「錯誤日誌巡檢」自動把線上真實錯誤轉成待修復清單並在分析後標記已處理。</td></tr>
 <tr><td>線上驗證</td><td>部署後比對線上與本地檔案雜湊、檢查 CSP 與安全標頭、檢查新端點的降級行為。</td></tr>
 <tr><td>手機尺寸實測</td><td>headless Chrome 以 390×844（iPhone 14）與 360×640（iPhone SE） 驗證：橫向溢出、觸控目標高度、彈窗是否超出視窗、輸入框字級、篩選列排版、深色模式。</td></tr>
-<tr><td>目前規模</td><td>npm test <strong>578 項全綠</strong>；瀏覽器檢查 <strong>618 項全綠</strong>（<code>npm run check:browser</code>：提示橫幅 13＋兩步驟驗證 15＋稽核日誌介面 22＋錯誤日誌標記 13＋備份與還原 22＋賽事狀態機 30＋報名審核與候補 49＋候補順位與指定遞補 32＋候補再補強 30＋候補收尾 23＋賽事複製與週期性 34＋推播設定 44＋公告中心與推播重送 50＋場地與工作人員 40＋營運儀表板與列表縮圖 42＋成績與結果 38＋帳號管理 20＋名單與成績列印版 32＋版面空間 37＋賽事規程附件 32，皆為真實 Chrome 手機尺寸）；正式站 <code>npm run check:prod</code>＝HTTP 煙霧測試 <strong>95 項</strong>＋訪客視角檢查 <strong>8 項</strong>＋線上樣式檢查 <strong>15 項</strong>（含 414px 與 1920px 的真實版面量測）（真實 Chrome：賽事卡片是否真的渲染、前端例外、手機橫向溢出、版本字串）；v2.17.0 143 項、v2.16.0 130 項、v2.15.0 118 項、v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗。</td></tr>
+<tr><td>目前規模</td><td>npm test <strong>581 項通過 / 0 失敗</strong>（另有 1 項「摘要發送時間跨午夜」的情境在深夜執行時會明確略過並說明原因）；瀏覽器檢查 <strong>618 項全綠</strong>（<code>npm run check:browser</code>：提示橫幅 13＋兩步驟驗證 15＋稽核日誌介面 22＋錯誤日誌標記 13＋備份與還原 22＋賽事狀態機 30＋報名審核與候補 49＋候補順位與指定遞補 32＋候補再補強 30＋候補收尾 23＋賽事複製與週期性 34＋推播設定 44＋公告中心與推播重送 50＋場地與工作人員 40＋營運儀表板與列表縮圖 42＋成績與結果 38＋帳號管理 20＋名單與成績列印版 32＋版面空間 37＋賽事規程附件 32，皆為真實 Chrome 手機尺寸）；正式站 <code>npm run check:prod</code>＝HTTP 煙霧測試 <strong>95 項</strong>＋訪客視角檢查 <strong>8 項</strong>＋線上樣式檢查 <strong>15 項</strong>（含 414px 與 1920px 的真實版面量測）（真實 Chrome：賽事卡片是否真的渲染、前端例外、手機橫向溢出、版本字串）；v2.17.0 143 項、v2.16.0 130 項、v2.15.0 118 項、v2.11.0 41 項、v2.10.0 29 項、v2.9.0 50 項、v2.8.0 50 項、v2.7.0 48 項，全部 0 失敗。拆模組後另加<strong>路由清單守門測試</strong>（<code>tests/route-inventory.test.js</code>＋<code>tests/fixtures/route-inventory.json</code>：93 條路由＋7 層中間件的數量與順序快照，<code>node scripts/route-inventory.js --write</code> 才更新）。</td></tr>
 </table>
 <h2>六、已知限制（誠實說明）</h2>
 <ul><li>~~CRON_SECRET 尚未設定~~ <strong>已設定並驗證</strong>（2026-09-25 實測：未帶權杖回 401、不再是 503），每日自動推播已啟用（Vercel Cron 每日 01:00 UTC ＝ 澳門時間 09:00）。</li></ul>

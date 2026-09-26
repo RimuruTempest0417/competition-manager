@@ -15,7 +15,17 @@ process.env.NODE_ENV = 'production';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'unit-test-secret';
 
 const app = require(path.join(__dirname, '..', 'server.js'));
-const SERVER_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+
+/* v3.4.0（P4 拆模組）：路由搬到 routes/*.js，稽核寫入不再只在 server.js，
+   所以掃描範圍＝server.js ＋ routes/*.js（AUDIT_ACTION_LABELS 宣告仍留在 server.js）。 */
+const ROOT = path.join(__dirname, '..');
+const ROUTES_DIR = path.join(ROOT, 'routes');
+const SOURCE_FILES = [path.join(ROOT, 'server.js')].concat(
+    fs.existsSync(ROUTES_DIR)
+        ? fs.readdirSync(ROUTES_DIR).filter((f) => f.endsWith('.js')).sort().map((f) => path.join(ROUTES_DIR, f))
+        : []
+);
+const SERVER_SOURCE = SOURCE_FILES.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 
 const LABELS = app.__test__.AUDIT_ACTION_LABELS;
 
