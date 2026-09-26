@@ -343,6 +343,7 @@ function toDateString(input) {
    狀態即時由「當下時間」推導（不存資料庫、不需要排程）→ 時間一到就自動切換。
 */
 const CMCompetitionState = require('./public/js/competition-state');
+const CMAnnouncements = require('./public/js/announcements');   // v2.26.0：公告可見性的唯一真實來源
 const COMPETITION_STATE_LABELS = CMCompetitionState.LABELS;
 const COMPETITION_STATE_TONES = CMCompetitionState.TONES;
 const competitionTimeline = CMCompetitionState.timeline;
@@ -1022,9 +1023,457 @@ app.get('/api/admin/push-logs', requireAdmin, async (req, res) => {
             if (isMissingTableError(error)) return res.status(503).json({ error: PUSH_HINT });
             throw error;
         }
-        res.json({ success: true, logs: data || [] });
+        // v2.26.0：明細欄位還沒建時，前端要誠實顯示「尚無失敗資訊與重送」
+        res.json({
+            success: true,
+            logs: data || [],
+            detail_ready: await pushLogDetailSchemaReady(),
+            hint: (await pushLogDetailSchemaReady()) ? null : PUSH_LOG_DETAIL_HINT
+        });
     } catch (err) {
         await logErrorToDb(req, 'fetch_push_logs_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// ==========================================
+// v2.26.0：站內公告／訊息中心
+// ==========================================
+//
+// 為什麼「誰看得到」要共用 CMAnnouncements：前後端各寫一套遲早不一致
+// （列表看得到、點進去說無權；或管理員以為只發給路跑組、結果所有人都收到）。
+// 資料表：announcements（公告本體）、announcement_reads（誰讀過了）、
+//         admin_users.announce_categories（使用者訂閱的公告分類）。
+// 未執行 migration 時：列表回空並附 schema_ready:false＋檔名提示、發布／修改回 503，其他功能不受影響。
+
+const ANNOUNCEMENTS_HINT = '站內公告需要資料庫資料表，請先執行 migrations/2026-09-26-v2.26.0-announcements.sql';
+const ANNOUNCEMENT_LIST_MAX = 200;   // 一次最多撈幾則（置頂與最新的都會在裡面）
+
+let announcementsReadyCache = null;
+async function announcementsSchemaReady() {
+    if (announcementsReadyCache !== null) return announcementsReadyCache;
+    const { error } = await supabase.from('announcements').select('id').limit(1);
+    if (!error) { announcementsReadyCache = true; return true; }
+    if (isMissingTableError(error)) { announcementsReadyCache = false; return false; }
+    throw error;   // 暫時性錯誤（連線…）不快取，否則之後都會以為功能沒開
+}
+
+let announceCategoriesReadyCache = null;
+async function announceCategoriesReady() {
+    if (announceCategoriesReadyCache === null) {
+        announceCategoriesReadyCache = await columnExists('admin_users', 'announce_categories');
+    }
+    return announceCategoriesReadyCache;
+}
+
+const isAdminRoleName = (role) => ADMIN_ROLES.has(role);
+const categoryChips = (ids) => (Array.isArray(ids) ? ids : [])
+    .map((cid) => {
+        const found = COMPETITION_CATEGORIES.find((c) => c.id === cid);
+        return found ? found.label : cid;
+    })
+    .join('、');
+
+/* 我訂閱的公告分類（欄位不存在或讀不到 → 空陣列，不影響其他功能） */
+async function myAnnounceCategories(userId) {
+    if (!(await announceCategoriesReady())) return [];
+    try {
+        const { data, error } = await supabase.from('admin_users').select('announce_categories').eq('id', userId).maybeSingle();
+        if (error) return [];
+        const list = data && data.announce_categories;
+        return Array.isArray(list) ? list.filter((c) => CATEGORY_IDS.has(c)) : [];
+    } catch (err) {
+        return [];
+    }
+}
+
+/* 有效使用者人數（公告的「幾個人看得到」參考值；讀不到就回 null，不讓列表因此失敗） */
+async function countActiveUsers() {
+    const hasActive = await columnExists('admin_users', 'is_active');
+    const { data, error } = await supabase.from('admin_users').select(hasActive ? 'id,is_active' : 'id');
+    if (error) throw error;
+    const rows = data || [];
+    return hasActive ? rows.filter((u) => u.is_active !== false).length : rows.length;
+}
+
+/* 我讀過的公告 id（Set，字串；表不存在時視為都沒讀過） */
+async function myAnnouncementReadIds(userId) {
+    try {
+        const { data, error } = await supabase.from('announcement_reads').select('announcement_id').eq('user_id', userId);
+        if (error) throw error;
+        return new Set((data || []).map((r) => String(r.announcement_id)));
+    } catch (err) {
+        if (isMissingTableError(err)) return new Set();
+        throw err;
+    }
+}
+
+/* 發布公告時的通知（依對象送給「看得到的人」的訂閱） */
+async function pushAnnouncement(announcement) {
+    if (!(await pushEventEnabled('announce'))) {
+        return { sent: 0, total: 0, skipped: `站台設定已關閉「${PUSH_SETTING_LABELS.event_announce}」` };
+    }
+    const { data: users, error } = await supabase.from('admin_users').select('id,role,is_active,announce_categories');
+    if (error) throw error;
+    const targets = (users || []).filter((u) => {
+        if (u.is_active === false) return false;   // 停用帳號不推
+        return CMAnnouncements.matchesAudience(announcement, {
+            isAdmin: isAdminRoleName(u.role),
+            categories: Array.isArray(u.announce_categories) ? u.announce_categories : []
+        });
+    });
+    if (!targets.length) return { sent: 0, total: 0, skipped: '沒有符合對象的使用者' };
+
+    const ids = new Set(targets.map((u) => String(u.id)));
+    const { data: allSubs, error: subErr } = await supabase
+        .from('push_subscriptions')
+        .select('id,user_id,endpoint,p256dh,auth,is_active')
+        .eq('is_active', true);
+    if (subErr) throw subErr;
+    const subs = (allSubs || []).filter((s) => ids.has(String(s.user_id)));
+
+    const payload = {
+        kind: 'announce',
+        title: `📣 ${announcement.title}`,
+        body: String(announcement.body || '').slice(0, 90),
+        url: `/?announce=${announcement.id}`,
+        tag: `cm-announce-${announcement.id}`
+    };
+
+    let sent = 0;
+    let failed = 0;
+    let deactivated = 0;
+    const errors = [];
+    for (const sub of subs) {
+        const result = await sendPushTo(sub, payload);
+        if (result.ok) sent += 1;
+        else if (result.gone) {
+            deactivated += 1;
+            await supabase.from('push_subscriptions').update({ is_active: false }).eq('id', sub.id);
+        } else {
+            failed += 1;
+            if (result.error) errors.push(result.error);
+        }
+    }
+
+    await logPushEvent(null, 'announcement', sent, {
+        failed,
+        errors,
+        payload,
+        target_user_id: null,
+        target_user_ids: Array.from(ids)
+    });
+
+    return {
+        sent, failed, total: subs.length, deactivated, target_users: ids.size,
+        errors: Array.from(new Set(errors)).slice(0, 5)
+    };
+}
+
+/* 我的公告（所有已登入使用者；只回「我這個時間點看得到」的那些） */
+app.get('/api/my/announcements', authenticateToken, async (req, res) => {
+    try {
+        if (!(await announcementsSchemaReady())) {
+            return res.json({
+                success: true, announcements: [], unread_count: 0, my_categories: [],
+                all_categories: COMPETITION_CATEGORIES, schema_ready: false, hint: ANNOUNCEMENTS_HINT
+            });
+        }
+        const myCategories = await myAnnounceCategories(req.user.sub);
+        const { data, error } = await supabase
+            .from('announcements')
+            .select('id,title,body,audience,categories,is_pinned,is_active,publish_at,expires_at,created_at,created_by')
+            .eq('is_active', true)
+            .order('publish_at', { ascending: false })
+            .limit(ANNOUNCEMENT_LIST_MAX);
+        if (error) throw error;
+
+        const viewer = { isAdmin: isAdminRoleName(req.user.role), categories: myCategories };
+        const visible = CMAnnouncements.sortForDisplay(
+            CMAnnouncements.visibleFor(data || [], viewer, Date.now())
+        );
+        const reads = await myAnnouncementReadIds(req.user.sub);
+        const items = visible.map((a) => Object.assign({}, a, {
+            read: reads.has(String(a.id)),
+            audience_label: CMAnnouncements.audienceLabel(a.audience)
+        }));
+
+        res.json({
+            success: true,
+            announcements: items,
+            unread_count: CMAnnouncements.unreadCount(items, reads),
+            my_categories: myCategories,
+            all_categories: COMPETITION_CATEGORIES,
+            schema_ready: true
+        });
+    } catch (err) {
+        await logErrorToDb(req, 'fetch_announcements_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+/* 標記已讀／全部已讀（冪等：重複標記不會長出重複列） */
+app.post('/api/my/announcements/read-all', authenticateToken, async (req, res) => {
+    try {
+        if (!(await announcementsSchemaReady())) return res.status(503).json({ error: ANNOUNCEMENTS_HINT });
+        const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+        if (!ids.length) return res.status(400).json({ error: '沒有要標記的公告' });
+        if (ids.length > ANNOUNCEMENT_LIST_MAX) return res.status(400).json({ error: `一次最多標記 ${ANNOUNCEMENT_LIST_MAX} 則` });
+
+        const now = new Date().toISOString();
+        const rows = ids.map((announcementId) => ({ announcement_id: announcementId, user_id: req.user.sub, read_at: now }));
+        const { error } = await supabase
+            .from('announcement_reads')
+            .upsert(rows, { onConflict: 'announcement_id,user_id' });
+        if (error) throw error;
+        res.json({ success: true, marked: ids.length });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: ANNOUNCEMENTS_HINT });
+        await logErrorToDb(req, 'mark_announcements_read_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+/* 我訂閱的公告分類（audience = 'category' 的公告靠這個比對） */
+app.post('/api/my/announce-categories', authenticateToken, async (req, res) => {
+    try {
+        if (!(await announceCategoriesReady())) {
+            return res.status(503).json({ error: '公告分類訂閱需要資料庫欄位，請先執行 migrations/2026-09-26-v2.26.0-announcements.sql' });
+        }
+        const raw = (req.body && req.body.categories) || [];
+        if (!Array.isArray(raw)) return res.status(400).json({ error: 'categories 必須是陣列' });
+        const categories = Array.from(new Set(raw.map(String).filter((c) => CATEGORY_IDS.has(c))));
+        const { error } = await supabase.from('admin_users').update({ announce_categories: categories }).eq('id', req.user.sub);
+        if (error) throw error;
+        res.json({
+            success: true, categories,
+            message: categories.length
+                ? `已訂閱 ${categoryChips(categories)} 的公告`
+                : '已取消所有公告分類訂閱'
+        });
+    } catch (err) {
+        if (isMissingColumnError(err, ['announce_categories'])) {
+            return res.status(503).json({ error: '公告分類訂閱需要資料庫欄位，請先執行 migrations/2026-09-26-v2.26.0-announcements.sql' });
+        }
+        await logErrorToDb(req, 'save_announce_categories_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+/* 管理端：列出全部公告（含未上架與已過期）＋每則的已讀人數 */
+app.get('/api/admin/announcements', requireAdmin, async (req, res) => {
+    try {
+        if (!(await announcementsSchemaReady())) {
+            return res.json({ success: true, announcements: [], schema_ready: false, hint: ANNOUNCEMENTS_HINT });
+        }
+        const { data, error } = await supabase
+            .from('announcements')
+            .select('*')
+            .order('publish_at', { ascending: false })
+            .limit(ANNOUNCEMENT_LIST_MAX);
+        if (error) throw error;
+
+        let readCounts = new Map();
+        try {
+            const { data: reads, error: readErr } = await supabase.from('announcement_reads').select('announcement_id');
+            if (readErr) throw readErr;
+            (reads || []).forEach((r) => {
+                const key = String(r.announcement_id);
+                readCounts.set(key, (readCounts.get(key) || 0) + 1);
+            });
+        } catch (readErr) {
+            if (!isMissingTableError(readErr)) throw readErr;
+            readCounts = new Map();
+        }
+
+        const totalUsers = await countActiveUsers().catch(() => null);
+        const items = (data || []).map((a) => Object.assign({}, a, {
+            audience_label: CMAnnouncements.audienceLabel(a.audience),
+            read_count: readCounts.get(String(a.id)) || 0,
+            is_live: CMAnnouncements.isLive(a, Date.now())
+        }));
+        res.json({ success: true, announcements: items, total_users: totalUsers, schema_ready: true });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: ANNOUNCEMENTS_HINT });
+        await logErrorToDb(req, 'fetch_admin_announcements_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+/* 管理端：發布公告（可同時推播） */
+app.post('/api/admin/announcements', requireAdmin, async (req, res) => {
+    try {
+        if (!(await announcementsSchemaReady())) return res.status(503).json({ error: ANNOUNCEMENTS_HINT });
+        const normalized = CMAnnouncements.normalizeInput(req.body, COMPETITION_CATEGORIES.map((c) => c.id));
+        if (normalized.error) return res.status(400).json({ error: normalized.error });
+
+        const now = new Date().toISOString();
+        const row = Object.assign({}, normalized.value, {
+            created_by: req.currentUser.username,
+            created_at: now,
+            updated_at: now
+        });
+        const { data, error } = await supabase.from('announcements').insert([row]).select();
+        if (error) throw error;
+        const created = (data && data[0]) || row;
+
+        let push = { sent: 0, skipped: '沒有勾選「同時發送推播」' };
+        if (normalized.value.notify_push) {
+            try {
+                push = await pushAnnouncement(created);
+            } catch (pushErr) {
+                push = { sent: 0, error: pushErr.message };
+                await logErrorToDb(req, 'announcement_push_error', pushErr);
+            }
+        }
+
+        const audienceText = CMAnnouncements.audienceLabel(normalized.value.audience)
+            + (normalized.value.categories.length ? `：${categoryChips(normalized.value.categories)}` : '');
+        await logAudit(req.currentUser.username, 'CREATE_ANNOUNCEMENT', created.id || null,
+            `發布公告「${normalized.value.title}」（對象 ${audienceText}）${normalized.value.notify_push ? `，推播成功 ${push.sent} 則` : ''}`,
+            req.userAgent);
+
+        res.json({ success: true, announcement: created, push });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: ANNOUNCEMENTS_HINT });
+        await logErrorToDb(req, 'create_announcement_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+/* 管理端：修改公告（只覆蓋有帶的欄位；下架用 is_active:false，資料留著） */
+app.patch('/api/admin/announcements/:id', requireAdmin, async (req, res) => {
+    try {
+        if (!(await announcementsSchemaReady())) return res.status(503).json({ error: ANNOUNCEMENTS_HINT });
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '公告編號不對' });
+
+        const { data: existing, error } = await supabase.from('announcements').select('*').eq('id', id).maybeSingle();
+        if (error) throw error;
+        if (!existing) return res.status(404).json({ error: '找不到這則公告' });
+
+        // 用「現有值＋這次帶的欄位」再跑一次同一份驗證，避免改一半變成壞資料
+        const merged = Object.assign({}, existing, req.body || {});
+        const normalized = CMAnnouncements.normalizeInput(merged, COMPETITION_CATEGORIES.map((c) => c.id));
+        if (normalized.error) return res.status(400).json({ error: normalized.error });
+
+        const patch = Object.assign({}, normalized.value, { updated_at: new Date().toISOString() });
+        const changes = [];
+        const fieldLabels = {
+            title: '標題', body: '內容', audience: '對象', categories: '分類',
+            is_pinned: '置頂', is_active: '上架', notify_push: '發布時推播',
+            publish_at: '發布時間', expires_at: '結束時間'
+        };
+        Object.keys(fieldLabels).forEach((field) => {
+            const before = existing[field];
+            const after = patch[field];
+            const same = Array.isArray(before) || Array.isArray(after)
+                ? JSON.stringify(before || []) === JSON.stringify(after || [])
+                : String(before === undefined ? '' : before) === String(after === undefined ? '' : after);
+            if (same) return;
+            if (field === 'audience') {
+                changes.push(`${fieldLabels[field]}：${CMAnnouncements.audienceLabel(before)} → ${CMAnnouncements.audienceLabel(after)}`);
+            } else if (field === 'categories') {
+                changes.push(`${fieldLabels[field]}：${categoryChips(before) || '（無）'} → ${categoryChips(after) || '（無）'}`);
+            } else if (field === 'is_pinned' || field === 'is_active' || field === 'notify_push') {
+                changes.push(`${fieldLabels[field]}：${before ? '是' : '否'} → ${after ? '是' : '否'}`);
+            } else if (field === 'body') {
+                changes.push('內容已更新');
+            } else {
+                changes.push(`${fieldLabels[field]}：${before === null || before === undefined ? '（無）' : before} → ${after === null || after === undefined ? '（無）' : after}`);
+            }
+        });
+
+        const { error: updErr } = await supabase.from('announcements').update(patch).eq('id', id);
+        if (updErr) throw updErr;
+
+        await logAudit(req.currentUser.username, 'UPDATE_ANNOUNCEMENT', id,
+            changes.length ? `修改公告「${patch.title}」：${changes.join('；')}` : `修改公告「${patch.title}」（內容沒有變動）`,
+            req.userAgent);
+
+        res.json({ success: true, announcement: Object.assign({}, existing, patch), changes });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: ANNOUNCEMENTS_HINT });
+        await logErrorToDb(req, 'update_announcement_error', err);
+        res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// v2.26.0：重送某一筆推播（管理員以上）
+// 語意：把「當時送出去的內容」再送一次給同一批對象（單一使用者的通知只送給那個人）。
+// 這是**手動**動作，因此不受「自動通知開關」影響（開關管的是系統自動發的那些）；
+// 但每一筆重送都會留稽核，失敗原因也會回報。
+app.post('/api/admin/push-logs/:id/resend', requireAdmin, async (req, res) => {
+    try {
+        if (!(await pushLogDetailSchemaReady())) return res.status(503).json({ error: PUSH_LOG_DETAIL_HINT });
+        const id = Number(req.params.id);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '推播紀錄編號不對' });
+
+        const { data: row, error } = await supabase.from('push_log').select('*').eq('id', id).maybeSingle();
+        if (error) {
+            if (isMissingTableError(error)) return res.status(503).json({ error: PUSH_HINT });
+            throw error;
+        }
+        if (!row) return res.status(404).json({ error: '找不到這筆推播紀錄' });
+        if (!row.payload || !row.payload.title) {
+            return res.status(400).json({ error: '這筆紀錄沒有可重送的內容（v2.26.0 之前的紀錄只記了筆數）' });
+        }
+
+        // 找要送的訂閱：有指定使用者就只送給他，否則送給所有有效訂閱
+        const { data: allSubs, error: subErr } = await supabase
+            .from('push_subscriptions')
+            .select('id,user_id,endpoint,p256dh,auth,is_active')
+            .eq('is_active', true);
+        if (subErr) throw subErr;
+        // 重送的對象：單一使用者 → 只給他；一組使用者（例如公告）→ 只給那組；都沒有 → 所有有效訂閱
+        const targetIds = (Array.isArray(row.target_user_ids) && row.target_user_ids.length)
+            ? new Set(row.target_user_ids.map(String))
+            : ((row.target_user_id === null || row.target_user_id === undefined)
+                ? null
+                : new Set([String(row.target_user_id)]));
+        const subs = (allSubs || []).filter((s) => !targetIds || targetIds.has(String(s.user_id)));
+
+        let sent = 0;
+        let failed = 0;
+        let deactivated = 0;
+        const errors = [];
+        for (const sub of subs) {
+            const result = await sendPushTo(sub, row.payload);
+            if (result.ok) sent += 1;
+            else if (result.gone) {
+                deactivated += 1;
+                await supabase.from('push_subscriptions').update({ is_active: false }).eq('id', sub.id);
+            } else {
+                failed += 1;
+                if (result.error) errors.push(result.error);
+            }
+        }
+
+        const resendCount = Number(row.resend_count || 0) + 1;
+        const { error: updError } = await supabase.from('push_log').update({
+            resend_count: resendCount,
+            resend_at: new Date().toISOString(),
+            resend_sent_count: sent
+        }).eq('id', id);
+        if (updError) throw updError;
+
+        const scopeText = targetIds
+            ? (targetIds.size === 1 && row.target_user_id ? `限使用者 #${row.target_user_id}` : `限 ${targetIds.size} 位使用者`)
+            : '所有有效訂閱';
+        await logAudit(req.user.username, 'RESEND_PUSH', row.competition_id || null,
+            `重送推播紀錄 #${id}（${row.kind}，${scopeText}）：成功 ${sent}、失敗 ${failed}${deactivated ? `、失效訂閱 ${deactivated}` : ''}`,
+            req.userAgent);
+
+        res.json({
+            success: true,
+            sent, failed, deactivated,
+            total: subs.length,
+            resend_count: resendCount,
+            errors: Array.from(new Set(errors)).slice(0, 5)
+        });
+    } catch (err) {
+        if (isMissingTableError(err)) return res.status(503).json({ error: PUSH_HINT });
+        await logErrorToDb(req, 'resend_push_error', err);
         res.status(500).json({ error: GENERIC_DB_ERROR });
     }
 });
@@ -1083,6 +1532,9 @@ const AUDIT_ACTION_LABELS = {
     SET_RECURRENCE: '設定賽事週期',
     CREATE_RECURRING_COMPETITION: '週期性賽事建立下一場',
     UPDATE_PUSH_SETTINGS: '更新推播設定',
+    RESEND_PUSH: '重送推播',
+    CREATE_ANNOUNCEMENT: '發布公告',
+    UPDATE_ANNOUNCEMENT: '修改公告',
     AUTO_PROMOTE_WAITLIST: '自動遞補候補',
     PURGE_AUDIT_LOGS: '清理稽核日誌',
     '2FA_SETUP_STARTED': '開始設定兩步驟驗證',
@@ -3135,15 +3587,19 @@ async function notifyUser(userId, payload, options) {
         let sent = 0;
         let gone = 0;
         let failed = 0;
+        const errors = [];   // v2.26.0：把失敗原因帶回去，寫進 push_log 供看板顯示與重送
         for (const sub of subs) {
             const result = await sendPushTo(sub, payload);
             if (result.ok) sent += 1;
             else if (result.gone) {
                 gone += 1;
                 await supabase.from('push_subscriptions').update({ is_active: false }).eq('id', sub.id);
-            } else failed += 1;
+            } else {
+                failed += 1;
+                if (result.error) errors.push(result.error);
+            }
         }
-        return { sent, total: subs.length, gone, failed };
+        return { sent, total: subs.length, gone, failed, errors };
     } catch (err) {
         if (isMissingTableError(err)) return { sent: 0, total: 0, skipped: 'no_table' };
         console.warn('推播通知失敗（不影響主要動作）：', err.message);
@@ -3152,14 +3608,27 @@ async function notifyUser(userId, payload, options) {
 }
 
 /* 推播事件紀錄（跟每日提醒共用 push_log；這張表不存在時安靜略過） */
-async function logPushEvent(competitionId, kind, sentCount) {
+async function logPushEvent(competitionId, kind, sentCount, extra) {
+    // v2.26.0：多記「失敗幾筆、為什麼失敗、送了什麼內容、給誰」——重送要靠這些資訊。
+    // 欄位還沒建（未執行 migration）時照舊只寫筆數，紀錄不會因此漏掉。
     try {
-        const { error } = await supabase.from('push_log').insert([{
+        const row = {
             competition_id: competitionId === undefined ? null : competitionId,
             kind,
             sent_count: sentCount || 0,
             sent_at: new Date().toISOString()
-        }]);
+        };
+        const detail = await pushLogDetailSchemaReady();
+        const info = extra || {};
+        if (detail) {
+            row.failed_count = Number(info.failed || 0);
+            const errors = Array.isArray(info.errors) ? info.errors.filter(Boolean) : [];
+            row.error_detail = errors.length ? errors.join('；').slice(0, 500) : null;
+            row.payload = info.payload || null;
+            row.target_user_id = info.target_user_id === undefined ? null : info.target_user_id;
+            row.target_user_ids = Array.isArray(info.target_user_ids) ? info.target_user_ids : null;
+        }
+        const { error } = await supabase.from('push_log').insert([row]);
         if (error) throw error;
     } catch (err) {
         if (!isMissingTableError(err)) console.warn('push_log 寫入失敗：', err.message);
@@ -3451,7 +3920,7 @@ app.post('/api/registrations/:id/review', authenticateToken, async (req, res) =>
                 req.userAgent);
         }
 
-        const push = await notifyUser(reg.user_id, {
+        const reviewPayload = {
             kind: 'review',
             title: action === 'approve' ? '報名已核准' : '報名結果通知',
             body: action === 'approve'
@@ -3459,8 +3928,11 @@ app.post('/api/registrations/:id/review', authenticateToken, async (req, res) =>
                 : `${comp.name}：很抱歉，你的報名未錄取${note ? `（${note}）` : ''}`,
             url: '/?view=myregs',
             tag: `cm-reg-review-${reg.id}`
+        };
+        const push = await notifyUser(reg.user_id, reviewPayload, { kind: 'review' });
+        await logPushEvent(comp.id, 'review_result', push.sent, {
+            failed: push.failed, errors: push.errors, payload: reviewPayload, target_user_id: reg.user_id
         });
-        await logPushEvent(comp.id, 'review_result', push.sent);
 
         res.json({
             message: action === 'approve' ? '已核准這筆報名' : '已拒絕這筆報名',
@@ -3512,14 +3984,19 @@ app.post('/api/competitions/:id/registrations/promote', authenticateToken, async
         await logAudit(req.user.username, 'PROMOTE_WAITLIST', comp.id,
             `手動遞補候補: ${next.username}（第 ${plan.position} 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}）${notify ? '' : '｜未通知（依賽事設定）'}`, req.userAgent);
 
-        const push = notify ? await notifyUser(next.user_id, {
+        const promotePayload = {
             kind: 'promote',
             title: '候補遞補通知',
             body: `${comp.name}：你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}`,
             url: '/?view=myregs',
             tag: `cm-reg-promote-${next.id}`
-        }) : { sent: 0 };
-        if (notify) await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
+        };
+        const push = notify ? await notifyUser(next.user_id, promotePayload, { kind: 'promote' }) : { sent: 0 };
+        if (notify) {
+            await logPushEvent(comp.id, 'waitlist_promoted', push.sent, {
+                failed: push.failed, errors: push.errors, payload: promotePayload, target_user_id: next.user_id
+            });
+        }
 
         res.json({
             message: notify ? `已遞補 ${next.username}` : `已遞補 ${next.username}（依賽事設定未通知）`,
@@ -3576,14 +4053,19 @@ app.post('/api/registrations/:id/promote', authenticateToken, async (req, res) =
             `指定遞補候補: ${reg.username}（第 ${plan.position} 順位 → ${CMCompetitionState.REG_STATUS_LABELS[plan.status]}，未照順位）${notify ? '' : '｜未通知（依賽事設定）'}`,
             req.userAgent);
 
-        const push = notify ? await notifyUser(reg.user_id, {
+        const promotePayload = {
             kind: 'promote',
             title: '候補遞補通知',
             body: `${comp.name}：你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[plan.status]}`,
             url: '/?view=myregs',
             tag: `cm-reg-promote-${reg.id}`
-        }) : { sent: 0 };
-        if (notify) await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
+        };
+        const push = notify ? await notifyUser(reg.user_id, promotePayload, { kind: 'promote' }) : { sent: 0 };
+        if (notify) {
+            await logPushEvent(comp.id, 'waitlist_promoted', push.sent, {
+                failed: push.failed, errors: push.errors, payload: promotePayload, target_user_id: reg.user_id
+            });
+        }
 
         res.json({
             message: notify
@@ -3805,14 +4287,19 @@ app.delete('/api/registrations/:id', authenticateToken, async (req, res) => {
                             `自動遞補候補: ${next.username}（第 1 順位 → ${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}，因 ${reg.username} 取消報名）${autoNotify ? '' : '｜未通知（依賽事設定）'}`,
                             req.userAgent);
 
-                        const push = autoNotify ? await notifyUser(next.user_id, {
+                        const autoPayload = {
                             kind: 'promote',
                             title: '候補遞補通知',
                             body: `${comp.name}：有人取消報名，你已從候補遞補為${CMCompetitionState.REG_STATUS_LABELS[nextStatus]}`,
                             url: '/?view=myregs',
                             tag: `cm-reg-promote-${next.id}`
-                        }) : { sent: 0 };
-                        if (autoNotify) await logPushEvent(comp.id, 'waitlist_promoted', push.sent);
+                        };
+                        const push = autoNotify ? await notifyUser(next.user_id, autoPayload, { kind: 'promote' }) : { sent: 0 };
+                        if (autoNotify) {
+                            await logPushEvent(comp.id, 'waitlist_promoted', push.sent, {
+                                failed: push.failed, errors: push.errors, payload: autoPayload, target_user_id: next.user_id
+                            });
+                        }
 
                         promoted = {
                             id: next.id,
@@ -4146,6 +4633,16 @@ const POSTER_MAX_BYTES = 3 * 1024 * 1024;             // 3MB（前端會先縮�
 const POSTER_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const POSTER_HINT = '資料庫尚未加入海報欄位，請先在 Supabase SQL Editor 執行 migrations/2026-09-24-v2.10.0-poster-and-push.sql';
 const PUSH_HINT = '資料庫尚未加入推播資料表（app_settings / push_subscriptions / push_log），請先執行 migrations/2026-09-24-v2.10.0-poster-and-push.sql';
+// v2.26.0：推播失敗明細與重送需要的欄位
+const PUSH_LOG_DETAIL_HINT = '推播失敗明細與重送需要資料庫欄位，請先執行 migrations/2026-09-26-v2.26.0-push-log-detail.sql';
+let pushLogDetailReadyCache = null;
+async function pushLogDetailSchemaReady() {
+    if (pushLogDetailReadyCache !== null) return pushLogDetailReadyCache;
+    const hasFailed = await columnExists('push_log', 'failed_count');
+    const hasPayload = hasFailed ? await columnExists('push_log', 'payload') : false;
+    pushLogDetailReadyCache = hasFailed && hasPayload;
+    return pushLogDetailReadyCache;
+}
 // 站台時區偏移：用於判斷「開賽前 24 小時」。可用 SITE_UTC_OFFSET 覆寫（例如 +08:00）。
 const SITE_UTC_OFFSET = process.env.SITE_UTC_OFFSET || '+08:00';
 
@@ -4265,12 +4762,14 @@ const PUSH_SETTINGS_DEFAULTS = {
     push_digest_kind_new: true,       // 摘要：新發佈的賽事
     push_digest_kind_reminder: true,  // 摘要：即將開賽提醒（24 小時內）
     push_event_review: true,          // 即時：報名審核結果（核准／拒絕）
-    push_event_promote: true          // 即時：候補遞補（含手動、指定、自動）
+    push_event_promote: true,         // 即時：候補遞補（含手動、指定、自動）
+    push_event_announce: true         // 即時：站內公告發布時（v2.26.0）
 };
 
 const PUSH_EVENT_SETTING_KEYS = {
     review: 'push_event_review',
-    promote: 'push_event_promote'
+    promote: 'push_event_promote',
+    announce: 'push_event_announce'   // v2.26.0：公告發布通知
 };
 
 const PUSH_SETTINGS_HINT =
@@ -4295,7 +4794,8 @@ function pushSettingsFromRows(rows) {
         digest_kind_new: pushSettingBool(raw.push_digest_kind_new, PUSH_SETTINGS_DEFAULTS.push_digest_kind_new),
         digest_kind_reminder: pushSettingBool(raw.push_digest_kind_reminder, PUSH_SETTINGS_DEFAULTS.push_digest_kind_reminder),
         event_review: pushSettingBool(raw.push_event_review, PUSH_SETTINGS_DEFAULTS.push_event_review),
-        event_promote: pushSettingBool(raw.push_event_promote, PUSH_SETTINGS_DEFAULTS.push_event_promote)
+        event_promote: pushSettingBool(raw.push_event_promote, PUSH_SETTINGS_DEFAULTS.push_event_promote),
+        event_announce: pushSettingBool(raw.push_event_announce, PUSH_SETTINGS_DEFAULTS.push_event_announce)
     };
 }
 
@@ -4306,7 +4806,7 @@ function normalizePushSettingsInput(body, current) {
     const base = Object.assign({}, pushSettingsFromRows({}), current || {});
     const b = body || {};
     const out = Object.assign({}, base);
-    const boolFields = ['digest_enabled', 'digest_kind_new', 'digest_kind_reminder', 'event_review', 'event_promote'];
+    const boolFields = ['digest_enabled', 'digest_kind_new', 'digest_kind_reminder', 'event_review', 'event_promote', 'event_announce'];
     for (const field of boolFields) {
         if (b[field] === undefined) continue;
         if (typeof b[field] !== 'boolean') return { error: `「${field}」只能是 true 或 false` };
@@ -4380,7 +4880,8 @@ async function writePushSettings(settings) {
         push_digest_kind_new: settings.digest_kind_new,
         push_digest_kind_reminder: settings.digest_kind_reminder,
         push_event_review: settings.event_review,
-        push_event_promote: settings.event_promote
+        push_event_promote: settings.event_promote,
+        push_event_announce: settings.event_announce
     };
     for (const key of Object.keys(map)) {
         await setSetting(key, map[key] === true ? 'true' : map[key] === false ? 'false' : String(map[key]));
@@ -4425,7 +4926,8 @@ app.post('/api/push/settings', requireAdmin, async (req, res) => {
             push_digest_kind_new: 'digest_kind_new',
             push_digest_kind_reminder: 'digest_kind_reminder',
             push_event_review: 'event_review',
-            push_event_promote: 'event_promote'
+            push_event_promote: 'event_promote',
+            push_event_announce: 'event_announce'
         }[key];
         if (String(current.settings[field]) !== String(normalized.settings[field])) {
             changes.push(`${PUSH_SETTING_LABELS[field]}：${formatPushSettingValue(field, current.settings[field])} → ${formatPushSettingValue(field, normalized.settings[field])}`);
@@ -4444,7 +4946,8 @@ const PUSH_SETTING_LABELS = {
     digest_kind_new: '摘要含新賽事',
     digest_kind_reminder: '摘要含開賽提醒',
     event_review: '報名審核結果通知',
-    event_promote: '候補遞補通知'
+    event_promote: '候補遞補通知',
+    event_announce: '站內公告通知'   // v2.26.0
 };
 
 const formatPushSettingValue = (field, value) => (typeof value === 'boolean'
@@ -4736,6 +5239,7 @@ async function runPushDigest(now, options) {
     for (const candidate of candidates) {
         const payload = pushPayloadFor(candidate, nowDate.getTime());
         let sentCount = 0;
+        const errors = [];
 
         for (const sub of subs) {
             if (!sub.is_active) continue;
@@ -4747,18 +5251,17 @@ async function runPushDigest(now, options) {
                 result.deactivated += 1;
             } else {
                 result.failed += 1;
+                if (sent.error) errors.push(sent.error);
             }
         }
 
-        await supabase.from('push_log').insert([{
-            competition_id: candidate.competition.id,
-            kind: candidate.kind,
-            sent_count: sentCount,
-            sent_at: nowDate.toISOString()
-        }]);
+        // v2.26.0：改用 logPushEvent（會帶失敗明細與可重送的內容）；沒有欄位時自動退回只記筆數
+        await logPushEvent(candidate.competition.id, candidate.kind, sentCount, {
+            failed: errors.length, errors, payload, target_user_id: null
+        });
 
         result.sent += sentCount;
-        result.details.push({ id: candidate.competition.id, kind: candidate.kind, sent: sentCount });
+        result.details.push({ id: candidate.competition.id, kind: candidate.kind, sent: sentCount, failed: errors.length });
     }
 
     await setSetting('push_last_run', nowDate.toISOString());

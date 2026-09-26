@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v2.25.0</title>
+    <title>比賽管理系統 v2.26.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -153,6 +153,14 @@
                         </button>
 
                         <div class="border-t border-slate-100 my-1"></div>
+
+                        <!-- 登入後專屬：公告中心（v2.26.0） -->
+                        <button id="announcementsBtn"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center justify-between gap-2 transition">
+                            <span>📣 公告中心</span>
+                            <span id="announceBadge"
+                                class="hidden bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">0</span>
+                        </button>
 
                         <!-- 登入後專屬：我的報名 -->
                         <button id="myRegsBtn"
@@ -968,7 +976,10 @@
                 <h3 class="text-lg font-bold text-slate-800">📤 推播發送紀錄</h3>
                 <button id="closePushLogsBtn" class="text-slate-400 hover:text-slate-600">✕</button>
             </div>
-            <p class="text-[11px] text-slate-500">系統每次自動發送的推播都會留下紀錄（同一賽事同一類型只送一次）。</p>
+            <p class="text-[11px] text-slate-500">系統每次自動發送的推播都會留下紀錄（同一賽事同一類型只送一次）。失敗的項目可以按「重送」再送一次給原本的對象。</p>
+            <div id="pushLogsHint"
+                class="hidden rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-[11px] text-amber-800"></div>
+            <div id="pushLogsStatus" class="hidden text-[11px] text-emerald-700"></div>
             <div id="pushLogsList" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs"></div>
             <div class="flex justify-end pt-3 border-t">
                 <button id="closePushLogsBtn2"
@@ -1029,7 +1040,11 @@
                         <input id="pushEventPromote" type="checkbox" class="w-4 h-4 accent-sky-600">
                         <span>候補遞補通知</span>
                     </label>
-                    <p class="text-[11px] text-slate-500">關掉只是「不通知」，遞補本身照常運作。</p>
+                    <label class="flex items-center gap-2 text-[13px] text-slate-600">
+                        <input id="pushEventAnnounce" type="checkbox" class="w-4 h-4 accent-sky-600">
+                        <span>站內公告發布通知</span>
+                    </label>
+                    <p class="text-[11px] text-slate-500">關掉只是「不通知」，遞補與公告本身照常運作。</p>
                 </div>
             </div>
 
@@ -1039,6 +1054,94 @@
                     class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition">關閉</button>
                 <button id="savePushSettingsBtn"
                     class="px-4 py-2 text-sm bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition">儲存設定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈出視窗：公告中心（v2.26.0：站內公告／訊息中心） -->
+    <div id="announcementModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 cm-modal-panel flex flex-col max-h-90vh modal-scroll">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800">📣 公告中心</h3>
+                <button id="closeAnnouncementBtn" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <p class="text-[11px] text-slate-500">站內公告取代 Email：管理員發布後，符合對象的人登入就會在這裡看到，並記錄誰讀過了。</p>
+            <div id="announceHint"
+                class="hidden rounded-lg bg-amber-50 border border-amber-200 p-3 text-[11px] text-amber-800"></div>
+            <div id="announceStatus" class="hidden text-[11px] text-emerald-700"></div>
+
+            <!-- 我訂閱的公告分類 -->
+            <div id="announceCategoryBox" class="rounded-lg border border-slate-200 p-3 space-y-2">
+                <p class="text-xs font-semibold text-slate-700">我訂閱的公告分類</p>
+                <p class="text-[11px] text-slate-500">對象是「特定分類訂閱者」的公告，依這裡的選擇決定你收不收到（管理員看得到全部公告）。</p>
+                <div id="announceCategoryList" class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-[12px] text-slate-600"></div>
+                <div class="flex items-center gap-2">
+                    <button id="saveAnnounceCatsBtn"
+                        class="px-3 py-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition">儲存訂閱</button>
+                    <span id="announceCatStatus" class="text-[11px] text-slate-500"></span>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-between border-t border-slate-100 pt-3">
+                <p class="text-xs font-semibold text-slate-700">公告列表</p>
+                <button id="markAllAnnounceReadBtn" class="text-[11px] text-sky-600 hover:text-sky-800">全部標記已讀</button>
+            </div>
+            <div id="announceList" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs"></div>
+
+            <!-- 管理員以上：發布與管理 -->
+            <div id="announceAdminBox" class="hidden border-t border-slate-100 pt-3 space-y-3">
+                <div class="flex items-center justify-between">
+                    <p class="text-xs font-semibold text-slate-700">管理公告（管理員以上）</p>
+                    <button id="toggleAnnounceFormBtn" class="text-[11px] text-sky-600 hover:text-sky-800">＋ 發布新公告</button>
+                </div>
+                <form id="announceForm" class="hidden space-y-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <input type="hidden" id="announceEditingId" value="">
+                    <input type="text" id="announceTitle" required maxlength="80" placeholder="標題（必填，最多 80 字）"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                    <textarea id="announceBody" rows="3" required maxlength="2000" placeholder="內容（必填，最多 2000 字）"
+                        class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm"></textarea>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <select id="announceAudience"
+                            class="px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                            <option value="all">對象：所有人</option>
+                            <option value="admin">對象：管理員以上</option>
+                            <option value="category">對象：特定分類訂閱者</option>
+                        </select>
+                        <div id="announceCategoryPick"
+                            class="hidden grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-[12px] text-slate-600"></div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label class="text-[11px] text-slate-500">發布時間（留空＝立即）
+                            <input type="datetime-local" id="announcePublishAt"
+                                class="w-full mt-1 px-2 py-1.5 border border-slate-300 rounded-lg text-sm bg-white">
+                        </label>
+                        <label class="text-[11px] text-slate-500">結束時間（留空＝不下架）
+                            <input type="datetime-local" id="announceExpiresAt"
+                                class="w-full mt-1 px-2 py-1.5 border border-slate-300 rounded-lg text-sm bg-white">
+                        </label>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-4 text-[12px] text-slate-600">
+                        <label class="flex items-center gap-2">
+                            <input id="announcePinned" type="checkbox" class="w-4 h-4 accent-sky-600">置頂
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <input id="announceNotifyPush" type="checkbox" class="w-4 h-4 accent-sky-600">同時發送推播
+                        </label>
+                    </div>
+                    <div class="flex justify-end gap-2 pt-1">
+                        <button type="button" id="cancelAnnounceFormBtn"
+                            class="px-3 py-1.5 text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">取消</button>
+                        <button type="submit" id="submitAnnounceBtn"
+                            class="px-3 py-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white rounded-lg">發布公告</button>
+                    </div>
+                </form>
+                <div id="announceAdminList" class="space-y-2 text-xs"></div>
+            </div>
+
+            <div class="flex justify-end pt-3 border-t">
+                <button id="closeAnnouncementBtn2"
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition">關閉</button>
             </div>
         </div>
     </div>

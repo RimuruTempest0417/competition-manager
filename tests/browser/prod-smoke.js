@@ -138,6 +138,24 @@ const get = (p, headers) => fetch(SITE + p, { headers });
 
         const push = await get('/api/admin/push-logs', auth);
         check(`管理員/擁有者可讀推播紀錄（HTTP ${push.status}）`, push.status === 200);
+        const pushBody = await push.json().catch(() => ({}));
+        check('推播紀錄回報失敗明細是否可用（v2.26.0）',
+            typeof pushBody.detail_ready === 'boolean', JSON.stringify(pushBody).slice(0, 140));
+
+        // v2.26.0：站內公告（未登入要擋、登入後要能讀；未跑 migration 也要優雅降級）
+        const annAnon = await get('/api/my/announcements');
+        check(`未登入讀公告被拒（HTTP ${annAnon.status}）`, annAnon.status === 401, String(annAnon.status));
+        const annMine = await get('/api/my/announcements', auth);
+        const annBody = await annMine.json().catch(() => ({}));
+        check(`登入者可讀自己的公告（HTTP ${annMine.status}）`, annMine.status === 200, String(annMine.status));
+        check('公告回應含 schema_ready 與清單',
+            typeof annBody.schema_ready === 'boolean' && Array.isArray(annBody.announcements),
+            JSON.stringify(annBody).slice(0, 140));
+        const annAdmin = await get('/api/admin/announcements', auth);
+        check(`管理員可讀公告管理清單（HTTP ${annAdmin.status}）`, annAdmin.status === 200, String(annAdmin.status));
+        const resendMissing = await fetch(SITE + '/api/admin/push-logs/999999999/resend', { method: 'POST', headers: auth });
+        check(`重送不存在的紀錄不會 500（HTTP ${resendMissing.status}）`,
+            [400, 404, 503].includes(resendMissing.status), String(resendMissing.status));
 
         const wrongRoleToken = jwt.sign({ sub: 4, username: 'nobody', role: 'user' }, secret, { expiresIn: '10m' });
         const denied = await get('/api/admin/error-logs', { Authorization: `Bearer ${wrongRoleToken}` });

@@ -751,6 +751,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('adminMgmtBtn')?.addEventListener('click', () => { openAdminModal(); closeNavDropdown(); });
     document.getElementById('pushLogsBtn')?.addEventListener('click', () => { openPushLogsModal(); closeNavDropdown(); });
     document.getElementById('pushSettingsBtn')?.addEventListener('click', () => { openPushSettingsModal(); closeNavDropdown(); });
+    // v2.26.0：公告中心
+    document.getElementById('announcementsBtn')?.addEventListener('click', () => { openAnnouncementModal(); closeNavDropdown(); });
+    document.getElementById('closeAnnouncementBtn')?.addEventListener('click', closeAnnouncementModal);
+    document.getElementById('closeAnnouncementBtn2')?.addEventListener('click', closeAnnouncementModal);
+    document.getElementById('saveAnnounceCatsBtn')?.addEventListener('click', saveAnnounceCategories);
+    document.getElementById('markAllAnnounceReadBtn')?.addEventListener('click', markAllAnnouncementsRead);
+    document.getElementById('toggleAnnounceFormBtn')?.addEventListener('click', () => {
+        const form = document.getElementById('announceForm');
+        if (form.classList.contains('hidden')) openAnnounceForm(null);
+        else closeAnnounceForm();
+    });
+    document.getElementById('cancelAnnounceFormBtn')?.addEventListener('click', closeAnnounceForm);
+    document.getElementById('announceForm')?.addEventListener('submit', submitAnnouncementForm);
+    document.getElementById('announceAudience')?.addEventListener('change', syncAnnounceCategoryPickVisibility);
+    // 點公告卡片即標記已讀；管理端列表用事件代理處理編輯／上下架
+    document.getElementById('announceList')?.addEventListener('click', (e) => {
+        const card = e.target.closest('[data-announce-id]');
+        if (card) markAnnouncementsRead([Number(card.dataset.announceId)], '已標記已讀');
+    });
+    document.getElementById('announceAdminList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const id = Number(btn.dataset.id);
+        if (btn.dataset.action === 'edit') openAnnounceForm((cmAnnounceAdminState.list || []).find((a) => String(a.id) === String(id)));
+        else if (btn.dataset.action === 'toggle') toggleAnnouncementActive(id, btn.dataset.active === '1');
+    });
+    // 推播紀錄的「重送」
+    document.getElementById('pushLogsList')?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-resend-id]');
+        if (btn) resendPushLog(btn.dataset.resendId);
+    });
     document.getElementById('closePushSettingsBtn')?.addEventListener('click', closePushSettingsModal);
     document.getElementById('closePushSettingsBtn2')?.addEventListener('click', closePushSettingsModal);
     document.getElementById('savePushSettingsBtn')?.addEventListener('click', savePushSettings);
@@ -1097,6 +1128,17 @@ async function applyUrlIntent() {
         await openMyRegsModal();
     }
 
+    const announceId = params.get('announce');
+    if (announceId && currentUser) {
+        await openAnnouncementModal();
+        const card = document.querySelector(`#announceList [data-announce-id="${CSS.escape(String(announceId))}"]`);
+        if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('cm-flash');
+            setTimeout(() => card.classList.remove('cm-flash'), 3200);
+        }
+    }
+
     const compId = params.get('comp');
     if (compId) {
         setView('list');   // 日曆模式下卡片不在畫面上，先切回列表
@@ -1104,7 +1146,7 @@ async function applyUrlIntent() {
     }
 
     // 清掉查詢字串，避免重新整理時重複觸發（保留路徑與雜湊）
-    if (view || compId) {
+    if (view || compId || announceId) {
         try { history.replaceState(null, '', window.location.pathname); } catch (e) { /* 忽略 */ }
     }
 }
@@ -1122,12 +1164,12 @@ function focusCompetitionCard(compId) {
 // 為什麼要這樣寫：過去每個角色分支各自列 classList.add('hidden')，
 // 只要有分支漏寫（例如訪客分支忘了隱藏 CSV 按鈕），登出後就會殘留管理員功能。
 const CM_MENU_PERMISSIONS = {
-    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false },
-    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false },
-    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false },
-    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false },
-    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true },
-    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true }
+    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false, announce: false },
+    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true },
+    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false, announce: true },
+    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true },
+    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true }
 };
 
 function applyMenuVisibility(role) {
@@ -1144,7 +1186,8 @@ function applyMenuVisibility(role) {
         ['myRegsBtn', perm.myRegs],
         ['changePwdBtn', perm.changePwd],
         ['twoFactorBtn', perm.twoFactor],
-        ['backupBtn', perm.backup]
+        ['backupBtn', perm.backup],
+        ['announcementsBtn', perm.announce]   // v2.26.0：公告中心（登入即可）
     ];
     map.forEach(([id, visible]) => {
         const el = document.getElementById(id);
@@ -1258,6 +1301,8 @@ function updateUIByRole() {
         applyMenuVisibility(currentUser.role);
     }
     renderCurrentView(allCompetitions);
+    // v2.26.0：登入狀態變了就更新公告未讀徽章（訪客會順手隱藏）
+    refreshAnnounceBadge();
 }
 
 /* ==========================================
@@ -4643,19 +4688,63 @@ async function openPushLogsModal() {
             return;
         }
 
-        const kindLabel = (k) => k === 'reminder' ? '開賽前提醒' : (k === 'new' ? '新賽事通知' : k);
+        const kindLabel = (k) => ({
+            reminder: '開賽前提醒',
+            new: '新賽事通知',
+            review_result: '報名審核結果',
+            promote: '候補遞補通知',
+            announcement: '站內公告'
+        }[k] || k);
 
-        listEl.innerHTML = logs.map(l => `
-            <div class="p-2.5 bg-slate-50 border border-slate-200 rounded space-y-1">
+        const hintEl = document.getElementById('pushLogsHint');
+        if (data.detail_ready === false) {
+            hintEl.textContent = '⚠️ ' + (data.hint || '推播失敗明細尚未啟用。');
+            hintEl.classList.remove('hidden');
+        } else {
+            hintEl.classList.add('hidden');
+        }
+
+        listEl.innerHTML = logs.map((l) => {
+            const sent = Number(l.sent_count) || 0;
+            const failed = Number(l.failed_count) || 0;
+            const resent = Number(l.resend_count) || 0;
+            return `
+            <div class="p-2.5 bg-slate-50 border ${failed ? 'border-rose-200' : 'border-slate-200'} rounded space-y-1">
                 <div class="flex justify-between items-center gap-2 flex-wrap">
                     <span class="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded font-bold">${escapeHtml(kindLabel(l.kind))}</span>
-                    <span class="text-slate-400 text-[10px]">${l.sent_at ? new Date(l.sent_at).toLocaleString() : '—'}</span>
+                    <span class="text-slate-400 text-[10px]">${l.sent_at ? escapeHtml(new Date(l.sent_at).toLocaleString()) : '—'}</span>
                 </div>
-                <p class="text-slate-600 text-[11px]">賽事 #${escapeHtml(String(l.competition_id))}　成功發送 <b>${escapeHtml(String(l.sent_count === undefined || l.sent_count === null ? 0 : l.sent_count))}</b> 則</p>
-            </div>
-        `).join('');
+                <p class="text-slate-600 text-[11px]">
+                    ${l.competition_id ? `賽事 #${escapeHtml(String(l.competition_id))}　` : ''}成功發送 <b>${sent}</b> 則${failed ? `　<span class="text-rose-600 font-bold">失敗 ${failed} 則</span>` : ''}
+                </p>
+                ${failed && l.error_detail ? `<p class="text-rose-600 text-[10px] break-all">原因：${escapeHtml(String(l.error_detail))}</p>` : ''}
+                ${l.payload && l.payload.title ? `<p class="text-slate-500 text-[10px]">內容：${escapeHtml(String(l.payload.title))}</p>` : ''}
+                ${resent ? `<p class="text-emerald-700 text-[10px]">已重送 ${resent} 次（最後一次 ${l.resend_at ? escapeHtml(new Date(l.resend_at).toLocaleString()) : '—'}，成功 ${Number(l.resend_sent_count) || 0} 則）</p>` : ''}
+                ${l.payload ? `<div class="flex justify-end"><button type="button" data-resend-id="${escapeHtml(String(l.id))}" class="text-[11px] text-sky-600 hover:text-sky-800">重送給原本的對象</button></div>` : ''}
+            </div>`;
+        }).join('');
     } catch (err) {
         listEl.innerHTML = `<p class="text-red-500 text-center py-4">載入失敗：${escapeHtml(err.message)}</p>`;
+    }
+}
+
+/* 手動重送：不受推播設定的自動通知開關影響（是管理員的明確指令） */
+async function resendPushLog(id) {
+    if (!confirm(`重送這筆推播（紀錄 #${id}）給原本的對象？\n\n手動重送不受「推播設定」的自動開關影響。`)) return;
+    const statusEl = document.getElementById('pushLogsStatus');
+    statusEl.className = 'text-[11px] text-slate-500';
+    statusEl.textContent = '重送中...';
+    statusEl.classList.remove('hidden');
+    try {
+        const data = await apiResult(await customFetch(`/api/admin/push-logs/${id}/resend`, { method: 'POST' }));
+        statusEl.className = 'text-[11px] text-emerald-700';
+        statusEl.textContent = `✅ 重送完成：成功 ${data.sent} 則、失敗 ${data.failed} 則`
+            + (data.deactivated ? `、清除失效訂閱 ${data.deactivated} 個` : '')
+            + ((data.errors && data.errors.length) ? `（${data.errors[0]}）` : '');
+        await openPushLogsModal();   // 回讀一次，確認畫面與資料庫一致
+    } catch (err) {
+        statusEl.className = 'text-[11px] text-red-600';
+        statusEl.textContent = '❌ 重送失敗：' + err.message;
     }
 }
 
@@ -4685,7 +4774,8 @@ const CM_PUSH_SETTING_FIELDS = [
     ['pushDigestKindNew', 'digest_kind_new'],
     ['pushDigestKindReminder', 'digest_kind_reminder'],
     ['pushEventReview', 'event_review'],
-    ['pushEventPromote', 'event_promote']
+    ['pushEventPromote', 'event_promote'],
+    ['pushEventAnnounce', 'event_announce']   // v2.26.0：公告發布通知
 ];
 
 async function openPushSettingsModal() {
@@ -4746,6 +4836,341 @@ async function savePushSettings() {
         await loadPushSettings();   // 回讀一次，確認畫面與資料庫一致
     } catch (err) {
         alert('❌ 儲存失敗：' + err.message);
+    }
+}
+
+/* ==========================================
+   公告中心／訊息中心（v2.26.0）
+   - 所有登入使用者：看自己的公告、標記已讀、訂閱分類（未讀數顯示在選單徽章）
+   - 管理員以上：發布、修改、上下架，並看到每則的已讀人數
+   - 「誰看得到」由後端的共用純函式決定（public/js/announcements.js），前端只呈現，
+     避免前後端各寫一套造成「列表看得到、點進去說無權」
+   ========================================== */
+let cmAnnounceState = { announcements: [], all_categories: [], my_categories: [], schema_ready: true, unread_count: 0 };
+let cmAnnounceAdminState = { list: [], total_users: null, schema_ready: true };
+
+function canManageAnnouncements() {
+    return !!currentUser && ['admin', 'super_admin', 'web_owner'].includes(currentUser.role);
+}
+
+/* 未讀徽章：讀不到就安靜地隱藏，不要因為公告功能壞掉嚇到使用者 */
+async function refreshAnnounceBadge() {
+    const badge = document.getElementById('announceBadge');
+    if (!badge) return;
+    if (!currentUser) {
+        badge.classList.add('hidden');
+        return;
+    }
+    try {
+        const data = await apiResult(await customFetch('/api/my/announcements'));
+        const count = Number(data.unread_count) || 0;
+        cmAnnounceState.unread_count = count;
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.classList.toggle('hidden', count === 0);
+    } catch (err) {
+        badge.classList.add('hidden');
+    }
+}
+
+function updateAnnounceBadge() {
+    const badge = document.getElementById('announceBadge');
+    if (!badge || !currentUser) return;
+    const count = Number(cmAnnounceState.unread_count) || 0;
+    badge.textContent = count > 99 ? '99+' : String(count);
+    badge.classList.toggle('hidden', count === 0);
+}
+
+async function openAnnouncementModal() {
+    document.getElementById('announcementModal').classList.remove('hidden');
+    document.getElementById('announceStatus').classList.add('hidden');
+    document.getElementById('announceAdminBox').classList.toggle('hidden', !canManageAnnouncements());
+    closeAnnounceForm();
+    await loadAnnouncements();
+}
+
+function closeAnnouncementModal() {
+    document.getElementById('announcementModal').classList.add('hidden');
+    closeAnnounceForm();
+}
+
+function announceSetStatus(msg, isError) {
+    const el = document.getElementById('announceStatus');
+    el.textContent = msg;
+    el.className = isError ? 'text-[11px] text-red-600' : 'text-[11px] text-emerald-700';
+    el.classList.remove('hidden');
+}
+
+async function loadAnnouncements() {
+    const hintEl = document.getElementById('announceHint');
+    const listEl = document.getElementById('announceList');
+    listEl.innerHTML = '<p class="text-center text-slate-400 py-4">載入公告中...</p>';
+    try {
+        const data = await apiResult(await customFetch('/api/my/announcements'));
+        cmAnnounceState.announcements = data.announcements || [];
+        cmAnnounceState.all_categories = data.all_categories || [];
+        cmAnnounceState.my_categories = data.my_categories || [];
+        cmAnnounceState.unread_count = Number(data.unread_count) || 0;
+        cmAnnounceState.schema_ready = data.schema_ready !== false;
+
+        if (!cmAnnounceState.schema_ready) {
+            hintEl.textContent = '⚠️ ' + (data.hint || '站內公告尚未啟用。');
+            hintEl.classList.remove('hidden');
+        } else {
+            hintEl.classList.add('hidden');
+        }
+
+        renderAnnounceCategories();
+        renderAnnouncementList();
+        updateAnnounceBadge();
+
+        if (canManageAnnouncements() && cmAnnounceState.schema_ready) await loadAdminAnnouncements();
+    } catch (err) {
+        listEl.innerHTML = `<p class="text-red-500 text-center py-4">載入失敗：${escapeHtml(err.message)}</p>`;
+    }
+}
+
+/* 我的訂閱分類 + 發布表單的分類選項 */
+function renderAnnounceCategories() {
+    const mine = new Set(cmAnnounceState.my_categories || []);
+    const options = (cmAnnounceState.all_categories || []).map((c) => `
+        <label class="flex items-center gap-1.5">
+            <input type="checkbox" value="${escapeHtml(String(c.id))}" class="w-3.5 h-3.5 accent-sky-600"${mine.has(c.id) ? ' checked' : ''}>
+            <span>${escapeHtml(c.label || c.id)}</span>
+        </label>
+    `).join('');
+
+    const myBox = document.getElementById('announceCategoryList');
+    if (myBox) myBox.innerHTML = options || '<span class="text-slate-400">沒有可訂閱的分類</span>';
+
+    const pickBox = document.getElementById('announceCategoryPick');
+    if (pickBox) pickBox.innerHTML = options || '<span class="text-slate-400">沒有分類可選</span>';
+    syncAnnounceCategoryPickVisibility();
+}
+
+function syncAnnounceCategoryPickVisibility() {
+    const pick = document.getElementById('announceCategoryPick');
+    const audience = document.getElementById('announceAudience');
+    if (pick && audience) pick.classList.toggle('hidden', audience.value !== 'category');
+}
+
+function renderAnnouncementList() {
+    const listEl = document.getElementById('announceList');
+    const list = cmAnnounceState.announcements || [];
+    if (!list.length) {
+        listEl.innerHTML = `<p class="text-center text-slate-400 py-4">${cmAnnounceState.schema_ready ? '目前沒有公告' : '站內公告尚未啟用'}</p>`;
+        return;
+    }
+    listEl.innerHTML = list.map((a) => `
+        <div class="p-2.5 border rounded space-y-1 ${a.read ? 'bg-slate-50 border-slate-200' : 'bg-white border-sky-300 cm-announce-unread'}"
+            data-announce-id="${escapeHtml(String(a.id))}" title="${escapeHtml(a.read ? '' : '點一下標記為已讀')}">
+            <div class="flex justify-between items-start gap-2">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    ${a.is_pinned ? '<span class="bg-rose-100 text-rose-700 text-[10px] px-1.5 py-0.5 rounded font-bold">置頂</span>' : ''}
+                    ${a.read ? '' : '<span class="bg-sky-100 text-sky-700 text-[10px] px-1.5 py-0.5 rounded font-bold">未讀</span>'}
+                    <span class="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded">${escapeHtml(a.audience_label || '')}</span>
+                </div>
+                <span class="text-slate-400 text-[10px] shrink-0">${a.publish_at ? escapeHtml(new Date(a.publish_at).toLocaleString()) : ''}</span>
+            </div>
+            <p class="font-semibold text-slate-800">${escapeHtml(a.title || '')}</p>
+            <p class="text-slate-600 whitespace-pre-wrap">${escapeHtml(a.body || '')}</p>
+        </div>
+    `).join('');
+}
+
+async function markAnnouncementsRead(ids, message) {
+    const targets = (ids || []).filter((n) => Number.isInteger(n) && n > 0);
+    if (!targets.length) return;
+    try {
+        await apiResult(await customFetch('/api/my/announcements/read-all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: targets })
+        }));
+        const set = new Set(targets.map(String));
+        cmAnnounceState.announcements = (cmAnnounceState.announcements || []).map((a) =>
+            set.has(String(a.id)) ? Object.assign({}, a, { read: true }) : a);
+        cmAnnounceState.unread_count = cmAnnounceState.announcements.filter((a) => !a.read).length;
+        renderAnnouncementList();
+        updateAnnounceBadge();
+        if (message) announceSetStatus(message);
+    } catch (err) {
+        announceSetStatus('❌ 標記已讀失敗：' + err.message, true);
+    }
+}
+
+function markAllAnnouncementsRead() {
+    const unread = (cmAnnounceState.announcements || []).filter((a) => !a.read).map((a) => Number(a.id));
+    if (!unread.length) {
+        announceSetStatus('所有公告都已經讀過了。');
+        return;
+    }
+    markAnnouncementsRead(unread, `已標記 ${unread.length} 則公告為已讀`);
+}
+
+async function saveAnnounceCategories() {
+    const statusEl = document.getElementById('announceCatStatus');
+    const picked = Array.from(document.querySelectorAll('#announceCategoryList input[type="checkbox"]:checked'))
+        .map((el) => el.value);
+    statusEl.textContent = '儲存中...';
+    try {
+        const data = await apiResult(await customFetch('/api/my/announce-categories', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ categories: picked })
+        }));
+        statusEl.textContent = '✅ ' + (data.message || '已儲存');
+        // 訂閱改了，看得到的公告也可能跟著變，重新讀一次確認畫面與資料庫一致
+        await loadAnnouncements();
+    } catch (err) {
+        statusEl.textContent = '❌ ' + err.message;
+    }
+}
+
+/* ---------- 管理員以上：發布與管理 ---------- */
+
+function toLocalInputValue(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromLocalInputValue(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function openAnnounceForm(ann) {
+    const form = document.getElementById('announceForm');
+    if (!form) return;
+    form.classList.remove('hidden');
+    document.getElementById('announceEditingId').value = ann ? String(ann.id) : '';
+    document.getElementById('announceTitle').value = ann ? (ann.title || '') : '';
+    document.getElementById('announceBody').value = ann ? (ann.body || '') : '';
+    document.getElementById('announceAudience').value = (ann && ann.audience) || 'all';
+    document.getElementById('announcePublishAt').value = ann ? toLocalInputValue(ann.publish_at) : '';
+    document.getElementById('announceExpiresAt').value = ann ? toLocalInputValue(ann.expires_at) : '';
+    document.getElementById('announcePinned').checked = !!(ann && ann.is_pinned);
+    document.getElementById('announceNotifyPush').checked = !ann;   // 編輯既有公告時預設不再推播一次
+    document.getElementById('submitAnnounceBtn').textContent = ann ? '儲存變更' : '發布公告';
+
+    const cats = new Set((ann && Array.isArray(ann.categories)) ? ann.categories : []);
+    document.querySelectorAll('#announceCategoryPick input[type="checkbox"]').forEach((el) => {
+        el.checked = cats.has(el.value);
+    });
+    syncAnnounceCategoryPickVisibility();
+}
+
+function closeAnnounceForm() {
+    const form = document.getElementById('announceForm');
+    if (!form) return;
+    form.classList.add('hidden');
+    document.getElementById('announceEditingId').value = '';
+}
+
+async function submitAnnouncementForm(event) {
+    event.preventDefault();
+    const id = document.getElementById('announceEditingId').value;
+    const audience = document.getElementById('announceAudience').value;
+    const categories = audience === 'category'
+        ? Array.from(document.querySelectorAll('#announceCategoryPick input[type="checkbox"]:checked')).map((el) => el.value)
+        : [];
+    const payload = {
+        title: document.getElementById('announceTitle').value,
+        body: document.getElementById('announceBody').value,
+        audience,
+        categories,
+        publish_at: fromLocalInputValue(document.getElementById('announcePublishAt').value),
+        expires_at: fromLocalInputValue(document.getElementById('announceExpiresAt').value),
+        is_pinned: document.getElementById('announcePinned').checked,
+        notify_push: document.getElementById('announceNotifyPush').checked
+    };
+
+    const submitBtn = document.getElementById('submitAnnounceBtn');
+    submitBtn.disabled = true;
+    try {
+        const data = await apiResult(await customFetch(id ? `/api/admin/announcements/${id}` : '/api/admin/announcements', {
+            method: id ? 'PATCH' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }));
+        let msg = id ? '✅ 公告已更新' : '✅ 公告已發布';
+        if (data.push) {
+            if (data.push.skipped) msg += `（推播：${data.push.skipped}）`;
+            else msg += `（推播成功 ${data.push.sent} 則${data.push.failed ? `、失敗 ${data.push.failed} 則` : ''}）`;
+        } else if (data.changes && data.changes.length) {
+            msg += '：' + data.changes.join('、');
+        }
+        closeAnnounceForm();
+        await loadAnnouncements();
+        announceSetStatus(msg);
+    } catch (err) {
+        alert('❌ 儲存失敗：' + err.message);
+    } finally {
+        submitBtn.disabled = false;
+    }
+}
+
+async function loadAdminAnnouncements() {
+    const el = document.getElementById('announceAdminList');
+    try {
+        const data = await apiResult(await customFetch('/api/admin/announcements'));
+        cmAnnounceAdminState.list = data.announcements || [];
+        cmAnnounceAdminState.total_users = data.total_users;
+        cmAnnounceAdminState.schema_ready = data.schema_ready !== false;
+        renderAdminAnnouncementList();
+    } catch (err) {
+        el.innerHTML = `<p class="text-red-500">讀取管理清單失敗：${escapeHtml(err.message)}</p>`;
+    }
+}
+
+function renderAdminAnnouncementList() {
+    const el = document.getElementById('announceAdminList');
+    const list = cmAnnounceAdminState.list || [];
+    if (!list.length) {
+        el.innerHTML = '<p class="text-slate-400">還沒有任何公告</p>';
+        return;
+    }
+    const total = cmAnnounceAdminState.total_users;
+    const totalText = (total === null || total === undefined) ? '' : `/${total}`;
+    el.innerHTML = list.map((a) => `
+        <div class="p-2.5 border border-slate-200 rounded space-y-1 bg-white">
+            <div class="flex justify-between items-start gap-2">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    ${a.is_live
+                        ? '<span class="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0.5 rounded font-bold">上架中</span>'
+                        : '<span class="bg-slate-100 text-slate-500 text-[10px] px-1.5 py-0.5 rounded">未上架</span>'}
+                    ${a.is_pinned ? '<span class="bg-rose-100 text-rose-700 text-[10px] px-1.5 py-0.5 rounded font-bold">置頂</span>' : ''}
+                    <span class="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded">${escapeHtml(a.audience_label || '')}</span>
+                </div>
+                <span class="text-slate-400 text-[10px] shrink-0">已讀 ${Number(a.read_count) || 0}${totalText}</span>
+            </div>
+            <p class="font-semibold text-slate-800">${escapeHtml(a.title || '')}</p>
+            <p class="text-slate-500 text-[10px]">發布：${a.publish_at ? escapeHtml(new Date(a.publish_at).toLocaleString()) : '—'}　結束：${a.expires_at ? escapeHtml(new Date(a.expires_at).toLocaleString()) : '—'}</p>
+            <div class="flex justify-end gap-3 pt-0.5">
+                <button type="button" class="text-[11px] text-sky-600 hover:text-sky-800" data-action="edit" data-id="${escapeHtml(String(a.id))}">編輯</button>
+                <button type="button" class="text-[11px] ${a.is_active === false ? 'text-emerald-600 hover:text-emerald-800' : 'text-amber-600 hover:text-amber-800'}"
+                    data-action="toggle" data-id="${escapeHtml(String(a.id))}" data-active="${a.is_active === false ? '1' : '0'}">${a.is_active === false ? '重新上架' : '下架'}</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function toggleAnnouncementActive(id, active) {
+    const label = active ? '重新上架' : '下架';
+    if (!confirm(`確定要${label}這則公告嗎？${active ? '' : '（下架後使用者就看不到了，資料仍保留）'}`)) return;
+    try {
+        const data = await apiResult(await customFetch(`/api/admin/announcements/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_active: active })
+        }));
+        await loadAnnouncements();
+        announceSetStatus(`✅ 公告已${label}${data.changes && data.changes.length ? '：' + data.changes.join('、') : ''}`);
+    } catch (err) {
+        alert(`❌ ${label}失敗：` + err.message);
     }
 }
 
