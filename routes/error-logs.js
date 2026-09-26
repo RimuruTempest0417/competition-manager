@@ -9,6 +9,32 @@ const path = require('path');
 const { hashPassword, verifyPassword, needsPasswordUpgrade } = require('../lib/passwords');
 // v2.15.0：兩步驟驗證（TOTP）—— 純手寫實作，只用 Node 內建 crypto，無外部套件
 
+/* v3.6.1（Roadmap 8.6 ④）：錯誤日誌的截圖上限與列表瘦身
+ *
+ * 問題：`/api/logs/error` 未登入就能寫入，而 `screenshot` 是**整包原封不動存進資料庫**的
+ * （只有 stack_trace 裡那 100 字是截斷過的），搭配全域 10mb 的 body 上限＝匿名者可以
+ * 一次寫進約 10MB、每分鐘 30 次；而且 `GET /api/admin/error-logs` 用 `select('*')`
+ * 把整包 base64 拉回來並在畫面 render 成 <img>——列表越大越慢。
+ *
+ * 現在：① 這個端點單獨用 512kb 的 body 上限（見 server.js，必須在全域之前才有效）
+ *       ② 只接受真的 `data:image/...;base64,` 且長度在 cap 內，其餘一律**丟掉圖片但照記錯誤**
+ *          （在 stack_trace 留下原因，前端據此決定要不要顯示「檢視截圖」）
+ *       ③ 列表只回必要欄位＋`has_screenshot`，要看圖另外跟 `/:id/screenshot` 拿
+ */
+const ERROR_LOG_SCREENSHOT_MAX_CHARS = 400000;   // base64 長度上限（約 300KB 圖檔；body 上限 512kb）
+const ERROR_LOG_SCREENSHOT_MARKER = '[Screenshot Attached';
+const ERROR_LOG_SCREENSHOT_DROP_MARKER = '[Screenshot Dropped';
+
+function isImageDataUrl(value) {
+    if (typeof value !== 'string') return false;
+    if (!/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(value.slice(0, 40))) return false;
+    return /^[A-Za-z0-9+/=\s]*$/.test(value.slice(value.indexOf(',') + 1));
+}
+
+function hasScreenshotAttached(trace) {
+    return typeof trace === 'string' && trace.includes(ERROR_LOG_SCREENSHOT_MARKER);
+}
+
 module.exports = function registerErrorLogsRoutes(app, ctx) {
     const { ERROR_LOG_FAILURES, ERROR_LOG_RESOLVE_ALL_MAX, GENERIC_DB_ERROR, PUSH_HINT, PUSH_LOG_DETAIL_HINT, USER_MIGRATION_HINT, allowPublicWrite, columnExists, errorLogAlertSummary, hasSupabaseConfig, isMissingTableError, logAudit, logErrorToDb, parseResolveIds, pushLogDetailSchemaReady, requireAdmin, requireSuperAdmin, selfTestSkippedCount, supabase, supabaseKeyType } = ctx;
 app.post('/api/logs/error', async (req, res) => {
@@ -22,8 +48,18 @@ app.post('/api/logs/error', async (req, res) => {
         const userAgent = req.headers['user-agent'] || '';
 
         let finalStackTrace = stack_trace || '';
+        // v3.6.1：先驗證截圖再決定留或丟；只有合法且不超限時才寫入資料庫
+        let storedScreenshot = null;
         if (screenshot) {
-            finalStackTrace += `\n\n[Screenshot Attached (Base64 Truncated)]: ${screenshot.substring(0, 100)}...`;
+            const raw = String(screenshot);
+            if (!isImageDataUrl(raw)) {
+                finalStackTrace += `\n\n${ERROR_LOG_SCREENSHOT_DROP_MARKER}: 不是合法的 data:image 資料（${raw.length} 字元）]`;
+            } else if (raw.length > ERROR_LOG_SCREENSHOT_MAX_CHARS) {
+                finalStackTrace += `\n\n${ERROR_LOG_SCREENSHOT_DROP_MARKER}: 圖片過大（${raw.length} 字元，上限 ${ERROR_LOG_SCREENSHOT_MAX_CHARS}）]`;
+            } else {
+                storedScreenshot = raw;
+                finalStackTrace += `\n\n[Screenshot Attached (Base64 Truncated)]: ${raw.substring(0, 100)}...`;
+            }
         }
 
         const trim = (v, n) => (v === undefined || v === null ? '' : String(v).slice(0, n));
@@ -37,8 +73,8 @@ app.post('/api/logs/error', async (req, res) => {
             user_agent: trim(userAgent, 400)
         };
 
-        if (screenshot) {
-            logPayload.screenshot = screenshot;
+        if (storedScreenshot) {
+            logPayload.screenshot = storedScreenshot;
         }
 
         const { error } = await supabase.from('error_logs').insert([logPayload]);
@@ -61,7 +97,11 @@ app.get('/api/admin/error-logs', requireSuperAdmin, async (req, res) => {
         const hasSeverity = await columnExists('error_logs', 'severity');
         const hasResolved = await columnExists('error_logs', 'resolved');
 
-        let query = supabase.from('error_logs').select('*', { count: 'exact' });
+        // v3.6.1：明確列出欄位——**不含 screenshot**（base64 會讓列表變成數 MB）
+        const listColumns = ['id', 'error_type', 'message', 'stack_trace', 'path', 'user_agent', 'created_at', 'user_id']
+            .concat(hasSeverity ? ['severity'] : [])
+            .concat(hasResolved ? ['resolved', 'resolved_by', 'resolved_at'] : []);
+        let query = supabase.from('error_logs').select(listColumns.join(','), { count: 'exact' });
 
         if (req.query.type) query = query.eq('error_type', String(req.query.type).slice(0, 60));
         if (req.query.severity && hasSeverity) query = query.eq('severity', String(req.query.severity).slice(0, 20));
@@ -82,7 +122,9 @@ app.get('/api/admin/error-logs', requireSuperAdmin, async (req, res) => {
         const logs = (data || []).map((l) => ({
             ...l,
             severity: l.severity || 'error',
-            resolved: l.resolved === true
+            resolved: l.resolved === true,
+            // 列表不再帶截圖本體，只告訴前端「這筆有沒有圖」（看圖另外跟 /:id/screenshot 拿）
+            has_screenshot: hasScreenshotAttached(l.stack_trace)
         }));
         const unresolvedInPage = logs.filter((l) => !l.resolved).length;
 
@@ -99,6 +141,25 @@ app.get('/api/admin/error-logs', requireSuperAdmin, async (req, res) => {
         await logErrorToDb(req, 'fetch_error_logs_error', err);
         console.error('[Fetch Error Logs Failed]:', err.message);
         res.status(500).json({ error: GENERIC_DB_ERROR });
+    }
+});
+
+// v3.6.1：列表不再回傳截圖本體，要看圖單獨拿這一筆（只有超級管理員以上）
+app.get('/api/admin/error-logs/:id/screenshot', requireSuperAdmin, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '無效的日誌編號' });
+
+        const { data, error } = await supabase.from('error_logs').select('id, screenshot').eq('id', id).limit(1);
+        if (error) throw error;
+        if (!data || data.length === 0) return res.status(404).json({ error: '找不到這筆錯誤日誌' });
+
+        const shot = data[0].screenshot;
+        const isImage = typeof shot === 'string' && shot.startsWith('data:image/');
+        res.json({ success: true, id, screenshot: isImage ? shot : null });
+    } catch (err) {
+        await logErrorToDb(req, 'fetch_error_log_screenshot_error', err);
+        res.status(500).json({ error: '讀取截圖失敗' });
     }
 });
 

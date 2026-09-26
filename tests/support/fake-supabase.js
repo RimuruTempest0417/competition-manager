@@ -152,6 +152,20 @@ function startFakeSupabase(state, options = {}) {
                     const end = limitNum === null ? result.length : offsetNum + limitNum;
                     const page = result.slice(start, end);
 
+                    // v3.6.1：select 的欄位投影（PostgREST 行為）——只回要求的欄位，
+                    // 沒有投影就等於假 Supabase 比真實環境寬鬆，會讓
+                    // 「列表不該帶 screenshot」這類斷言驗不出來（實際發生過）。
+                    // 有外鍵展開（含括號）時不套用，維持原本行為。
+                    const projection = (!/\(/.test(select) && select.trim() !== '*')
+                        ? select.split(',').map((s) => s.trim()).filter((s) => s && s !== '*')
+                        : null;
+                    const project = (row) => {
+                        if (!projection) return row;
+                        const out = {};
+                        projection.forEach((col) => { if (col in row) out[col] = row[col]; });
+                        return out;
+                    };
+
                     const extraHeaders = {};
                     if (/count=exact/.test(prefers)) {
                         // PostgREST：0-9/100；空集合是 */100
@@ -160,9 +174,9 @@ function startFakeSupabase(state, options = {}) {
                     }
 
                     if (wantsObject) {
-                        return page.length ? send(200, page[0], extraHeaders) : send(406, { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' });
+                        return page.length ? send(200, project(page[0]), extraHeaders) : send(406, { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' });
                     }
-                    return send(200, page, extraHeaders);
+                    return send(200, page.map(project), extraHeaders);
                 }
 
                 if (req.method === 'POST') {

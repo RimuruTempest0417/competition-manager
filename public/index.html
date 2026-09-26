@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.6.0</title>
+    <title>比賽管理系統 v3.6.1</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -1623,6 +1623,22 @@
                 💡 說明的內容會依你的身分顯示：訪客看到怎麼看賽事與報名，管理員才會看到審核、成績、備份等操作。
                 找不到答案時可以用右上角「🐞 回報問題」告訴我。
             </p>
+        </div>
+    </div>
+
+    <!-- 彈出視窗：錯誤日誌截圖（v3.6.1，只有超級管理員以上拿得到） -->
+    <div id="logScreenshotModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-3 cm-modal-panel flex flex-col">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">🖼️ 錯誤截圖</h3>
+                <button id="closeLogScreenshotBtn" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <p class="text-xs text-slate-500">
+                截圖只有在按下「檢視截圖」時才下載，列表不會帶著它——所以日誌列表不會因為圖片而變慢。
+            </p>
+            <p id="logScreenshotStatus" class="text-sm text-slate-500 py-6 text-center hidden"></p>
+            <img id="logScreenshotImg" src="" alt="錯誤截圖" class="hidden max-h-[70vh] w-full object-contain rounded border border-slate-300 bg-slate-50 p-1">
         </div>
     </div>
 

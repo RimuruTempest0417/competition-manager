@@ -167,6 +167,10 @@ function isSameSiteRequest(req) {
         return false;
     }
 }
+// v3.6.1：/api/logs/error 未登入可寫，單獨給它小很多的 body 上限（必須在全域之前才有效）。
+// 全域 10mb 是給海報／規程上傳用的；這條路徑匿名可打，不該有同樣的額度。
+app.use('/api/logs/error', express.json({ limit: '512kb' }));
+app.use('/api/logs/error', express.urlencoded({ limit: '512kb', extended: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));

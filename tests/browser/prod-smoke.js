@@ -131,11 +131,22 @@ globalThis.fetch = (url, options = {}) => {
         check('健康端點不含金鑰或密碼內容', !/anon-key|service-key|"password"/.test(JSON.stringify(h)));
 
         const logs = await get('/api/admin/error-logs', auth);
-        const logsBody = await logs.json().catch(() => ({}));
+        const logsRaw = await logs.text();
+        const logsBody = JSON.parse(logsRaw || '{}');
         check(`網站擁有者可讀錯誤日誌（HTTP ${logs.status}）`, logs.status === 200);
         check('錯誤日誌回傳日誌清單與 schema 資訊',
             logs.status === 200 && (Array.isArray(logsBody.logs) || 'schema' in logsBody),
             Object.keys(logsBody).join(',') || '(空)');
+        // v3.6.1：列表不該再帶著截圖本體回來（第 4 節是唯讀檢查，這裡只看，不下載任何檔案）
+        const listedRows = Array.isArray(logsBody.logs) ? logsBody.logs : [];
+        check('錯誤日誌列表不含截圖本體（screenshot 欄位）',
+            listedRows.every((row) => !('screenshot' in row)),
+            `含 screenshot 的筆數：${listedRows.filter((row) => 'screenshot' in row).length}`);
+        check('每一列都帶 has_screenshot 布林值（前端據此顯示檢視按鈕）',
+            listedRows.every((row) => typeof row.has_screenshot === 'boolean'));
+        check(`列表回應大小合理（${logsRaw.length} 位元組 < 200KB）`, logsRaw.length < 200000, `${logsRaw.length} 位元組`);
+        const shotDenied = await get('/api/admin/error-logs/1/screenshot', { Authorization: 'Bearer ' + jwt.sign({ sub: 4, username: 'nobody', role: 'user' }, secret, { expiresIn: '10m' }) });
+        check(`一般角色不可讀截圖（HTTP ${shotDenied.status}）`, [401, 403].includes(shotDenied.status), String(shotDenied.status));
         check('日誌系統本身沒有寫入失敗紀錄', Array.isArray(h.recent_write_failures) && h.recent_write_failures.length === 0,
             JSON.stringify(h.recent_write_failures || []).slice(0, 120));
 

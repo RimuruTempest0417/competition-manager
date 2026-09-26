@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v3.6.0
+# 🏆 比賽管理系統 (Competition Manager) v3.6.1
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -182,6 +182,18 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v3.6.1 (2026-09-27) - 錯誤日誌：截圖上限、列表瘦身、改為按下才下載
+
+- **兩個真實風險一起修**：① `POST /api/logs/error` 未登入可寫，卻把 `screenshot` **整包**存進資料庫（搭配全域 10mb body 上限與每分鐘 30 次 → 匿名者一次可寫約 10MB）
+  ② `GET /api/admin/error-logs` 用 `select('*')` 把 base64 拉回來並 render 成 `<img>`，列表越大越慢。
+- **修法**：這個端點單獨 **512kb** body 上限（在全域之前掛，超過回 413 並留一筆警告級紀錄）；
+  截圖只接受真正的 `data:image/...;base64,` 且 ≤ **400,000 字元**，不合格就**丟圖片但照記錯誤**（在 `stack_trace` 寫明原因）；
+  列表改明確欄位＋`has_screenshot`；新增 `GET /api/admin/error-logs/:id/screenshot`（**只有 super_admin／web_owner**），
+  前端改成按「🖼️ 檢視截圖」才下載那一筆。
+- **實測**：同一份含 400KB 截圖的資料，列表回應 **400,974 → 936 位元組**；列表 DOM 內嵌圖片 1 → **0** 張。
+- **順手**：假 Supabase 新增 `select` 欄位投影（原本回傳整列、比真實 PostgREST 寬鬆，讓「列表不該帶 screenshot」驗不出來）。
+- 測試：`npm test` **602 通過 / 0 失敗**（新增 `error-log-limits.test.js`）；瀏覽器檢查新增 `error-log-screenshot-check.js` **21 項**（量實際回應大小）。
 
 ### v3.6.0 (2026-09-27) - 使用說明（依身分給對應內容）＋ 管理員操作清單 ＋ 路由覆蓋率常駐
 

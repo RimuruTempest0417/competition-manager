@@ -1,12 +1,12 @@
 {
   "name": "competition-manager",
-  "version": "3.6.0",
+  "version": "3.6.1",
   "description": "比賽管理系統正式版",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/*.test.js",
-    "check:browser": "node tests/browser/alert-banner-check.js && node tests/browser/twofactor-check.js && node tests/browser/audit-log-check.js && node tests/browser/error-log-resolve-check.js && node tests/browser/backup-check.js && node tests/browser/competition-state-check.js && node tests/browser/registration-review-check.js && node tests/browser/waitlist-manage-check.js && node tests/browser/waitlist-extra-check.js && node tests/browser/waitlist-batch-check.js && node tests/browser/recurrence-check.js && node tests/browser/push-settings-check.js && node tests/browser/announcements-check.js && node tests/browser/venue-staff-check.js && node tests/browser/ops-dashboard-check.js && node tests/browser/results-check.js && node tests/browser/admin-users-check.js && node tests/browser/print-check.js && node tests/browser/guide-check.js && node tests/browser/layout-check.js && node tests/browser/doc-check.js",
+    "check:browser": "node tests/browser/alert-banner-check.js && node tests/browser/twofactor-check.js && node tests/browser/audit-log-check.js && node tests/browser/error-log-resolve-check.js && node tests/browser/backup-check.js && node tests/browser/competition-state-check.js && node tests/browser/registration-review-check.js && node tests/browser/waitlist-manage-check.js && node tests/browser/waitlist-extra-check.js && node tests/browser/waitlist-batch-check.js && node tests/browser/recurrence-check.js && node tests/browser/push-settings-check.js && node tests/browser/announcements-check.js && node tests/browser/venue-staff-check.js && node tests/browser/ops-dashboard-check.js && node tests/browser/results-check.js && node tests/browser/admin-users-check.js && node tests/browser/print-check.js && node tests/browser/guide-check.js && node tests/browser/error-log-screenshot-check.js && node tests/browser/layout-check.js && node tests/browser/doc-check.js",
     "check:coverage": "node scripts/test-coverage.js",
     "check:prod": "node tests/browser/prod-smoke.js && node tests/browser/prod-visitor-check.js && node tests/browser/live-style-check.js && node tests/browser/modal-size-check.js",
     "triage": "node scripts/error-log-triage.js --upload",

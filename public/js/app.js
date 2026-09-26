@@ -922,6 +922,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     // v2.27.0：工作人員指派
     document.getElementById('closeStaffModalBtn')?.addEventListener('click', closeStaffModal);
+    // v3.6.1：錯誤日誌的截圖檢視
+    document.getElementById('closeLogScreenshotBtn')?.addEventListener('click', closeLogScreenshotModal);
+    document.getElementById('logScreenshotModal')?.addEventListener('click', (e) => { if (e.target.id === 'logScreenshotModal') closeLogScreenshotModal(); });
     document.getElementById('staffModal')?.addEventListener('click', (e) => { if (e.target.id === 'staffModal') closeStaffModal(); });
     document.getElementById('staffAssignBtn')?.addEventListener('click', assignStaff);
     document.getElementById('staffList')?.addEventListener('click', (e) => {
@@ -5841,7 +5844,9 @@ async function fetchErrorLogs() {
         }
 
         listEl.innerHTML = logs.map(l => {
-            const hasScreenshot = l.screenshot && typeof l.screenshot === 'string' && l.screenshot.startsWith('data:image/');
+            // v3.6.1：列表不再帶截圖本體，後端用 stack_trace 的標記算出 has_screenshot
+            const hasScreenshot = l.has_screenshot === true
+                || (typeof l.screenshot === 'string' && l.screenshot.startsWith('data:image/'));
             const sev = ERROR_LOG_SEVERITY_STYLE[l.severity] || ERROR_LOG_SEVERITY_STYLE.error;
             const sevLabel = l.severity === 'warn' ? '警告' : (l.severity === 'info' ? '資訊' : '錯誤');
             return `
@@ -5867,11 +5872,12 @@ async function fetchErrorLogs() {
                 ${l.stack_trace ? `<pre class="text-[10px] text-slate-600 bg-white p-2 rounded border border-slate-200 overflow-x-auto mt-1">${escapeHtml(l.stack_trace)}</pre>` : ''}
                 
                 ${hasScreenshot ? `
-                    <div class="mt-2 pt-2 border-t border-red-200">
-                        <span class="text-[11px] font-semibold text-slate-600 block mb-1">📷 夾帶截圖：</span>
-                        <a href="${l.screenshot}" target="_blank" rel="noopener noreferrer" title="點擊檢視原圖">
-                            <img src="${l.screenshot}" alt="錯誤截圖" class="max-h-48 rounded border border-slate-300 hover:opacity-90 transition object-contain bg-slate-900/5 p-1">
-                        </a>
+                    <div class="mt-2 pt-2 border-t border-red-200 flex items-center gap-2 flex-wrap">
+                        <span class="text-[11px] font-semibold text-slate-600">📷 這筆有夾帶截圖</span>
+                        <button data-action="view-log-screenshot" data-id="${l.id}"
+                            class="text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition">
+                            🖼️ 檢視截圖
+                        </button>
                     </div>
                 ` : ''}
             </div>
@@ -5881,7 +5887,46 @@ async function fetchErrorLogs() {
     }
 }
 
+/* v3.6.1：截圖不再隨列表下載，按下才單獨拿那一筆（端點只有超級管理員以上） */
+async function openLogScreenshot(id) {
+    const modal = document.getElementById('logScreenshotModal');
+    const img = document.getElementById('logScreenshotImg');
+    const status = document.getElementById('logScreenshotStatus');
+    if (!modal || !img || !status) return;
+
+    img.removeAttribute('src');
+    img.classList.add('hidden');
+    status.textContent = '載入中…';
+    status.classList.remove('hidden');
+    modal.classList.remove('hidden');
+
+    try {
+        const res = await customFetch(`/api/admin/error-logs/${encodeURIComponent(id)}/screenshot`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        if (!data.screenshot) {
+            status.textContent = '這筆日誌沒有可顯示的截圖（可能已超過上限被丟棄，或不是圖片格式）。';
+            return;
+        }
+        img.src = data.screenshot;
+        img.classList.remove('hidden');
+        status.classList.add('hidden');
+    } catch (err) {
+        status.textContent = '讀取截圖失敗：' + err.message;
+    }
+}
+
+function closeLogScreenshotModal() {
+    const modal = document.getElementById('logScreenshotModal');
+    const img = document.getElementById('logScreenshotImg');
+    if (img) img.removeAttribute('src');   // 順手釋放記憶體
+    modal?.classList.add('hidden');
+}
+
 async function handleErrorLogAction(ev) {
+    const viewBtn = ev.target.closest('[data-action="view-log-screenshot"]');
+    if (viewBtn) { await openLogScreenshot(viewBtn.dataset.id); return; }
+
     const el = ev.target.closest('[data-action="resolve-log"], [data-action="reopen-log"]');
     if (!el) return;
 
