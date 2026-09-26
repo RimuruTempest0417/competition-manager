@@ -18,3 +18,8 @@ cm-backup-*.json
 # 忽略重複檔案（Finder 複製或編輯工具產生的快照，例如 "app 2.js"、"報告 3.md"）
 * [0-9].*
 * [0-9]
+
+# 掃描報告不要進版本歷史（ZAP／其他掃描器會連登入請求與權杖一起寫進報告）
+*ZAP-Report*.html
+*ZAP-Report*/*
+zap-report*.html

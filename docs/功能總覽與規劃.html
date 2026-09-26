@@ -241,6 +241,9 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>☑</td><td>稽核日誌介面強化</td><td>稽核紀錄已寫入但只能瀏覽，事後追查不方便</td><td><strong>v2.16.0 完成</strong>：使用者／動作／時間區間／關鍵字篩選、分頁（每頁 100 筆）、匯出 CSV（含公式注入防護與 BOM）、保留天數清理（最少 30 天、可先預覽、預設不自動刪；設 <code>AUDIT_RETENTION_DAYS</code> 才由每日排程順便清）</td><td>無</td><td>小</td></tr>
 <tr><td>✅</td><td>錯誤日誌主動告警</td><td>目前要主動打開後台才看到</td><td><strong>v2.14.0 完成</strong>：超級管理員以上登入即顯示提示橫幅（未處理錯誤數、近 24 小時新增、最新時間）、導覽選單顯示計數、可一鍵開啟日誌或「稍後再看」（有新錯誤才再提示）</td><td>無</td><td>小</td></tr>
 <tr><td>✅</td><td>錯誤日誌自動巡檢 → 自動產生待修復清單 → <strong>分析後自動標記已處理</strong></td><td>錯誤發生後要人工翻日誌才知道，也不會自動進入規劃；讀完沒有收尾，清單會一直累積舊訊息</td><td><strong>v2.14.0 完成</strong>讀取／分類／產生待修復清單並自動更新本文件第九節與 <code>docs/錯誤日誌分析.md</code>；<strong>v2.17.0 完成</strong>巡檢後自動標記已處理（批次端點、單次上限 500 筆、留稽核、可 <code>--no-resolve</code>）</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td><strong>CORS 改為白名單（現在回 <code>Access-Control-Allow-Origin: *</code>）</strong></td><td><strong>2026-09-26 ZAP 被動掃描回報「跨域配置錯誤」（中風險，5 處）</strong>；根因是 <code>server.js:31</code> 的裸設定 <code>app.use(&#x27;/api&#x27;, cors())</code>。實測（帶 <code>Origin: https://evil.example</code> 打正式站）：<code>/api/competitions</code> 與 <code>/api/my/registrations</code> 都回 <code>ACAO: *</code></td><td>改成只允許自家來源（<code>SITE_URL</code>／可選 <code>ALLOWED_ORIGINS</code>；同源前端不需要 CORS header，所以沒有相容性風險），非白名單不回 ACAO；加守門測試（偽造 Origin 不回 <code>*</code>、自家不變）。<strong>影響判讀</strong>：我們用 <code>Authorization</code> 標頭而非 cookie，第三方沒有權杖 → 只能讀到本來就公開的資料，實際風險低，但屬明確的過寬設定</td><td>無</td><td>小</td></tr>
+<tr><td>☐</td><td>JWT 存放位置（localStorage vs httpOnly cookie）</td><td>ZAP 中風險：<code>auth_token</code> 存在 localStorage（XSS 一旦成立就能取走；本專案 CSP 為 <code>script-src &#x27;self&#x27;</code>、無 inline script，攻擊面小但非零）；目前權杖效期 12 小時</td><td>三個選項任選：(A) 接受並在文件記錄風險（成本 0）(B) <strong>縮短效期</strong>（例如 2 小時＋自動續期）(C) 改 httpOnly cookie ＋ CSRF token（最安全、改动最大：登入／登出／2FA／所有 fetch 都要調整）</td><td>你要選 A／B／C</td><td>小～中</td></tr>
+<tr><td>☐</td><td>ZAP 掃描報告的處置（含真實憑證）</td><td><strong>這份報告內含你的登入請求（明碼密碼）與一枚 <code>web_owner</code> 權杖（12 小時效期）＋ 2FA 完成後的權杖</strong></td><td><strong>不要提交進 repo、不要外傳</strong>；若檔案曾離開你的電腦：改密碼（永久有效）＋必要時換 <code>JWT_SECRET</code>（可讓所有既有權杖立即失效，代價是所有人重新登入）。另外下次掃描請把範圍限制在自家網域（本次含 <code>update.googleapis.com</code>，那是 Chrome 更新服務、不是我們的，掃第三方服務有授權問題）</td><td>你要不要換 JWT_SECRET</td><td>小</td></tr>
 <tr><td>☑</td><td>資料備份與還原</td><td>誤刪賽事或報名資料目前無法回復</td><td><strong>v2.18.0 完成</strong>：<code>GET /api/admin/backup</code> 匯出全部核心表 JSON（含 meta、每表筆數、sha256 checksum）、介面「💾 備份與還原」可下載與還原、<code>npm run backup</code>／<code>npm run restore</code> 指令（本機保留最近 20 份、自動清理）、還原要先 dry-run 檢查並帶 confirm、採 upsert 且<strong>不刪除</strong>任何資料、未執行 migration 或缺表會誠實回報。<strong>未啟用自動排程</strong>（需要時可用 Hermes 排程＋上傳 Google Drive，見「建議下一步」）</td><td>無</td><td>中</td></tr>
 </table>
 <h3>8.3 P1 — 賽事與報名核心（系統價值的延伸）</h3>
@@ -252,7 +255,7 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <tr><td>☑</td><td>賽事複製與週期性賽事</td><td>每月／每週例賽要重複填一次</td><td><strong>v2.24.0 完成</strong>：📄 一鍵複製（照抄設定、不搬報名與隊伍、複製品不帶週期）；🔁 週期性（每週／每兩週／每月＋結束日，每日排程與「立即建立下一場」共用同一份規則：提前 30 天內、一次只排一場、報名窗一起挪、超過結束日就停、落後回報不亂補）。<strong>未做</strong>：雙週偶數週／每月第幾個星期幾的進階規則、系列一次看全部場次的管理頁（見 8.9）</td><td>migration <code>recurrence</code> 三欄位（已備）</td><td>完成</td></tr>
 <tr><td>☑</td><td>場地、地圖與工作人員</td><td>目前地點只有文字，現場人員分工也無處記錄</td><td><strong>v2.27.0 完成</strong>：地點加地圖連結（沒填＝用地址自動產生 Google 地圖搜尋連結，舊賽事免補資料；只接受 http/https，不安全的一律 400 說明）；工作人員指派（帳號＋角色：裁判／記錄／攝影，另加醫護／其他；同一場同一人一列、改角色＝更新、備註、指派者；清單公開但只回角色與名稱，指派與移除限管理員以上並留稽核）。<strong>未做</strong>：通知被指派的人（站內公告／推播）、排班表、工作人員名單匯出、「我當工作人員的賽事」清單、一場多地圖</td><td>無</td><td>完成</td></tr>
 <tr><td>☑</td><td>賽事規程附件（PDF）</td><td>規則文件目前只能放外部連結</td><td><strong>v3.3.0 完成</strong>：一場賽事一份規程 PDF（存資料庫、自家端點供應），卡片「📘 規程」按鈕公開給所有人另開新視窗閱讀、可另存；管理員在編輯表單上傳／更換／移除，皆留稽核；檔案驗檔頭 <code>%PDF-</code>、上限 3MB。<strong>未做</strong>：一場多份附件、站內 PDF 渲染（交給瀏覽器）</td><td>無</td><td>完成</td></tr>
-<tr><td>☐</td><td>現場報到（檢錄）與簽到</td><td>列印版有簽到欄，但系統裡<strong>沒有「誰到了」的紀錄</strong>：現場靠紙本畫記，事後查不到、也無法阻擋未報到者出賽</td><td>報名狀態加 <code>checked_in</code>／<code>checked_in_at</code>／<code>checked_in_by</code>，管理員在名單上單手可勾（大按鈕、可搜尋、可只看未到），留稽核；列印簽到表同步帶報到欄。<strong>QR 掃碼報到屬第二階段</strong>（純手寫 QR 產生器＝大，先用編號＋搜尋代替）</td><td>你要選：勾選制 or QR</td><td>中</td></tr>
+<tr><td>☐</td><td>現場報到（檢錄）與簽到〔<strong>第一階段＝管理員勾選制</strong>（你已選 C）〕</td><td>列印版有簽到欄，但系統裡<strong>沒有「誰到了」的紀錄</strong>：現場靠紙本畫記，事後查不到、也無法阻擋未報到者出賽</td><td>報名狀態加 <code>checked_in</code>／<code>checked_in_at</code>／<code>checked_in_by</code>，管理員在名單上單手可勾（大按鈕、可搜尋、可只看未到），留稽核；列印簽到表同步帶報到欄。<strong>QR 掃碼報到屬第二階段</strong>（純手寫 QR 產生器＝大，先用編號＋搜尋代替）</td><td><strong>你已決定（2026-09-26）：C＝先做勾選制，QR 掃碼排後續</strong></td><td>中（第一階段小～中）</td></tr>
 <tr><td>☐</td><td>管理員代報名（紙本補登）</td><td>目前只有「本人報名」（<code>POST /api/competitions/:id/register</code>）；現場收紙本、或不會用系統的長輩，只能請對方自己想辦法線上報名</td><td>管理員可代他人建立報名（選既有帳號或輸入臨時姓名），走同一套名額／審核／候補規則，details 記「代報名」並留稽核；名單標示「代報名」以便核對</td><td>無</td><td>小～中</td></tr>
 <tr><td>☐</td><td>賽事取消／延期標記</td><td>狀態目前完全由時間推導；澳門颱風延期是常態，現在只能改時間（看不出「延期過」），也不能標「取消」</td><td>加 cancel／postpone 標記（狀態列多「已取消」「已延期」、卡片明顯標示、取消時可一鍵推播公告），<strong>保留原訂時間</strong>不覆蓋（同時記延期後的時間）</td><td>無</td><td>小～中</td></tr>
 <tr><td>☑</td><td>報名名單列印版</td><td>現場檢錄需要紙本</td><td><strong>v3.2.0 完成</strong>：A4 列印預覽（賽事抬頭、正取／候補分段、簽到欄、可含待審核、橫向）；成績表也可列印；列印時只留那張紙；不含個資。（二維碼未做——現場回饋有需要再加）</td><td>無</td><td>小</td></tr>
@@ -323,21 +326,51 @@ hr{border:0;border-top:1px solid #e2e8f0;margin:22px 0}</style></head>
 <p><strong>建議順序（投資報酬率排序）</strong>：</p>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><th style="background:#f1f5f9;text-align:left">順序</th><th style="background:#f1f5f9;text-align:left">項目</th><th style="background:#f1f5f9;text-align:left">為什麼排這裡</th><th style="background:#f1f5f9;text-align:left">工作量</th></tr>
-<tr><td>1</td><td>使用說明＋管理員操作清單（8.5）</td><td>0 筆報名的根因可能是「不知道怎麼用」；成本最低、對真實使用影響最大</td><td>小</td></tr>
-<tr><td>2</td><td>驗證流程不再製造假錯誤日誌（8.6）</td><td>讓提示橫幅與巡檢清單恢復可信——這是後續所有判斷的基礎</td><td>小</td></tr>
-<tr><td>3</td><td>錯誤日誌截圖上限與列表瘦身（8.6）</td><td>未登入可寫的端點卻沒有大小上限，是現存最明顯的資源風險</td><td>小</td></tr>
-<tr><td>4</td><td>補齊 8 條沒有測試的端點（8.6）</td><td>改密碼與永久刪除沒有測試，是不能出錯的地方</td><td>小～中</td></tr>
-<tr><td>5</td><td>現場報到＋管理員代報名（8.3）</td><td>實際辦一場就會用到；有了真實資料，後面的規劃才有依據</td><td>中</td></tr>
-<tr><td>6</td><td>賽事取消／延期＋卡片最新消息（8.3／8.4）</td><td>臨時變更的溝通不該依賴推播訂閱</td><td>小～中</td></tr>
+<tr><td>1</td><td><strong>CORS 改白名單</strong>（8.2）</td><td>ZAP 實測確認過寬；改動只有一行＋守門測試，卻是最明確的一個安全設定瑕疵——先清掉它</td><td>小</td></tr>
+<tr><td>2</td><td>使用說明＋管理員操作清單（8.5）</td><td>0 筆報名的根因可能是「不知道怎麼用」；成本最低、對真實使用影響最大</td><td>小</td></tr>
+<tr><td>3</td><td>驗證流程不再製造假錯誤日誌（8.6）</td><td>讓提示橫幅與巡檢清單恢復可信——這是後續所有判斷的基礎</td><td>小</td></tr>
+<tr><td>4</td><td>錯誤日誌截圖上限與列表瘦身（8.6）</td><td>未登入可寫的端點卻沒有大小上限，是現存最明顯的資源風險</td><td>小</td></tr>
+<tr><td>5</td><td>補齊 8 條沒有測試的端點（8.6）</td><td>改密碼與永久刪除沒有測試，是不能出錯的地方</td><td>小～中</td></tr>
+<tr><td>6</td><td>現場報到〔第一階段＝勾選制〕＋管理員代報名（8.3）</td><td>實際辦一場就會用到；有了真實資料，後面的規劃才有依據</td><td>中</td></tr>
+<tr><td>7</td><td>賽事取消／延期＋卡片最新消息（8.3／8.4）</td><td>臨時變更的溝通不該依賴推播訂閱</td><td>小～中</td></tr>
+<tr><td>8</td><td>JWT 存放位置、QR 掃碼報到、P3 使用者體驗項目</td><td><strong>你已指示「其他排期後續更新」</strong>——依這份順序往後排</td><td>視選項</td></tr>
 </table>
+<blockquote><p>使用者 2026-09-26 指示：現場報到採 <strong>(C) 先做管理員勾選制</strong>，其餘項目<strong>排期後續更新</strong>。</p></blockquote>
 <p><strong>需要你決定的事</strong>（不影響我先做上面 1～4 項）：</p>
 <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
 <tr><th style="background:#f1f5f9;text-align:left">問題</th><th style="background:#f1f5f9;text-align:left">選項</th></tr>
-<tr><td>現場報到方式</td><td>(A) 管理員在名單上勾選（快、免設備）／(B) 參賽者掃 QR 自己報到（需純手寫 QR 產生器，工作量大）／(C) 先 A 之後再加 B</td></tr>
+<tr><td>~~現場報到方式~~</td><td><strong>已決定（2026-09-26）：C＝先做管理員勾選制，QR 掃碼排後續更新</strong></td></tr>
 <tr><td>是否先做「示範賽事＋測試報名」</td><td>讓流程被完整走過一次（可隨時刪除），或直接用真實報名活動試跑</td></tr>
 <tr><td>自助註冊要不要開放</td><td>目前靠管理員建立帳號；開放會改變對外性質（見 8.5）</td></tr>
 <tr><td>賽事取消的語意</td><td>只標「已取消」保留原時間，或同時支援「延期到新時間」並保留原訂時間</td></tr>
+<tr><td>JWT 存放位置（ZAP 中風險）</td><td>(A) 接受並記錄／(B) 縮短效期／(C) 改 httpOnly cookie＋CSRF（見 8.2）</td></tr>
+<tr><td>要不要換 <code>JWT_SECRET</code></td><td>讓 ZAP 報告裡那枚權杖立即失效（代價：所有人重新登入）</td></tr>
 </table>
+<h3>8.10 ZAP 掃描結果判讀（2026-09-26，使用者提供報告）</h3>
+<p>掃描設定：ZAP 2.17.0、<strong>被動掃描</strong>（passive，只觀察既有流量、沒有主動攻擊）、共 17 種警示、68 個實例；兩個「站台」被納入報告。</p>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">站台</th><th style="background:#f1f5f9;text-align:left">高</th><th style="background:#f1f5f9;text-align:left">中</th><th style="background:#f1f5f9;text-align:left">低</th><th style="background:#f1f5f9;text-align:left">資訊</th></tr>
+<tr><td><code>https://competition-manager-hazel.vercel.app</code>（我們）</td><td>0</td><td><strong>2 種（12 個實例中 2 類）</strong></td><td>0</td><td>12</td></tr>
+<tr><td><code>https://update.googleapis.com</code>（<strong>第三方，Chrome 更新服務，不是我們的</strong>）</td><td>0</td><td>0</td><td>1</td><td>2</td></tr>
+</table>
+<p><strong>結論：我們這邊 0 高風險、沒有任何「需要立即處理」的漏洞。</strong></p>
+<p><strong>要處理的（已排入 8.2 P0）</strong>：</p>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">警示</th><th style="background:#f1f5f9;text-align:left">風險</th><th style="background:#f1f5f9;text-align:left">判讀</th><th style="background:#f1f5f9;text-align:left">處置</th></tr>
+<tr><td>跨域配置錯誤（CORS）</td><td>中</td><td><strong>是真的</strong>：<code>app.use(&#x27;/api&#x27;, cors())</code> 讓所有 API 回應帶 <code>Access-Control-Allow-Origin: *</code>。因為我們用 <code>Authorization</code> 標頭而非 cookie，第三方拿不到權杖 → 只能讀本來就公開的資料（賽事、成績、公告），<strong>實際影響低，但屬明確過寬</strong></td><td>改白名單（同源前端不需要 CORS，所以無相容性風險）＋守門測試</td></tr>
+<tr><td>JWT 存在瀏覽器 localStorage</td><td>中</td><td><strong>設計取捨，不是漏洞</strong>：CSP 是 <code>script-src &#x27;self&#x27;</code>、沒有任何 inline script 或外部 CDN，XSS 面本身已很小；但 localStorage 的權杖不像 cookie 能靠 <code>HttpOnly</code> 保護</td><td>見 8.2 的三個選項（接受／縮短效期／改 cookie），<strong>需要你選</strong></td></tr>
+</table>
+<p><strong>已評估、判定為誤報或可接受（不處理，理由留檔）</strong>：</p>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+<tr><th style="background:#f1f5f9;text-align:left">警示</th><th style="background:#f1f5f9;text-align:left">數量</th><th style="background:#f1f5f9;text-align:left">為什麼不處理</th></tr>
+<tr><td>Information Disclosure - Suspicious Comments</td><td>8</td><td>命中我們的註解（例如 <code>// db = 由資料庫切片</code> 被 <code>\bDB\b</code> 命中）。內容是設計說明，<strong>不含任何憑證、路徑或帳號</strong>；註解是這個專案的文件來源，不打算為了掃描器而拿掉</td></tr>
+<tr><td>Information Disclosure - Information in Browser localStorage</td><td>4</td><td>是主題偏好等 UI 設定（<code>cm-theme</code>…），不含個資；唯一敏感的是權杖，已在上表處理</td></tr>
+<tr><td>Re-examine Cache-control Directives／Retrieved from Cache</td><td>6／6</td><td>都是<strong>靜態檔</strong>（<code>/js/*.js</code>、<code>/css/*.css</code>）被 CDN 快取，本來就該快取；API 回應已一律 <code>Cache-Control: no-store</code>（實測確認）</td></tr>
+<tr><td>Strict-Transport-Security Header Not Set（低）</td><td>1</td><td><strong>不是我們的站台</strong>（<code>update.googleapis.com</code>）；我們的回應實測有 <code>Strict-Transport-Security: max-age=31536000; includeSubDomains</code></td></tr>
+<tr><td>Tech Detected（HSTS／HTTP/3／OpenGSE／PWA／Tailwind／Vercel）</td><td>7</td><td>技術指紋，不是問題</td></tr>
+</table>
+<p><strong>掃描衛生（下次掃描前請調整）</strong>：</p>
+<ol><li><strong>把範圍限制在自家網域</strong>：這次報告裡有 <code>update.googleapis.com</code>（Chrome 自動更新的服務）——掃描第三方服務可能違反對方條款，那份結果也與我們無關（唯一的「低風險」就是它）。</li><li>保持<strong>被動掃描</strong>即可：被動掃描不會對正式站送出攻擊性請求，適合現在的正式環境。</li><li><strong>報告不要進 repo</strong>：本次報告內含登入請求（明碼密碼）與有效權杖，一旦提交就等於把憑證寫進版本歷史（撤不掉）。要留存就放在 repo 外、加密保存。</li></ol>
 <h2>九、自動偵測到的問題（待修復清單）</h2>
 <blockquote><p>本節由 <code>scripts/error-log-triage.js</code> 自動產生並覆寫（最後更新：2026/9/26 23:11:33）。資料來源：線上錯誤日誌（透過自家 API 讀取）。</p><p>狀態欄的「新增」代表我還沒看到你決定優先度；「已排入 Roadmap」代表第八節已有對應項目。</p></blockquote>
 <blockquote><p>🏷️ 本輪巡檢已把讀到的 1 筆未處理紀錄標記為已處理（rimuru）。首頁提示橫幅只會針對「下一批新錯誤」再提醒。</p></blockquote>
