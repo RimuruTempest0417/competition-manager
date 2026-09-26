@@ -192,6 +192,9 @@ const get = (p, headers) => fetch(SITE + p, { headers });
         check('統計含賽事／報名／使用者／錯誤／推播／效能六個區塊',
             ['competitions', 'registrations', 'users', 'errors', 'push', 'perf'].every((k) => statsBody[k] && typeof statsBody[k] === 'object'),
             Object.keys(statsBody).join(','));
+        check('統計沒有讀不到的區塊（儀表板不會出現黃色警告）',
+            Array.isArray(statsBody.unavailable_sections) && statsBody.unavailable_sections.length === 0,
+            JSON.stringify(statsBody.unavailable_sections || []).slice(0, 140));
         check('趨勢長度等於要求的 7 天', Array.isArray(statsBody.registrations && statsBody.registrations.trend)
             && statsBody.registrations.trend.length === 7, JSON.stringify((statsBody.registrations || {}).trend || []).slice(0, 80));
         check('統計不含任何帳號名稱或個資',

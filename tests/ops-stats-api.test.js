@@ -49,9 +49,11 @@ function buildState() {
                 { id: 2, error_type: 'auth_invalid_token', severity: 'warn', resolved: false, path: '/api/y', created_at: daysAgo(2) },
                 { id: 3, error_type: 'unhandled_server_error', severity: 'error', resolved: false, path: '/api/x', created_at: daysAgo(50) }
             ],
+            // push_log 的真實欄位是 sent_at（沒有 created_at）——替身必須跟真的一樣，
+            // 否則「查了不存在的欄位」會被測試放過，上線後才在儀表板上變成讀不到的區塊。
             push_log: [
-                { id: 1, sent_count: 90, failed_count: 10, created_at: daysAgo(1) },
-                { id: 2, sent_count: 10, failed_count: 0, created_at: daysAgo(2) }
+                { id: 1, sent_count: 90, failed_count: 10, sent_at: daysAgo(1) },
+                { id: 2, sent_count: 10, failed_count: 0, sent_at: daysAgo(2) }
             ],
             competition_posters: [
                 { competition_id: 1, bytes: 300000, thumb_mime: 'image/jpeg', thumb_bytes: 20000, thumb_data: 'x' },
@@ -188,6 +190,9 @@ test('效能區塊：海報縮圖省下的量、分頁上限、索引清單與�
     assert.ok(body.perf.indexes.length >= 5, '要有索引清單');
     assert.ok(body.perf.indexes.every((i) => i.name && i.reason), '每個索引都要說明用途');
     assert.strictEqual(typeof body.perf.timings.competitions, 'number', '耗時是量出來的');
+    // 迴歸：曾經因為查了 push_log.created_at（不存在的欄位）而讓「推播」區塊整塊讀不到，
+    // 儀表板上出現黃色警告。任何一個區塊讀不到都要在這裡擋下來。
+    assert.deepStrictEqual(body.unavailable_sections || [], [], '不應該有任何讀不到的區塊');
     assert.strictEqual(typeof body.perf.total_ms, 'number');
     assert.strictEqual(body.perf.staff_count, 1);
 });

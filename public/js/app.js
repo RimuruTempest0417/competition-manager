@@ -1078,14 +1078,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    document.getElementById('adminList')?.addEventListener('click', (e) => {
-        const btn = e.target.closest('button');
-        if (!btn) return;
-        if (btn.dataset.action === 'delete-admin') {
-            deleteAdmin(btn.dataset.username);
-        }
-    });
-
     document.getElementById('trashList')?.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
         if (!btn) return;
@@ -5657,7 +5649,12 @@ function closePushLogsModal() {
 async function openAdminModal() {
     document.getElementById('adminModal').classList.remove('hidden');
     bindAdminListEvents();
-    document.getElementById('refreshAdminListBtn')?.addEventListener('click', () => fetchAdminList());
+    // 這個 modal 每次打開都會呼叫本函式；重整按鈕只在第一次綁，避免重複綁定送多次請求
+    const refreshBtn = document.getElementById('refreshAdminListBtn');
+    if (refreshBtn && refreshBtn.dataset.bound !== '1') {
+        refreshBtn.dataset.bound = '1';
+        refreshBtn.addEventListener('click', () => fetchAdminList());
+    }
     renderRoleSelectOptions();
     fetchAdminList();
 }
@@ -6241,9 +6238,15 @@ async function patchAdminUser(id, body) {
     return apiResult(res);
 }
 
+// 正在刪除中的帳號（防連點與重複監聽器造成的一次點擊送兩次請求）
+let deleteAdminPending = new Set();
+
 async function deleteAdmin(idOrName, label) {
     const name = label || idOrName;
+    const key = String(idOrName);
+    if (deleteAdminPending.has(key)) return;
     if (!confirm(`確定要刪除帳號「${name}」嗎？此動作無法復原。`)) return;
+    deleteAdminPending.add(key);
 
     try {
         const res = await customFetch(`/api/admin/users/${encodeURIComponent(idOrName)}`, { method: 'DELETE' });
@@ -6252,6 +6255,8 @@ async function deleteAdmin(idOrName, label) {
         await fetchAdminList();
     } catch (err) {
         alert('❌ 刪除失敗：' + err.message);
+    } finally {
+        deleteAdminPending.delete(key);
     }
 }
 

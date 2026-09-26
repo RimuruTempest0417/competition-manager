@@ -3547,9 +3547,10 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
 
     // ── 推播紀錄 ──
     const pushRows = await block('push', async () => {
+        // 這張表的時間欄位是 sent_at（沒有 created_at），而統計只需要計數欄位。
         const { data, error } = await supabase.from('push_log')
-            .select('sent_count,failed_count,created_at')
-            .order('created_at', { ascending: false }).limit(1000);
+            .select('sent_count,failed_count')
+            .order('sent_at', { ascending: false }).limit(1000);
         if (error) throw error;
         return data || [];
     }) || [];
