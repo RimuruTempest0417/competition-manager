@@ -1020,7 +1020,8 @@ const PUSH_SETTING_LABELS = {
     event_review: '報名審核結果通知',
     event_promote: '候補遞補通知',
     event_announce: '站內公告通知',  // v2.26.0
-    event_result: '成績公布通知'     // v3.1.0
+    event_result: '成績公布通知',    // v3.1.0
+    event_notice: '賽事公告通知（取消／延期／最新消息）'  // v3.6.4
 };
 const formatPushSettingValue = (field, value) => (typeof value === 'boolean'
     ? (value ? '開啟' : '關閉')
@@ -1744,7 +1745,7 @@ const SCHEDULE_HINT =
 
 const scheduleSchemaReady = createSchemaProbe(() => columnExists('competitions', 'cancelled_at'));
 
-require('./routes/competitions')(app, { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, cleanText, fetchCompetition, requireAdmin, scheduleSchemaReady, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady });
+require('./routes/competitions')(app, { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, cleanText, fetchCompetition, logPushEvent, notifyUser, requireAdmin, scheduleSchemaReady, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady });
 
 
 async function fetchCompetition(id) {
@@ -2244,14 +2245,16 @@ const PUSH_SETTINGS_DEFAULTS = {
     push_event_review: true,          // 即時：報名審核結果（核准／拒絕）
     push_event_promote: true,         // 即時：候補遞補（含手動、指定、自動）
     push_event_announce: true,        // 即時：站內公告發布時（v2.26.0）
-    push_event_result: true           // 即時：賽事成績公布時（v3.1.0）
+    push_event_result: true,          // 即時：賽事成績公布時（v3.1.0）
+    push_event_notice: true           // 即時：賽事公告（取消／延期／最新消息，v3.6.4）
 };
 
 const PUSH_EVENT_SETTING_KEYS = {
     review: 'push_event_review',
     promote: 'push_event_promote',
     announce: 'push_event_announce',  // v2.26.0：公告發布通知
-    result: 'push_event_result'       // v3.1.0：成績公布通知
+    result: 'push_event_result',      // v3.1.0：成績公布通知
+    notice: 'push_event_notice'       // v3.6.4：賽事公告（取消／延期／最新消息）
 };
 
 const PUSH_SETTINGS_HINT =

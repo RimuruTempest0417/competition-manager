@@ -163,6 +163,39 @@ test('v3.6.3 賽事取消／延期與最新消息', async (t) => {
     assert.strictEqual(typeof row.cancelled_at, 'object', '列表要帶 cancelled_at（null 也算有這個欄位）');
     assert.ok('postponed_date' in row && 'cancel_reason' in row, '列表要帶所有公告欄位');
 
+    /* ── ⑪ 推播（v3.6.4）：沒勾選不推、只推未刪除的報名者、站台開關關掉要明確回報 ── */
+    state.tables.registrations.push(
+        { id: 901, competition_id: 951, user_id: 4, status: 'confirmed', is_deleted: false },
+        { id: 902, competition_id: 951, user_id: 3, status: 'confirmed', is_deleted: false },
+        { id: 903, competition_id: 951, user_id: 1, status: 'confirmed', is_deleted: true }
+    );
+    const noNotify = await post('/api/competitions/951/news', { news: '不推播的公告' });
+    assert.strictEqual((await noNotify.json()).push, null, '沒勾選「同時推播」就不可以送');
+
+    const notified = await post('/api/competitions/951/news', { news: '集合時間改為 08:30', notify: true });
+    assert.strictEqual(notified.status, 200, '勾選推播時更新消息要成功（' + (await notified.clone().text()) + '）');
+    const notifiedBody = await notified.json();
+    assert.strictEqual(notifiedBody.push.targets, 2, '★只推給未刪除的報名者（軟刪除的 903 不算）');
+    assert.ok(notifiedBody.message.includes('已推播給 2 位已報名者'), '回覆要說清楚推給幾人：' + notifiedBody.message);
+    const pushRows = state.tables.push_log || [];
+    assert.strictEqual(pushRows.length, 1, '推播要寫一筆 push_log');
+    assert.strictEqual(pushRows[0].kind, 'notice', 'push_log 的種類要是 notice');
+    // 對象人數以上面 API 回覆的 push.targets 為準（那是管理員看到的數字）；
+    // push_log 的 targets／title 屬於選配欄位，只有真實資料表有這些欄位時才會寫入。
+    assert.strictEqual(pushRows[0].sent_count, 0, '沒有人訂閱推播時，實際送出數要是 0（不可以假報成功）');
+
+    // 站台開關關掉（推播設定頁的「賽事公告通知」）→ 不送，而且要說原因
+    state.tables.app_settings = [{ key: 'push_event_notice', value: 'false' }];
+    const switchedOff = await post('/api/competitions/951/cancel', { reason: '颱風來襲', notify: true });
+    const offBody = await switchedOff.json();
+    assert.strictEqual(switchedOff.status, 200, '關掉推播不該影響取消本身');
+    assert.strictEqual(offBody.push.sent, 0, '站台關掉就不可以送出去');
+    assert.strictEqual(offBody.push.targets, 2, '對象還是要算出來（才知道影響幾人）');
+    assert.ok(offBody.push.skipped && offBody.push.skipped.includes('賽事公告'), '要說明是站台設定關掉了：' + offBody.push.skipped);
+    assert.ok(!offBody.message.includes('已推播給'), '關掉時不要說已推播');
+    assert.ok(offBody.message.includes('未推播'), '關掉時要說未推播');
+    state.tables.app_settings = [];
+
     /* ── ⑩ 沒跑 migration：明確 503 並指出要跑哪一支 ── */
     const noMigration = makeState();
     noMigration.missingColumns = { competitions: ['cancelled_at'] };

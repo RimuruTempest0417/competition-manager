@@ -4014,9 +4014,11 @@ function closeNoticeModal() {
 async function submitNoticeAction(path, payload, okText) {
     if (!noticeCompId && noticeCompId !== 0) return;
     try {
+        // v3.6.4：預設勾選「同時推播通知已報名者」；管理員可取消勾選（卡片公告仍會顯示）
+        const notifyOn = document.getElementById('noticeNotifyInput')?.checked !== false;
         const res = await customFetch(`/api/competitions/${noticeCompId}/${path}`, {
             method: 'POST',
-            body: JSON.stringify(payload || {})
+            body: JSON.stringify(Object.assign({ notify: notifyOn }, payload || {}))
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || '操作失敗');
@@ -6399,7 +6401,8 @@ const CM_PUSH_SETTING_FIELDS = [
     ['pushEventReview', 'event_review'],
     ['pushEventPromote', 'event_promote'],
     ['pushEventAnnounce', 'event_announce'],  // v2.26.0：公告發布通知
-    ['pushEventResult', 'event_result']       // v3.1.0：成績公布通知
+    ['pushEventResult', 'event_result'],      // v3.1.0：成績公布通知
+    ['pushEventNotice', 'event_notice']       // v3.6.4：賽事公告（取消／延期／最新消息）
 ];
 
 async function openPushSettingsModal() {

@@ -9,7 +9,7 @@ const CMPaging = require('../public/js/paging');                  // v3.0.0：�
 const CMVenue = require('../public/js/venue');                    // v2.27.0：地圖連結規則的唯一真實來源
 
 module.exports = function registerCompetitionsRoutes(app, ctx) {
-    const { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, cleanText, fetchCompetition, scheduleSchemaReady, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady } = ctx;
+    const { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, cleanText, fetchCompetition, logPushEvent, notifyUser, scheduleSchemaReady, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady } = ctx;
 app.get('/api/competitions', async (req, res) => {
     try {
         // v3.0.0：分頁是 opt-in（沒帶 limit 就維持原本「一次回全部」）。
@@ -596,6 +596,49 @@ app.delete('/api/competitions/:id/hard-delete', requireSuperAdmin, async (req, r
  * 臨時變更（延期、集合時間、場地）最需要人人看得到 → news 直接畫在卡片與詳情。
  */
 
+/* v3.6.4：把公告推播給「真的有報名的人」（Roadmap 8.8⑥ 的加分項）
+ *
+ * 為什麼只推給有報名的人：賽事公告的對象就是報名者，亂槍打鳥會讓推播變成噪音；
+ * 站台層另有「賽事公告通知」開關（push_event_notice），關掉後這裡會回報 skipped 而不送。
+ * 推播失敗不影響主要動作（取消／延期本身一定要成功），所以只記錄、不拋錯。 */
+async function notifyRegistrants(comp, payload) {
+    const { data, error } = await supabase.from('registrations')
+        .select('user_id,status,is_deleted')
+        .eq('competition_id', comp.id);
+    if (error) throw error;
+    const ids = Array.from(new Set((data || [])
+        .filter((r) => r.is_deleted !== true)
+        .map((r) => r.user_id)
+        .filter((v) => v !== null && v !== undefined)));
+    if (!ids.length) {
+        await logPushEvent(comp.id, 'notice', 0, { targets: 0, reason: '沒有已報名的帳號可通知' });
+        return { sent: 0, total: 0, targets: 0, skipped: '沒有已報名的帳號可通知' };
+    }
+    let sent = 0;
+    let total = 0;
+    let skipped = '';
+    const errors = [];
+    for (const userId of ids) {
+        const result = await notifyUser(userId, Object.assign({ kind: 'notice' }, payload), { kind: 'notice' });
+        sent += result.sent || 0;
+        total += result.total || 0;
+        if (!skipped && result.skipped) skipped = result.skipped;
+        if (!skipped && result.error) skipped = result.error;
+        if (Array.isArray(result.errors)) errors.push(...result.errors);
+    }
+    await logPushEvent(comp.id, 'notice', sent, { targets: ids.length, title: payload.title, errors });
+    return { sent, total, targets: ids.length, skipped: skipped || undefined };
+}
+
+/* 把推播結果寫成人看得懂的一句話（放在回覆訊息後面，讓管理員知道到底送給誰了） */
+function pushSummary(push) {
+    if (!push) return '';
+    if (push.skipped && !push.sent) return `；未推播（${push.skipped}）`;
+    const who = push.targets ? `，已推播給 ${push.targets} 位已報名者` : '';
+    const ok = push.sent ? `（實際送到 ${push.sent} 個裝置）` : '（對方尚未訂閱推播）';
+    return `${who}${push.targets ? ok : ''}`;
+}
+
 /* 取消賽事（或帶 cancelled:false 復原）。取消＝狀態立即變「已取消」、不可再報名。 */
 app.post('/api/competitions/:id/cancel', requireAdmin, async (req, res) => {
     const { id } = req.params;
@@ -617,12 +660,21 @@ app.post('/api/competitions/:id/cancel', requireAdmin, async (req, res) => {
         await logAudit(req.user.username, 'CANCEL_COMPETITION', comp.id,
             cancelled ? `取消賽事：${comp.name}（原因：${reason}）` : `復原被取消的賽事：${comp.name}`, req.userAgent);
 
+        // v3.6.4：勾選「同時推播」才送，取消時預設送（現場大家要知道不用來了）
+        let push = null;
+        if (body.notify === true) {
+            push = await notifyRegistrants(comp, cancelled
+                ? { title: `⛔ 賽事取消：${comp.name}`, body: `原訂 ${String(comp.date || '').slice(0, 10)}${comp.time ? ' ' + comp.time : ''}｜原因：${reason}` }
+                : { title: `✅ 賽事恢復：${comp.name}`, body: `原訂 ${String(comp.date || '').slice(0, 10)}${comp.time ? ' ' + comp.time : ''}，取消標記已移除` });
+        }
+
         const updated = await fetchCompetition(comp.id);
         res.json({
-            message: cancelled ? `已取消「${comp.name}」` : `已復原「${comp.name}」`,
+            message: (cancelled ? `已取消「${comp.name}」` : `已復原「${comp.name}」`) + pushSummary(push),
             competition: updated,
             state: competitionState(updated, new Date()).state,
-            state_label: competitionState(updated, new Date()).label
+            state_label: competitionState(updated, new Date()).label,
+            push
         });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: MIGRATION_HINT });
@@ -665,13 +717,21 @@ app.post('/api/competitions/:id/postpone', requireAdmin, async (req, res) => {
                 ? `賽事延期：${comp.name}（原訂 ${String(comp.date || '').slice(0, 10)} → ${newDate}${newTime ? ' ' + newTime : ''}${reason ? '｜' + reason : ''}）`
                 : `取消延期標記：${comp.name}`, req.userAgent);
 
+        let push = null;
+        if (body.notify === true) {
+            push = await notifyRegistrants(comp, newDate
+                ? { title: `🕒 賽事延期：${comp.name}`, body: `延至 ${newDate}${newTime ? ' ' + newTime : ''}（原訂 ${String(comp.date || '').slice(0, 10)}${comp.time ? ' ' + comp.time : ''}）${reason ? '｜' + reason : ''}` }
+                : { title: `🕒 賽事恢復原訂時間：${comp.name}`, body: `${String(comp.date || '').slice(0, 10)}${comp.time ? ' ' + comp.time : ''}，延期標記已移除` });
+        }
+
         const updated = await fetchCompetition(comp.id);
         const st = competitionState(updated, new Date());
         res.json({
-            message: newDate ? `已將「${comp.name}」延期至 ${newDate}${newTime ? ' ' + newTime : ''}（原訂時間保留）` : `已取消「${comp.name}」的延期標記`,
+            message: (newDate ? `已將「${comp.name}」延期至 ${newDate}${newTime ? ' ' + newTime : ''}（原訂時間保留）` : `已取消「${comp.name}」的延期標記`) + pushSummary(push),
             competition: updated,
             state: st.state,
-            state_label: st.label
+            state_label: st.label,
+            push
         });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: MIGRATION_HINT });
@@ -699,10 +759,16 @@ app.post('/api/competitions/:id/news', requireAdmin, async (req, res) => {
         await logAudit(req.user.username, 'UPDATE_COMPETITION_NEWS', comp.id,
             news ? `更新賽事最新消息：${comp.name}（${news}）` : `清空賽事最新消息：${comp.name}`, req.userAgent);
 
+        let push = null;
+        if (body.notify === true && news) {
+            push = await notifyRegistrants(comp, { title: `📣 ${comp.name} 公告`, body: news });
+        }
+
         const updated = await fetchCompetition(comp.id);
         res.json({
-            message: news ? '已更新最新消息（卡片上會直接顯示）' : '已清空最新消息',
-            competition: updated
+            message: (news ? '已更新最新消息（卡片上會直接顯示）' : '已清空最新消息') + pushSummary(push),
+            competition: updated,
+            push
         });
     } catch (err) {
         if (isMissingTableError(err)) return res.status(503).json({ error: MIGRATION_HINT });

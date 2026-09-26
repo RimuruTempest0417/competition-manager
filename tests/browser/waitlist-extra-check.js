@@ -213,7 +213,14 @@ const login = async (browser, username, password) => {
         }
         check(state.tables.competitions.find((c) => c.id === 811).waitlist_notify === false,
             '取消勾選後資料庫的 waitlist_notify 變成 false');
-        const noteOff = await browser.evaluate(`return (document.getElementById('waitlistNotifyNote') || {}).textContent || '';`);
+        // 畫面重繪是非同步的（要等 loadTeams 回來才更新說明文字）→ 輪詢等它，避免假紅
+        let noteOff = '';
+        const noteDeadline = Date.now() + 8000;
+        while (Date.now() < noteDeadline) {
+            noteOff = await browser.evaluate(`return (document.getElementById('waitlistNotifyNote') || {}).textContent || '';`);
+            if (/不通知/.test(noteOff)) break;
+            await new Promise((r) => setTimeout(r, 150));
+        }
         check(/不通知/.test(noteOff), `說明文字改成「不通知」（${noteOff}）`);
         check((state.tables.audit_logs || []).some((l) => l.action === 'WAITLIST_NOTIFY'),
             '關閉通知有留稽核紀錄');
