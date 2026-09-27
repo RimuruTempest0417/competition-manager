@@ -184,7 +184,7 @@ app.get('/api/my/registrations', authenticateToken, async (req, res) => {
                 status,
                 status_label: CMCompetitionState.REG_STATUS_LABELS[status],
                 waitlist_position: idx >= 0 ? idx + 1 : null,
-                can_cancel: status !== 'rejected'
+                can_cancel: status !== 'rejected' && !r.attended_at   // v3.7.0：已簽到要先取消簽到
             });
         }));
     } catch (err) {
@@ -652,6 +652,12 @@ app.delete('/api/registrations/:id', authenticateToken, async (req, res) => {
         const { data: reg, error } = await supabase.from('registrations').select('*').eq('id', id).maybeSingle();
         if (error) throw error;
         if (!reg || reg.is_deleted) return res.status(404).json({ error: '找不到此報名紀錄' });
+
+        // v3.7.0：已簽到的報名不可直接取消——否則會在軟刪除的紀錄上留下「幽靈簽到」，
+        // 也讓人看不出是誰放掉名額的。要取消請先取消簽到。
+        if (reg.attended_at) {
+            return res.status(409).json({ error: '此報名已完成現場簽到，請先「取消簽到」再取消報名。' });
+        }
 
         const isOwner = String(reg.user_id) === String(req.user.sub) || reg.username === req.user.username;
         if (!isOwner && !ADMIN_ROLES.has(req.user.role)) {

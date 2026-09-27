@@ -313,3 +313,32 @@ test('v2.20.0：賽事列表要帶候補／需審核資訊，且額滿有候補�
     assert.ok(byId[502].waitlist_count >= 1);
     assert.strictEqual(byId[503].can_register, false, '沒開候補 → 額滿就是不能報名');
 });
+
+test('v3.7.0：已簽到的報名不可直接取消，要先取消簽到（避免幽靈簽到）', async () => {
+    // 自己塞一筆已簽到的報名，不依賴前面測試留下的狀態
+    const reg = { id: 799, competition_id: 501, user_id: 99, username: 'attended-user', status: 'confirmed',
+                  is_deleted: false, attended_at: '2026-01-01T10:00:00.000Z', attended_by: 'admin1', created_at: '2026-09-10T00:00:00Z' };
+    state.tables.registrations.push(reg);
+
+    const blocked = await api('/api/registrations/799', { method: 'DELETE', token: adminToken() });
+    assert.strictEqual(blocked.status, 409, '已簽到要先取消簽到，不能直接取消報名');
+    assert.match((await blocked.json()).error, /簽到/);
+    assert.ok(state.tables.registrations.some((r) => r.id === 799 && !r.is_deleted), '被擋下時不得動到那筆報名');
+
+    // 取消簽到之後，取消報名就恢復正常
+    reg.attended_at = null;
+    reg.attended_by = null;
+    const allowed = await api('/api/registrations/799', { method: 'DELETE', token: adminToken() });
+    assert.strictEqual(allowed.status, 200, '取消簽到後即可取消報名');
+});
+
+test('v3.7.0：我的報名在已簽到時不提供「取消報名」', async () => {
+    const attended = { id: 798, competition_id: 501, user_id: 98, username: 'attended-self', status: 'confirmed',
+                       is_deleted: false, attended_at: '2026-01-01T10:00:00.000Z', attended_by: 'admin1', created_at: '2026-09-11T00:00:00Z' };
+    state.tables.registrations.push(attended);
+    const list = await (await api('/api/my/registrations', { token: userToken(98, 'attended-self') })).json();
+    const rows = Array.isArray(list) ? list : (list.registrations || []);
+    const mine = rows.find((r) => r.id === 798);
+    assert.ok(mine, `要能看到自己的報名（回傳 ${rows.length} 筆）`);
+    assert.strictEqual(mine.can_cancel, false, '已簽到 → 介面不該給「取消報名」');
+});

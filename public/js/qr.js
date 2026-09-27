@@ -34,6 +34,18 @@
         3: { total: 70, data: 44, ecc: 26, align: [6, 22] }
     };
 
+    /* 等級 L（容錯較低、容量較大）：v3.7.0 起供「賽事分享連結 QR」使用——網址比報到碼長很多，
+       等級 M 的版本 3 只有 42 bytes，塞不下 https://…#c51 這種網址（約 47–52 bytes）。 */
+    const VERSIONS_L = {
+        1: { total: 26, data: 19, ecc: 7, align: [] },
+        2: { total: 44, data: 34, ecc: 10, align: [6, 18] },
+        3: { total: 70, data: 55, ecc: 15, align: [6, 22] }
+    };
+    const LEVEL_BITS = { L: 0b01, M: 0b00 };
+    function versionTable(level) {
+        return level === 'L' ? VERSIONS_L : VERSIONS;
+    }
+
     /* ---------- GF(256) 運算（QR 用的 RS 編碼在 GF(256)、本原多項式 0x11D）---------- */
     const EXP = new Uint8Array(512);
     const LOG = new Uint8Array(256);
@@ -142,8 +154,8 @@
         }
     }
 
-    function placeAlignment(m, version) {
-        const centers = VERSIONS[version].align;
+    function placeAlignment(m, version, level) {
+        const centers = versionTable(level)[version].align;
         for (const r of centers) {
             for (const c of centers) {
                 // 跳過與定位圖樣重疊的三個角落
@@ -238,9 +250,9 @@
         return out;
     }
 
-    function formatBits(maskIndex) {
-        // 等級 M = 00；5 位元 BCH(15,5)，產生多項式 0x537，最後 XOR 0x5412
-        const data = (0b00 << 3) | maskIndex;
+    function formatBits(maskIndex, levelBits) {
+        // 等級：L = 01、M = 00（2 位元指示子）；5 位元 BCH(15,5)，產生多項式 0x537，最後 XOR 0x5412
+        const data = ((levelBits === undefined ? 0b00 : levelBits) << 3) | maskIndex;
         let value = data << 10;
         for (let i = 4; i >= 0; i -= 1) {
             if ((value >>> (10 + i)) & 1) value ^= 0x537 << i;
@@ -248,9 +260,9 @@
         return ((data << 10) | value) ^ 0x5412;
     }
 
-    function placeFormat(m, maskIndex) {
+    function placeFormat(m, maskIndex, levelBits) {
         const size = m.length;
-        const bits = formatBits(maskIndex);
+        const bits = formatBits(maskIndex, levelBits);
         const bit = (i) => (bits >>> i) & 1;   // i = 位元編號（0 = 最低位）
         // ★規範順序：第一份從**最高位（bit 14）**開始擺，橫向由左而右、再縱向由下而上。
         // （曾經寫成最低位先擺：自己的讀取器用同一套錯誤假設所以「驗過」，但真實解碼器讀不到。）
@@ -308,8 +320,8 @@
         return score;
     }
 
-    function buildMatrix(bytes, version) {
-        const info = VERSIONS[version];
+    function buildMatrix(bytes, version, level) {
+        const info = versionTable(level)[version];
         const data = buildCodewords(bytes, info);
         if (!data) return null;
         const ecc = rsEncode(data, info.ecc);
@@ -320,7 +332,7 @@
         placeFinder(base, 0, 0);
         placeFinder(base, 0, size - 7);
         placeFinder(base, size - 7, 0);
-        placeAlignment(base, version);
+        placeAlignment(base, version, level);
         placeTiming(base);
         reserveFormatAreas(base);
 
@@ -330,22 +342,25 @@
         let best = null;
         for (let mask = 0; mask < 8; mask += 1) {
             const candidate = applyMask(base, reserved, mask);
-            placeFormat(candidate, mask);
+            placeFormat(candidate, mask, LEVEL_BITS[level] || 0b00);
             const score = penalty(candidate);
             if (!best || score < best.score) best = { score, mask, matrix: candidate };
         }
         return { version, size, mask: best.mask, matrix: best.matrix };
     }
 
-    function encode(text) {
+    function encode(text, options) {
+        const opts = options || {};
+        const level = opts.level === 'L' ? 'L' : 'M';
+        const tbl = versionTable(level);
         const bytes = utf8Bytes(text);
         for (const version of [1, 2, 3]) {
-            if (bytes.length <= VERSIONS[version].data - 2) {   // 扣掉模式(4bit)與長度(8bit)後仍塞得下
-                const built = buildMatrix(bytes, version);
+            if (bytes.length <= tbl[version].data - 2) {   // 扣掉模式(4bit)與長度(8bit)後仍塞得下
+                const built = buildMatrix(bytes, version, level);
                 if (built) return built;
             }
         }
-        throw new Error(`內容太長（${bytes.length} bytes）：這個產生器支援到版本 3（等級 M 最多 ${VERSIONS[3].data - 2} bytes）`);
+        throw new Error(`內容太長（${bytes.length} bytes）：這個產生器支援到版本 3（等級 ${level} 最多 ${tbl[3].data - 2} bytes）`);
     }
 
     function svg(text, options) {
@@ -354,7 +369,7 @@
         const margin = opts.margin === undefined ? 3 : opts.margin;
         const dark = opts.dark || '#0f172a';
         const light = opts.light || '#ffffff';
-        const { size, matrix } = encode(text);
+        const { size, matrix } = encode(text, { level: opts.level });
         const dim = (size + margin * 2) * scale;
         const rects = [];
         for (let r = 0; r < size; r += 1) {
@@ -374,8 +389,9 @@
     return {
         encode,
         svg,
-        capacity: (version) => VERSIONS[version].data - 2,
+        capacity: (version, level) => versionTable(level)[version].data - 2,
+        levels: Object.keys(LEVEL_BITS),
         versions: Object.keys(VERSIONS).map(Number),
-        _internal: { buildMatrix, rsEncode, formatBits, penalty, MASKS }
+        _internal: { buildMatrix, rsEncode, formatBits, penalty, MASKS, LEVEL_BITS, VERSIONS, VERSIONS_L }
     };
 }));

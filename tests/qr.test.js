@@ -243,3 +243,56 @@ test('v3.6.5 QR 產生器：容量上限與 SVG 輸出', () => {
     const dark = matrix.flat().filter(Boolean).length;
     assert.strictEqual(rects, dark + 1, '深色格子數要與矩陣一致（外加底色那一個 rect）');
 });
+
+/* ---------- v3.7.0：等級 L（賽事分享連結 QR）---------- */
+test('v3.7.0 QR 產生器：等級 L 容量與版本選擇', () => {
+    assert.strictEqual(CMQr.capacity(1, 'L'), 17, 'v1-L 可放 17 bytes');
+    assert.strictEqual(CMQr.capacity(2, 'L'), 32, 'v2-L 可放 32 bytes');
+    assert.strictEqual(CMQr.capacity(3, 'L'), 53, 'v3-L 可放 53 bytes');
+    assert.strictEqual(CMQr.capacity(3), 42, '等級 M 的容量不受影響（v3-M 42 bytes）');
+
+    // 同一段內容在等級 L 應該用更小的版本（＝更少格子＝更好掃）
+    const text = 'x'.repeat(30);
+    const atM = CMQr.encode(text);
+    const atL = CMQr.encode(text, { level: 'L' });
+    assert.strictEqual(atM.version, 3, '30 bytes 在等級 M 要用到版本 3');
+    assert.strictEqual(atL.version, 2, '30 bytes 在等級 L 只需要版本 2');
+
+    // 等級 L 的格式資訊位元必須與 M 不同（寫錯的話畫面正常但整張掃不到）
+    const bitsM = CMQr._internal.formatBits(0, CMQr._internal.LEVEL_BITS.M);
+    const bitsL = CMQr._internal.formatBits(0, CMQr._internal.LEVEL_BITS.L);
+    assert.notStrictEqual(bitsM, bitsL, '等級 L／M 的格式資訊一定要不一樣');
+
+    // 分享網址的真實長度必須塞得進去
+    const shareUrl = 'https://competition-manager-hazel.vercel.app/#c51';
+    assert.ok(Buffer.byteLength(shareUrl, 'utf8') <= CMQr.capacity(3, 'L'), `分享網址 ${Buffer.byteLength(shareUrl, 'utf8')} bytes 要在 v3-L 容量內`);
+});
+
+test('v3.7.0 QR 產生器：等級 L 由 macOS Vision 獨立解碼', (t) => {
+    const swiftc = (() => {
+        try { return execFileSync('xcrun', ['--find', 'swiftc'], { encoding: 'utf8' }).trim(); } catch (err) { return null; }
+    })();
+    if (!swiftc) {
+        t.skip('這台機器沒有 swiftc（macOS 開發工具），跳過系統解碼驗證');
+        return;
+    }
+
+    const payloads = [
+        'https://competition-manager-hazel.vercel.app/#c51',
+        'https://competition-manager-hazel.vercel.app/#c1234'
+    ];
+    for (const payload of payloads) {
+        const { version, matrix } = CMQr.encode(payload, { level: 'L' });
+        assert.ok(version <= 3, `等級 L 也要在支援範圍內（實際版本 ${version}）`);
+        const png = path.join(os.tmpdir(), `cm-qr-levelL-${Date.now()}.png`);
+        fs.writeFileSync(png, pngFromMatrix(matrix));
+        try {
+            const out = execFileSync('swift', [path.join(ROOT, 'scripts', 'qr-decode.swift'), png], {
+                encoding: 'utf8', timeout: 180000
+            }).trim();
+            assert.strictEqual(out, payload, `★等級 L 的系統解碼結果必須等於原始網址（${payload}）`);
+        } finally {
+            fs.rmSync(png, { force: true });
+        }
+    }
+});

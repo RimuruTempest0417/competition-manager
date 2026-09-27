@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.6.8</title>
+    <title>比賽管理系統 v3.7.0</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -1512,7 +1512,45 @@
         </div>
     </div>
 
-    <!-- 彈出視窗：賽事公告（取消／延期／最新消息，v3.6.3） -->
+    
+    <!-- 彈出視窗：分享賽事（v3.7.0）——連結與 QR，掃碼即可報名 -->
+    <div id="shareModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4 cm-modal-panel">
+            <div class="flex justify-between items-start border-b pb-3">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800">🔗 分享賽事（掃碼就能報名）</h3>
+                    <p id="shareComp" class="text-xs text-slate-500 mt-0.5"></p>
+                </div>
+                <button id="closeShareModalBtn" class="text-slate-400 hover:text-slate-600 text-xl leading-none" aria-label="關閉">✕</button>
+            </div>
+
+            <div id="shareQrBox" class="flex items-center justify-center bg-white border border-slate-200 rounded-lg p-3"></div>
+
+            <div>
+                <label for="shareLinkInput" class="block text-xs font-semibold text-slate-600 mb-1">報名連結</label>
+                <input id="shareLinkInput" type="text" readonly
+                    class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-slate-50 text-slate-700">
+            </div>
+
+            <p class="text-xs text-slate-500 leading-relaxed">
+                把 QR 印在場地海報、傳單或投影片上，或把連結貼到群組；<strong>還沒有帳號的人掃進來可以直接註冊</strong>，
+                登入後就會直接跳到這場賽事的報名畫面。
+            </p>
+
+            <div class="flex flex-wrap gap-2">
+                <button id="shareCopyLinkBtn"
+                    class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">📋 複製連結</button>
+                <button id="shareCopyTextBtn"
+                    class="px-4 py-2 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg">📋 複製賽事文字</button>
+                <button id="closeShareModalBtn2"
+                    class="px-4 py-2 text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg">關閉</button>
+            </div>
+            <p id="shareMsg" class="hidden text-xs"></p>
+        </div>
+    </div>
+
+<!-- 彈出視窗：賽事公告（取消／延期／最新消息，v3.6.3） -->
     <div id="noticeModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-xl w-full p-6 space-y-4 cm-modal-panel flex flex-col">

@@ -1470,3 +1470,21 @@ input[type="week"] {
 /* 註（v3.6.8）：這裡刻意「不」用 -webkit-appearance:none 去壓 iOS 原生日期欄。
    那招雖然能讓寬度更好控制，但有可能讓點擊後叫不出日期轉盤（變成不能填日期，
    比凸出卡片更糟）。根因是 grid／flex 的 min-width:auto 底線，用 min-width:0 即可解掉。 */
+
+
+/* ══════════════════════════════════════════════════════════════
+   v3.7.0：賽事分享連結與 QR
+   ══════════════════════════════════════════════════════════════ */
+.cm-qr {
+    width: 100%;
+    max-width: 220px;
+    height: auto;
+    display: block;
+}
+
+/* 掃 QR 進站時，被指到的那張卡片先亮一下，讓使用者知道要看哪裡 */
+.cm-card-highlight {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.45);
+    border-radius: 0.75rem;
+    transition: box-shadow 0.3s ease;
+}

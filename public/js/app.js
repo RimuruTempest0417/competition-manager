@@ -1137,6 +1137,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         else if (btn.dataset.action === 'undo-check-in') setAttendance(Number(btn.dataset.id), false);
     });
     document.getElementById('promoteWaitlistBtn')?.addEventListener('click', promoteWaitlist);
+    // v3.7.0：分享賽事彈窗
+    // v3.7.0：名單類動作（審核／簽到／遞補／取消…）完成後自動重新載入，
+    // 否則「候補 N」「已核准 N」會停在舊值，得手按「🔄 重新載入」才更新。
+    // 直接掛在三份清單容器上，任何一顆按鈕被按過就重載，不必逐一列出動作名稱。
+    ['attendanceList', 'pendingList', 'waitlistList'].forEach((listId) => {
+        document.getElementById(listId)?.addEventListener('click', (e) => {
+            if (!e.target.closest || !e.target.closest('button')) return;
+            setTimeout(() => { if (currentTeamComp) loadTeams(currentTeamComp.id); }, 1200);
+        });
+    });
+    document.getElementById('shareCopyLinkBtn')?.addEventListener('click', copyShareLink);
+    document.getElementById('closeShareModalBtn')?.addEventListener('click', closeShareModal);
+    document.getElementById('closeShareModalBtn2')?.addEventListener('click', closeShareModal);
+    scheduleDeepLink();
+    // 已經開著的分頁被貼上分享連結時，也要能跳到那場賽事
+    window.addEventListener('hashchange', scheduleDeepLink);
     document.getElementById('pendingList')?.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
         if (!btn || btn.dataset.action !== 'review-reg') return;
@@ -1235,6 +1251,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const action = btn.dataset.action;
         if (action === 'copy-text') {
             copyToClipboard(btn.dataset.name, btn.dataset.date, btn.dataset.endDate, btn.dataset.location);
+        } else if (action === 'share-link') {
+            openShareModal(id);
         } else if (action === 'share-poster') {
             openPosterModal(id);
         } else if (action === 'toggle-subscribe') {
@@ -1378,7 +1396,7 @@ function focusCompetitionCard(compId) {
 const CM_MENU_PERMISSIONS = {
     guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false, announce: false, guide: true },
     user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true, guide: true },
-    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: true,  myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true, guide: true },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true, guide: true },
     admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false, announce: true, guide: true },
     super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true, guide: true },
     web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true, guide: true }
@@ -2293,6 +2311,7 @@ async function openMyRegsModal() {
     setMyRegsStatus(null, null);
     const list = document.getElementById('myRegsList');
     if (list) list.innerHTML = '<p class="text-center text-slate-400 py-6 text-sm">載入中…</p>';
+    document.getElementById('teamModal')?.classList.add('hidden');   // v3.7.0：不讓兩個彈窗疊在一起
     document.getElementById('myRegsModal')?.classList.remove('hidden');
 
     await Promise.all([fetchMyRegistrations(), fetchMyResults()]);
@@ -2301,6 +2320,128 @@ async function openMyRegsModal() {
 
 function closeMyRegsModal() {
     document.getElementById('myRegsModal')?.classList.add('hidden');
+}
+
+/* ---------- v3.7.0：賽事分享連結與 QR（掃碼就能報名） ---------- */
+
+// 連結刻意做短（用 hash 帶賽事編號）：QR 在等級 L、版本 3 最多 53 bytes，
+// 網址越短越不容易在低階手機鏡頭下掃不到。
+function buildShareUrl(competitionId) {
+    return `${window.location.origin}/#c${competitionId}`;
+}
+
+function openShareModal(competitionId) {
+    const item = (typeof allCompetitions !== 'undefined' ? allCompetitions : []).find((c) => Number(c.id) === Number(competitionId));
+    const modal = document.getElementById('shareModal');
+    if (!modal) return;
+
+    const url = buildShareUrl(competitionId);
+    const label = document.getElementById('shareComp');
+    if (label) label.innerText = item ? `${item.name}｜${item.date || ''}` : '';
+
+    const input = document.getElementById('shareLinkInput');
+    if (input) input.value = url;
+
+    const box = document.getElementById('shareQrBox');
+    if (box) {
+        if (window.CMQr) {
+            try {
+                box.innerHTML = CMQr.svg(url, {
+                    level: 'L', scale: 5, margin: 3,
+                    alt: `${item ? item.name : '賽事'} 報名連結 QR`
+                });
+            } catch (err) {
+                box.innerHTML = '<p class="text-xs text-red-600">QR 產生失敗，請改用下方的連結貼給對方。</p>';
+            }
+        } else {
+            box.innerHTML = '<p class="text-xs text-slate-500">這個瀏覽器載不到 QR 模組，請改用下方的連結貼給對方。</p>';
+        }
+    }
+
+    // 「複製賽事文字」沿用卡片按鈕既有的管線（data-action="copy-text"），不重寫一份
+    const textBtn = document.getElementById('shareCopyTextBtn');
+    if (textBtn && item) {
+        textBtn.dataset.action = 'copy-text';
+        textBtn.dataset.name = item.name || '';
+        textBtn.dataset.date = item.date || '';
+        textBtn.dataset.endDate = item.end_date || '';
+        textBtn.dataset.location = item.location || '';
+    }
+
+    const msg = document.getElementById('shareMsg');
+    if (msg) { msg.classList.add('hidden'); msg.textContent = ''; }
+
+    closeOtherModalsFor('shareModal');
+    modal.classList.remove('hidden');
+}
+
+function closeShareModal() {
+    document.getElementById('shareModal')?.classList.add('hidden');
+}
+
+// 只關掉「會互相覆蓋」的幾個主要彈窗，不動登入／註冊等流程中的彈窗
+function closeOtherModalsFor(keepId) {
+    ['shareModal', 'myRegsModal', 'teamModal'].forEach((id) => {
+        if (id === keepId) return;
+        document.getElementById(id)?.classList.add('hidden');
+    });
+}
+
+function setShareMsg(text, isError) {
+    const el = document.getElementById('shareMsg');
+    if (!el) return;
+    el.className = 'text-xs ' + (isError ? 'text-red-600' : 'text-emerald-600');
+    el.textContent = text;
+    el.classList.remove('hidden');
+}
+
+async function copyShareLink() {
+    const input = document.getElementById('shareLinkInput');
+    if (!input) return;
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(input.value);
+            setShareMsg('已複製報名連結，貼到群組或訊息就可以了。');
+            return;
+        }
+        input.removeAttribute('readonly');
+        input.select();
+        const ok = document.execCommand && document.execCommand('copy');
+        input.setAttribute('readonly', 'readonly');
+        setShareMsg(ok ? '已複製報名連結。' : '這個瀏覽器不支援自動複製，請長按上方連結手動複製。', !ok);
+    } catch (err) {
+        setShareMsg('複製失敗，請長按上方連結手動複製。', true);
+    }
+}
+
+/* 深連結：掃 QR 進站時網址是 /#c<賽事編號>，捲到那張卡片並直接開報名（未登入會先要求登入）。
+   掃碼進來的人多半是第一次用，所以這一段要自己找時機（等列表渲染完），並只做一次。 */
+function handleCompetitionDeepLink() {
+    const match = /^#c(\d+)$/.exec(window.location.hash || '');
+    if (!match) return true;
+    const id = Number(match[1]);
+    const trigger = document.querySelector(`button[data-action="register-comp"][data-id="${id}"]`)
+        || document.querySelector(`button[data-action="manage-teams"][data-id="${id}"]`)
+        || document.querySelector(`button[data-action="share-link"][data-id="${id}"]`);
+    if (!trigger) return false;
+
+    const card = trigger.closest('.cm-card') || trigger.closest('div[class*="rounded-xl"]') || trigger;
+    if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (card) {
+        card.classList.add('cm-card-highlight');
+        setTimeout(() => card.classList.remove('cm-card-highlight'), 4000);
+    }
+    if (trigger.dataset.action !== 'share-link') trigger.click();
+    return true;
+}
+
+function scheduleDeepLink() {
+    if (!/^#c\d+$/.test(window.location.hash || '')) return;
+    let tries = 0;
+    const timer = setInterval(() => {
+        tries += 1;
+        if (handleCompetitionDeepLink() || tries >= 20) clearInterval(timer);
+    }, 500);
 }
 
 async function cancelRegistration(regId) {
@@ -2401,6 +2542,7 @@ async function openTeamModal(id) {
     }
 
     setTeamMsg('');
+    document.getElementById('myRegsModal')?.classList.add('hidden');   // v3.7.0：不讓兩個彈窗疊在一起
     document.getElementById('teamModal')?.classList.remove('hidden');
     await loadTeams(item.id);
 }
@@ -5230,6 +5372,11 @@ function competitionCardHtml(item) {
                         data-location="${escapeHtml(item.location || '')}"
                         class="text-xs text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded transition">
                     📋 複製文字
+                </button>
+
+                <button data-action="share-link" data-id="${item.id}"
+                        class="text-xs text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded transition font-medium">
+                    🔗 分享連結／QR
                 </button>
 
                 <button data-action="share-poster" data-id="${item.id}"
