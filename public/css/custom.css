@@ -1163,8 +1163,10 @@ canvas {
 
     /* 2) 標題列壓縮：標題、身份標籤與選單按鈕要在 360px 內排得下 */
     .cm-app-title {
-        font-size: 1.05rem;
-        line-height: 1.4;
+        font-size: 1rem;
+        line-height: 1.3;
+        /* 手機上「比賽管理系統」被折成「比賽管理系／統」很難看 → 整串不換行 */
+        white-space: nowrap;
     }
 
     .cm-app-subtitle {
@@ -1183,8 +1185,8 @@ canvas {
 
     .cm-auth-pill {
         /* 允許換行（角色名稱較長時不會擠壓標題），但整體仍保持精簡 */
-        max-width: 9.5rem;
-        font-size: 0.7rem;
+        max-width: 7rem;
+        font-size: 0.65rem;
         line-height: 1.25;
         text-align: center;
         padding: 0.2rem 0.5rem;
@@ -1225,6 +1227,14 @@ canvas {
     button[data-action] {
         padding-left: 0.6rem;
         padding-right: 0.6rem;
+        /* 卡片與列表上的文字按鈕：至少 44px 寬（Apple 觸控目標建議值） */
+        min-width: 2.75rem;
+    }
+
+    /* 表單送出列在手機上是上下堆疊，按鈕自己佔滿一整行 */
+    #submitBtn,
+    #cancelEditBtn {
+        min-height: 2.5rem;
     }
 
     /* 6) 卡片與動作列：允許換行、不要橫向溢出 */

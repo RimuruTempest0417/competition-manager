@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.6.5</title>
+    <title>比賽管理系統 v3.6.6</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -225,7 +225,7 @@
                 <!-- 賽事分類（單選）與標籤（多個，逗號分隔） -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">賽事分類</label>
+                        <label for="category" class="block text-xs font-semibold text-slate-600 mb-1">賽事分類</label>
                         <select id="category"
                             class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                             <option value="">— 未分類 —</option>
@@ -247,7 +247,7 @@
 
                 <div>
                     <label class="block text-xs font-semibold text-slate-600 mb-1">地圖連結 (選填)</label>
-                    <input type="text" id="mapUrl" placeholder="貼上 Google 地圖連結（留空＝用上面的地點自動搜尋）"
+                    <input type="text" id="mapUrl" placeholder="貼上 Google 地圖連結（留空＝自動搜尋）"
                         class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <p class="text-[11px] text-slate-400 mt-1">留空就會用「比賽地點」自動產生 Google 地圖連結；填了就以你貼的連結為準（只接受 http／https 網址）。</p>
                 </div>
@@ -255,17 +255,17 @@
                 <!-- 日期與 24 小時制時間選擇器 -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽開始日期 / 時間 (24小時制)</label>
+                        <label for="date" class="block text-xs font-semibold text-slate-600 mb-1">比賽開始日期 / 時間 (24小時制)</label>
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                             <input type="date" id="date"
                                 class="w-full md:col-span-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                             <div class="md:col-span-2 flex items-center gap-1">
-                                <select id="start_hour"
+                                <select id="start_hour" aria-label="比賽開始時間（時）"
                                     class="w-1/2 px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                                     <option value="">時</option>
                                 </select>
                                 <span class="font-bold text-slate-400">:</span>
-                                <select id="start_minute"
+                                <select id="start_minute" aria-label="比賽開始時間（分）"
                                     class="w-1/2 px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                                     <option value="">分</option>
                                 </select>
@@ -273,17 +273,17 @@
                         </div>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">比賽結束日期 / 時間 (24小時制)</label>
+                        <label for="end_date" class="block text-xs font-semibold text-slate-600 mb-1">比賽結束日期 / 時間 (24小時制)</label>
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                             <input type="date" id="end_date"
                                 class="w-full md:col-span-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                             <div class="md:col-span-2 flex items-center gap-1">
-                                <select id="end_hour"
+                                <select id="end_hour" aria-label="比賽結束時間（時）"
                                     class="w-1/2 px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                                     <option value="">時</option>
                                 </select>
                                 <span class="font-bold text-slate-400">:</span>
-                                <select id="end_minute"
+                                <select id="end_minute" aria-label="比賽結束時間（分）"
                                     class="w-1/2 px-2 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                                     <option value="">分</option>
                                 </select>
@@ -307,7 +307,7 @@
                         <label for="is_team_event" class="text-xs font-semibold text-slate-700 cursor-pointer">
                             👥 組隊比賽（報名時需填隊伍名稱，並可由管理員編排隊伍）</label>
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label for="team_size" class="block text-xs font-semibold text-slate-600 mb-1">每隊人數上限</label>
                             <input type="number" id="team_size" min="0" max="99" placeholder="0 = 不限"
@@ -319,7 +319,7 @@
                                 class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
                         </div>
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label for="registration_start_at" class="block text-xs font-semibold text-slate-600 mb-1">
                                 報名開始（選填）</label>
@@ -389,8 +389,8 @@
                     </p>
                 </div>
 
-                <div class="flex gap-2">
-                    <div class="border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-2">
+                <div class="flex flex-col sm:flex-row sm:items-stretch gap-2">
+                    <div class="min-w-0 sm:flex-1 border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-2">
                         <div class="flex items-center justify-between">
                             <label for="posterFile" class="text-xs font-semibold text-slate-700">
                                 🖼️ 手動上傳海報（選填，取代自動生成海報）
@@ -410,11 +410,11 @@
                     </div>
 
                     <button type="submit" id="submitBtn"
-                        class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm transition">
+                        class="w-full sm:w-auto shrink-0 whitespace-nowrap bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition">
                         發佈比賽
                     </button>
                     <button type="button" id="cancelEditBtn"
-                        class="hidden bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium px-4 py-2 rounded-lg text-sm transition">
+                        class="hidden w-full sm:w-auto shrink-0 whitespace-nowrap bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium px-4 py-2 rounded-lg text-sm transition">
                         取消編輯
                     </button>
                 </div>
@@ -447,15 +447,16 @@
                 <div class="flex flex-wrap items-center gap-2 cm-filter-row">
                     <input type="text" id="searchInput" placeholder="🔍 搜尋比賽名稱、地點..."
                         class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <select id="filterCategory"
+                    <select id="filterCategory" aria-label="依分類篩選"
                         class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                         <option value="">全部分類</option>
                     </select>
-                    <select id="filterTag"
+                    <select id="filterTag" aria-label="依標籤篩選"
                         class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                         <option value="">全部標籤</option>
                     </select>
-                    <input type="date" id="filterDateInput"
+                    <label for="filterDateInput" class="text-xs text-slate-500 shrink-0 self-center">📅 日期</label>
+                    <input type="date" id="filterDateInput" aria-label="依日期篩選" title="依日期篩選"
                         class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <button id="clearFilterBtn"
                         class="text-xs text-slate-500 hover:text-slate-800 px-2 py-1 bg-slate-100 rounded border">清除篩選</button>
