@@ -1425,20 +1425,43 @@ input[type="week"] {
     box-sizing: border-box;
 }
 
+/* 3. v3.7.1（使用者第二次回報「還是凸出，點擊正常」後實測的結論）：
+   iOS 的原生日期欄**不吃 min-width:0** —— 它仍然畫在自己的內在寬度上（實測模擬 343px：
+   402px 視窗下凸出 22～35px，與使用者截圖一致）。只加 overflow:hidden 也不行：
+   框會少一邊（框線在原生控制項身上）。
+   → 改成「外框由包裝層負責」：包裝層寬度受控並裁掉凸出的部分，框線／圓角／底色改由
+   包裝層提供，原生控制項本身透明無框。框一定留在卡片內，
+   而點擊仍然直接落在原生控制項上（日期轉盤照樣叫得出來，沒有動 appearance）。 */
 .cm-date-wrap {
     position: relative;
     display: block;
     width: 100%;
     min-width: 0;
     max-width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+    border: 1px solid var(--cm-bd-300);
+    border-radius: 0.5rem;
+    background-color: var(--cm-field);
+}
+
+/* 聚焦時焦點環畫在包裝層上（原生控制項自己的 ring 會被裁掉） */
+.cm-date-wrap:focus-within {
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.45);
 }
 
 .cm-date-wrap > input[type="date"],
-.cm-date-wrap > input[type="datetime-local"] {
+.cm-date-wrap > input[type="datetime-local"],
+.cm-date-wrap > input[type="time"],
+.cm-date-wrap > input[type="month"],
+.cm-date-wrap > input[type="week"] {
     display: block;
     width: 100%;
     min-width: 0;
     max-width: 100%;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 0;
 }
 
 .cm-date-hint {

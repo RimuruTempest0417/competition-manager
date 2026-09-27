@@ -283,6 +283,61 @@ const MEASURE = `
                         check(f.minW === '0px' && f.maxW === '100%',
                             `${step}｜${f.id} 已可被壓縮（min-width ${f.minW}／max-width ${f.maxW}）— iOS 原生日期欄的內在寬度會把方框頂出去`);
                     });
+                    if (size.width === 402) {
+                        /* ⑥ v3.7.1：模擬 iOS 原生日期欄的內在寬度（實機量到約 343px）後再量一次。
+                           v3.6.8 只加了 min-width:0，使用者的手機**仍然凸出**（回報「還是凸出，點擊正常」）——
+                           Chrome 的內在寬度小，原本那條結構斷言永遠是綠的。這一條才是真的能擋住回歸的。 */
+                        const simFields = JSON.parse(await browser.evaluate(`
+                            document.querySelectorAll('.cm-date-wrap input').forEach((el) => { el.style.minWidth = '343px'; });
+                            const card = document.getElementById('createSection');
+                            const cs = getComputedStyle(card);
+                            const contentRight = card.getBoundingClientRect().right - parseFloat(cs.paddingRight);
+                            const out = [];
+                            document.querySelectorAll('.cm-date-wrap').forEach((w) => {
+                                const input = w.querySelector('input');
+                                if (!input || w.getBoundingClientRect().width === 0) return;
+                                const ws = getComputedStyle(w);
+                                out.push({ id: input.id,
+                                    over: Math.round(w.getBoundingClientRect().right - contentRight),
+                                    border: parseFloat(ws.borderTopWidth),
+                                    overflowX: ws.overflowX,
+                                    innerBorder: parseFloat(getComputedStyle(input).borderTopWidth),
+                                    });
+                            });
+                            return JSON.stringify(out);
+                        `));
+                        simFields.forEach((f) => {
+                            check(f.over <= 0, `${step}｜★模擬 iOS 內在寬度 343px：${f.id} 外框仍在卡片內（超出 ${f.over}px）`);
+                            check(f.border > 0 && f.overflowX === 'hidden',
+                                `${step}｜${f.id} 外框由包裝層負責（框線 ${f.border}px／overflow ${f.overflowX}）— 否則原生控制項凸出時框會少一邊`);
+                            check(f.innerBorder === 0, `${step}｜${f.id} 原生控制項本身無框線（框才不會被裁掉一邊）`);
+
+                        });
+
+                    /* ⑦ v3.7.1：用「命中測試」驗原生控制項實際畫到哪裡——版面框比外框大沒關係，
+                       只要被外框裁掉就看不到。在外框右緣外 2px 的位置不應該命中原生日期欄。 */
+                    const hits = JSON.parse(await browser.evaluate(`
+                        const out = [];
+                        document.querySelectorAll('.cm-date-wrap').forEach((w) => {
+                            const input = w.querySelector('input');
+                            if (!input || w.getBoundingClientRect().width === 0) return;
+                            const r = w.getBoundingClientRect();
+                            const x = Math.round(r.right) + 2;
+                            const y = Math.round(r.top + r.height / 2);
+                            const el = document.elementFromPoint(x, y);
+                            out.push({ id: input.id, inViewport: y > 0 && y < window.innerHeight,
+                                hit: el ? (el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')) : 'none',
+                                isInput: el === input });
+                        });
+                        return JSON.stringify(out);
+                    `));
+                    hits.filter((h) => h.inViewport).forEach((h) => {
+                        check(h.isInput === false,
+                            `${step}｜★${h.id} 在外框右緣外 2px 沒有命中原生日期欄（命中 ${h.hit}）— 凸出的部分必須被裁掉才看不到`);
+                    });
+                        await browser.evaluate(`document.querySelectorAll('.cm-date-wrap input').forEach((el) => { el.style.minWidth = ''; }); return true;`);
+                    }
+
                     check(!!m.filterDateRow && m.filterDateRow.sameRow && !m.filterDateRow.labelAlone && m.filterDateRow.w >= Math.round(size.width * 0.6),
                         `${step}｜篩選列「📅 日期」與欄位同一列且佔滿寬度（寬 ${m.filterDateRow && m.filterDateRow.w}px）`);
                     check(!!m.authPill && m.authPill.h <= m.authPill.lh * 1.8,
