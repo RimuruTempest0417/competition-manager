@@ -62,4 +62,5 @@
 | `tests/qr.test.js` | **8 通過 / 0 失敗**（新增：正式站長網址 49／53／62 bytes 用 macOS Vision 獨立解碼） |
 | RED 驗證 | 拿掉「等級 L」→ 結構守門轉紅；拿掉候補引導 → 28/1 |
 | 路由覆蓋 | 99／99（新增 2 條端點已納入，快照 **112 條**） |
-| 正式站 `npm run check:prod` | （發佈後填入） |
+| 正式站 `npm run check:prod` | **109／12／16／41 全綠、`PROD_EXIT=0`** |
+| ★正式站真實賽事的海報（id 50「2026Music」） | QR 解出 `https://competition-manager-hazel.vercel.app/#c50~poster`（**白框消失**，且帶 poster 來源標記）|
