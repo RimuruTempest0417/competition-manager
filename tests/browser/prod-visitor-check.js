@@ -28,7 +28,7 @@ const check = (ok, label, extra = '') => {
 };
 
 (async () => {
-    fs.mkdirSync(SHOT_DIR, { recursive: true });
+    if (process.env.CM_KEEP_SCREENSHOTS === '1') fs.mkdirSync(SHOT_DIR, { recursive: true });
     console.log(`\n🧪 正式站訪客視角檢查：${SITE}（預期版本 v${EXPECTED}）`);
     const browser = await Browser.launch({ width: 414, height: 896, mobile: true });
     let exitCode = 1;
@@ -68,8 +68,7 @@ const check = (ok, label, extra = '') => {
         check(mapLinks.count > 0, `卡片上有地圖連結（${mapLinks.count} 個）`);
         check(mapLinks.allHttps && mapLinks.allBlankSafe, '地圖連結都是 https 且另開新頁帶 rel=noopener');
 
-        const shot = path.join(SHOT_DIR, `visitor-${Date.now()}.png`);
-        await browser.screenshot(shot);
+        const shot = await browser.screenshot(path.join(SHOT_DIR, `visitor-${Date.now()}.png`));
 
         // v3.6.0：訪客也該看得到「使用說明」（說明只給登入者看就失去意義）
         const guideBtnVisible = await browser.evaluate(`
@@ -97,7 +96,7 @@ const check = (ok, label, extra = '') => {
         check(gs.items > 0 && gs.steps > 0, `線上說明有實際內容（${gs.items} 段、首段 ${gs.steps} 步）`);
         check(!gs.hasAdminSection, '線上訪客看不到管理員段落（依身分過濾在正式站也成立）');
 
-        console.log(`\n   📸 截圖：${shot}`);
+        if (shot) console.log(`\n   📸 截圖：${shot}`);
         console.log(`\n══════ 訪客視角檢查：${pass} 通過 / ${fail} 失敗 ══════`);
         exitCode = fail === 0 ? 0 : 1;
     } finally {

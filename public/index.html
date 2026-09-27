@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.6.6</title>
+    <title>比賽管理系統 v3.6.7</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -389,9 +389,9 @@
                     </p>
                 </div>
 
-                <div class="flex flex-col sm:flex-row sm:items-stretch gap-2">
-                    <div class="min-w-0 sm:flex-1 border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-2">
-                        <div class="flex items-center justify-between">
+                <div class="flex flex-col sm:flex-row sm:items-end gap-2">
+                    <div id="posterBlock" class="min-w-0 sm:flex-1 border border-slate-200 rounded-lg p-2.5 bg-slate-50 space-y-2">
+                        <div class="flex items-center justify-between gap-2">
                             <label for="posterFile" class="text-xs font-semibold text-slate-700">
                                 🖼️ 手動上傳海報（選填，取代自動生成海報）
                             </label>
@@ -400,13 +400,15 @@
                                 移除海報
                             </button>
                         </div>
-                        <input type="file" id="posterFile" accept="image/png,image/jpeg,image/webp"
-                            class="w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                        <p id="posterHint" class="text-xs text-slate-500 leading-relaxed">
-                            支援 JPG／PNG／WebP，會自動縮圖後上傳（上限 3MB）。未上傳時，分享海報會用自動生成的款式。
-                        </p>
+                        <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+                            <input type="file" id="posterFile" accept="image/png,image/jpeg,image/webp"
+                                class="w-full sm:w-72 shrink-0 text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                            <p id="posterHint" class="text-xs text-slate-500 leading-snug sm:flex-1">
+                                支援 JPG／PNG／WebP，會自動縮圖後上傳（上限 3MB）。未上傳時，分享海報會用自動生成的款式。
+                            </p>
+                        </div>
                         <img id="posterPreview" alt="海報預覽"
-                            class="hidden max-w-full max-h-56 rounded-lg border border-slate-200 shadow-sm">
+                            class="hidden max-w-full max-h-40 rounded-lg border border-slate-200 shadow-sm">
                     </div>
 
                     <button type="submit" id="submitBtn"

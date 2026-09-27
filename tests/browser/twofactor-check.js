@@ -78,7 +78,7 @@ async function typeCodeAndSubmit(browser, selector, code) {
 }
 
 (async () => {
-    fs.mkdirSync(SHOTS, { recursive: true });
+    if (process.env.CM_KEEP_SCREENSHOTS === '1') fs.mkdirSync(SHOTS, { recursive: true });
     const state = seedState();
     const stub = await startFakeSupabase(state);
     process.env.NODE_ENV = 'production';
@@ -209,7 +209,7 @@ async function typeCodeAndSubmit(browser, selector, code) {
         const noise = browser.consoleErrors.filter((m) => !/favicon|Failed to load resource|401|403/.test(m));
         check(noise.length === 0, '沒有非預期的 console 錯誤', noise.join(' | '));
 
-        console.log(`\n📸 截圖：${SHOTS}`);
+        if (process.env.CM_KEEP_SCREENSHOTS === '1') console.log(`\n📸 截圖：${SHOTS}`);
         console.log(`\n結果：${pass} 通過 / ${fail} 失敗`);
     } finally {
         await browser.close();

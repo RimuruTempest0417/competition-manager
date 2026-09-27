@@ -81,7 +81,7 @@ async function login(browser) {
 }
 
 async function main() {
-    fs.mkdirSync(SHOTS, { recursive: true });
+    if (process.env.CM_KEEP_SCREENSHOTS === '1') fs.mkdirSync(SHOTS, { recursive: true });
     const state = seedState();
     const stub = await startFakeSupabase(state);
     const stubPort = stub.address().port;
@@ -180,7 +180,7 @@ async function main() {
         const noise = browser.consoleErrors.filter((m) => !/favicon|Failed to load resource|401|403|404/.test(m));
         check(noise.length === 0, '沒有非預期的 console 錯誤', noise.join(' | '));
 
-        console.log(`\n📸 截圖：${SHOTS}`);
+        if (process.env.CM_KEEP_SCREENSHOTS === '1') console.log(`\n📸 截圖：${SHOTS}`);
         console.log(`\n結果：${passed} 通過 / ${failed} 失敗`);
     } finally {
         await browser.close();

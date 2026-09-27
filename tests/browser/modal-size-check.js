@@ -49,7 +49,7 @@ const check = (ok, label, extra = '') => {
 const M = (obj) => JSON.stringify(obj);
 
 (async () => {
-    fs.mkdirSync(SHOT_DIR, { recursive: true });
+    if (process.env.CM_KEEP_SCREENSHOTS === '1') fs.mkdirSync(SHOT_DIR, { recursive: true });
     console.log(`\n🧪 選單彈窗尺寸檢查：${SITE}`);
     const browser = await Browser.launch({ width: 1440, height: 900 });
     let exitCode = 1;

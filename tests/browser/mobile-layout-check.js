@@ -154,6 +154,7 @@ const MEASURE = `
         regEnd: regEnd ? { w: Math.round(regEnd.getBoundingClientRect().width), right: Math.round(regEnd.getBoundingClientRect().right) } : null,
         formRight: cardRight(form),
         filterDate: rect('filterDateInput'),
+        posterBlock: rect('posterBlock'),
         filterDateNamed: (() => {
             const el = document.getElementById('filterDateInput');
             if (!el) return false;
@@ -201,7 +202,7 @@ const MEASURE = `
                 await new Promise((r) => setTimeout(r, 400));
 
                 const m = JSON.parse(await browser.evaluate(`return (() => { ${MEASURE} })();`));
-                console.log(`   ℹ️ 視窗 ${m.vw}px｜頁面 scrollWidth ${m.pageScroll}｜發佈比賽按鈕 ${m.submitBtn.w}×${m.submitBtn.h}px｜報名欄位 ${JSON.stringify(m.regStart)}／${JSON.stringify(m.regEnd)}｜卡片右緣 ${m.formRight}｜篩選日期 ${JSON.stringify(m.filterDate)}`);
+                console.log(`   ℹ️ 視窗 ${m.vw}px｜頁面 scrollWidth ${m.pageScroll}｜發佈比賽按鈕 ${m.submitBtn.w}×${m.submitBtn.h}px｜報名欄位 ${JSON.stringify(m.regStart)}／${JSON.stringify(m.regEnd)}｜卡片右緣 ${m.formRight}｜篩選日期 ${JSON.stringify(m.filterDate)}｜海報區塊 ${JSON.stringify(m.posterBlock)}`);
 
                 check(m.submitBtn.w >= 88, `${step}｜「發佈比賽」按鈕沒有被壓成細條（寬 ${m.submitBtn.w}px ≥ 88px）`);
                 check(!m.overflow, `${step}｜沒有橫向溢出`, m.overflowers.length ? '超出者：' + m.overflowers.join(', ') : '');
@@ -227,6 +228,13 @@ const MEASURE = `
 
                     /* ⑤ 每個表單欄位都有可辨識名稱 */
                     check(m.nameless.length === 0, `${step}｜每個表單欄位都有標籤或說明`, m.nameless.join(', '));
+                }
+
+                if (size.width >= 1024) {
+                    /* 桌機：送出按鈕是一般高度、上傳海報區塊不佔位（v3.6.7） */
+                    check(m.submitBtn.h <= 60, `${step}｜「發佈比賽」按鈕是一般高度（${m.submitBtn.h}px ≤ 60px）`);
+                    check(!!m.posterBlock && m.posterBlock.h <= 90,
+                        `${step}｜「手動上傳海報」區塊不佔位（高 ${m.posterBlock && m.posterBlock.h}px ≤ 90px）`);
                 }
 
                 const errors = (browser.errors || []).filter((e) => !/favicon|ResizeObserver/.test(String(e)));

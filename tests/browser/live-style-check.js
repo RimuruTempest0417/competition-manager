@@ -37,7 +37,7 @@ const LINK_BUTTONS = [
 ];
 
 (async () => {
-    fs.mkdirSync(SHOT_DIR, { recursive: true });
+    if (process.env.CM_KEEP_SCREENSHOTS === '1') fs.mkdirSync(SHOT_DIR, { recursive: true });
     console.log(`\n🧪 線上樣式檢查（隱形按鈕／隱形文字）：${SITE}`);
     const browser = await Browser.launch({ width: 1280, height: 900 });
     let exitCode = 1;
@@ -137,9 +137,8 @@ const LINK_BUTTONS = [
         }
         await browser.setViewport(1280, 900, false);
 
-        const shot = path.join(SHOT_DIR, `live-style-${Date.now()}.png`);
-        await browser.screenshot(shot);
-        console.log(`\n   📸 截圖：${shot}`);
+        const shot = await browser.screenshot(path.join(SHOT_DIR, `live-style-${Date.now()}.png`));
+        if (shot) console.log(`\n   📸 截圖：${shot}`);
         exitCode = fail === 0 ? 0 : 1;
     } catch (err) {
         console.log(`   ❌ 檢查腳本執行失敗：${err.message}`);

@@ -61,7 +61,7 @@ const STUB_DIALOGS = `
 `;
 
 (async () => {
-    fs.mkdirSync(SHOTS, { recursive: true });
+    if (process.env.CM_KEEP_SCREENSHOTS === '1') fs.mkdirSync(SHOTS, { recursive: true });
     const state = seedState();
     const stub = await startFakeSupabase(state);
     process.env.NODE_ENV = 'production';
