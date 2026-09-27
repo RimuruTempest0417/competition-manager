@@ -1,4 +1,4 @@
-# 🏆 比賽管理系統 (Competition Manager) v3.7.1
+# 🏆 比賽管理系統 (Competition Manager) v3.7.2
 
 輕量、響應式且具備 Production-Ready 標準的比賽資訊管理 Web 應用程式。系統支援完整 CRUD 操作、資源回收桶（軟/硬刪除）、三層角色權限控制 (RBAC)、Supabase 審計日誌、自動化 Error 日誌收集系統，以及可手動覆寫的裝置深淺色模式。
 
@@ -182,6 +182,14 @@ competition-manager/
 ```
 
 # 版本紀錄 (Changelog)
+
+### v3.7.2 (2026-09-27) - 桌機日期欄文字重疊修正（提示只在 iOS 注入）
+
+使用者回報：**手機日期欄正常了，但電腦上出現「奇怪的文字重疊」**。**成因是 v3.6.8 留下的錯誤假設**——當時為了 iOS 空日期欄不顯示文字而用 JS 注入「年/月/日」提示，程式註解裡我寫「桌機 Chrome 本來就會顯示，加了也不衝突」，**這句是錯的**：桌機 Chrome 自己就會畫「年/月/日」，再疊一層就成了兩層文字。
+
+**修法**：新增純函式 `isIOSUserAgent(ua, maxTouchPoints)`（含**新版 iPadOS 假裝成 Mac** 的辨識），`applyDateHints()` 先算 `wantsHint`，**只有 iOS 才建立提示元素**，桌機／Android 完全不產生該元素。**外框 `.cm-date-wrap` 一律建立**，v3.7.1 的手機凸出修法不受影響。
+
+**新增守門**：新測試 `tests/date-hint-ios.test.js`（5 項 UA 矩陣＋結構斷言）；`mobile-layout-check.js` 把 v3.6.8 方向錯誤的舊斷言換成「非 iOS 不得有提示」，並**用 iOS 的 UA 另開一次瀏覽器**驗「iOS 必須有提示、填值要隱藏」（`cdp.js` 新增 `userAgent` 選項做 UA 模擬）；正式站 `live-style-check.js` 也加一條。**RED 驗證**：拿掉閘門 → 92/15 紅（正是症狀）；還原 → 107/0。
 
 ### v3.7.1 (2026-09-27) - 手機日期欄「凸出去」真正的修法（iOS 原生控制項）
 

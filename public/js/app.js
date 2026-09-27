@@ -5492,7 +5492,15 @@ async function handleFormSubmit(e) {
 
 /* v3.6.8：iOS 上空的 <input type="date">／<input type="datetime-local"> 完全不顯示任何文字，
    使用者只看到一個「空白方框」，不知道要填什麼。這裡替每個日期欄加一個看得見的提示，
-   有值時自動隱藏（桌機 Chrome 本來就會顯示「年/月/日」，加了也不衝突）。 */
+   有值時自動隱藏。
+   v3.7.2 修正：★只在 iOS 注入——桌機 Chrome 的日期欄本來就會自己顯示「年/月/日」，
+   再疊一層提示會變成兩層文字重疊（使用者桌機回報）。 */
+function isIOSUserAgent(ua, maxTouchPoints) {
+    const s = String(ua || '');
+    // 新版 iPadOS 的 UA 不寫 iPad，而是假裝成 Mac → 再用觸控點數辨識
+    return /iPad|iPhone|iPod/.test(s)
+        || (/(Macintosh|Mac OS X)/.test(s) && Number(maxTouchPoints || 0) > 1);
+}
 function syncDateHint(input) {
     const wrap = input.closest('.cm-date-wrap');
     if (!wrap) return;
@@ -5501,17 +5509,20 @@ function syncDateHint(input) {
 
 function applyDateHints(root) {
     const scope = root || document;
+    const wantsHint = isIOSUserAgent(navigator.userAgent || '', navigator.maxTouchPoints || 0);
     scope.querySelectorAll('input[type="date"], input[type="datetime-local"]').forEach((input) => {
         if (!input.closest('.cm-date-wrap')) {
             const wrap = document.createElement('span');
             wrap.className = 'cm-date-wrap';
             input.parentNode.insertBefore(wrap, input);
             wrap.appendChild(input);
-            const hint = document.createElement('span');
-            hint.className = 'cm-date-hint';
-            hint.setAttribute('aria-hidden', 'true');
-            hint.textContent = '年/月/日';
-            wrap.appendChild(hint);
+            if (wantsHint) {
+                const hint = document.createElement('span');
+                hint.className = 'cm-date-hint';
+                hint.setAttribute('aria-hidden', 'true');
+                hint.textContent = '年/月/日';
+                wrap.appendChild(hint);
+            }
             input.addEventListener('input', () => syncDateHint(input));
             input.addEventListener('change', () => syncDateHint(input));
         }

@@ -171,7 +171,8 @@ const MEASURE = `
                     right: Math.round(el.getBoundingClientRect().right),
                     overflow: baseRight !== null ? Math.round(el.getBoundingClientRect().right) - baseRight : null,
                     wrap: !!wrap,
-                    hintVisible: !!hint && getComputedStyle(hint).display !== 'none',
+                    hasHint: !!hint,
+                                    hintVisible: !!hint && getComputedStyle(hint).display !== 'none',
                     minW: cs.minWidth, maxW: cs.maxWidth,
                     val: String(el.value || '')
                 };
@@ -276,13 +277,20 @@ const MEASURE = `
                     check(m.filterDateNamed, `${step}｜篩選列的日期欄位有標籤可辨識（不是一個空白框）`);
                     m.dateFields.forEach((f) => {
                         if (f.missing) { check(false, `${step}｜找不到日期欄位 ${f.id}`); return; }
-                        check(f.wrap && f.hintVisible,
-                            `${step}｜${f.id} 空值時有看得見的提示（iOS 上空日期欄完全不顯示文字）`);
+                        check(f.hasHint === false,
+                            `${step}｜★${f.id} 非 iOS 不產生「年/月/日」提示（避免與原生文字疊成兩層）`);
                         check(f.overflow !== null && f.overflow <= 1,
                             `${step}｜${f.id} 沒有凸出卡片（右緣超出 ${f.overflow}px）`);
                         check(f.minW === '0px' && f.maxW === '100%',
                             `${step}｜${f.id} 已可被壓縮（min-width ${f.minW}／max-width ${f.maxW}）— iOS 原生日期欄的內在寬度會把方框頂出去`);
                     });
+                    /* v3.7.2：桌機（預設 UA）不得產生 .cm-date-hint——那會和原生控制項
+                       自己的「年/月/日」疊成兩層文字（使用者回報桌機重疊）。 */
+                    const hintCount = Number(await browser.evaluate(
+                        `return document.querySelectorAll('.cm-date-hint').length;`));
+                    check(hintCount === 0,
+                        `${step}｜★桌機不得有「年/月/日」提示元素（實際 ${hintCount} 個）— 提示只在 iOS 注入`);
+
                     if (size.width === 402) {
                         /* ⑥ v3.7.1：模擬 iOS 原生日期欄的內在寬度（實機量到約 343px）後再量一次。
                            v3.6.8 只加了 min-width:0，使用者的手機**仍然凸出**（回報「還是凸出，點擊正常」）——
@@ -363,6 +371,41 @@ const MEASURE = `
                 await browser.close();
             }
         }
+        /* v3.7.2：用 iOS 的 UA 開一次，確認提示「只有 iOS 才有」，且填值後會隱藏。
+           （手機尺寸的視窗模擬測不到這個——差別在 navigator.userAgent。） */
+        {
+            const UA_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)'
+                + ' AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+            const label = 'iOS UA（402）';
+            const ios = await Browser.launch({ width: 402, height: 900, mobile: true, userAgent: UA_IOS });
+            try {
+                await ios.goto(BASE);
+                const before = JSON.parse(await ios.evaluate(`
+                    const hints = document.querySelectorAll('.cm-date-hint');
+                    const out = { count: hints.length,
+                        ua: navigator.userAgent.indexOf('iPhone') >= 0,
+                        texts: new Set(), hiddenWhenFilled: null, wrapHasValue: null };
+                    hints.forEach((h) => out.texts.add(h.textContent));
+                    const wrap = hints.length ? hints[0].closest('.cm-date-wrap') : null;
+                    const input = wrap ? wrap.querySelector('input') : null;
+                    if (input) {
+                        input.value = '2026-10-15';
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        out.hiddenWhenFilled = getComputedStyle(wrap.querySelector('.cm-date-hint')).display;
+                        out.wrapHasValue = wrap.classList.contains('has-value');
+                    }
+                    return JSON.stringify({ ...out, texts: [...out.texts] });
+                `));
+                check(before.ua === true, `${label}｜iOS UA 模擬生效（navigator.userAgent 含 iPhone）`);
+                check(before.count >= 1, `${label}｜★iOS 下必須有「年/月/日」提示（實際 ${before.count} 個）— 空日期欄在 iOS 完全不顯示文字`);
+                check(before.texts.length === 1 && before.texts[0] === '年/月/日', `${label}｜提示文字是「年/月/日」（實際 ${JSON.stringify(before.texts)}）`);
+                check(before.wrapHasValue === true && before.hiddenWhenFilled === 'none',
+                    `${label}｜★填入日期後提示會隱藏（has-value=${before.wrapHasValue}、display=${before.hiddenWhenFilled}）`);
+            } finally {
+                await ios.close();
+            }
+        }
+
         exitCode = fail === 0 ? 0 : 1;
     } catch (err) {
         console.error(`   ❌ 檢查腳本執行失敗： ${err.message}`);

@@ -139,6 +139,14 @@ const LINK_BUTTONS = [
 
         const shot = await browser.screenshot(path.join(SHOT_DIR, `live-style-${Date.now()}.png`));
         if (shot) console.log(`\n   📸 截圖：${shot}`);
+        /* v3.7.2：正式站桌機不得出現「年/月/日」提示元素——那會與原生日期欄的文字疊成兩層
+           （使用者回報的桌機文字重疊）。提示只在 iOS 注入。 */
+        {
+            const hints = Number(await browser.evaluate(
+                `return document.querySelectorAll('.cm-date-hint').length;`));
+            check(hints === 0, `★桌機不得有「年/月/日」提示元素（實際 ${hints} 個）— 提示只在 iOS 注入`);
+        }
+
         exitCode = fail === 0 ? 0 : 1;
     } catch (err) {
         console.log(`   ❌ 檢查腳本執行失敗：${err.message}`);

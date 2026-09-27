@@ -29,6 +29,8 @@ class Browser {
         this.width = options.width || 1280;
         this.height = options.height || 900;
         this.mobile = options.mobile !== false && this.width < 700;
+        this.userAgent = options.userAgent || null;   // v3.7.2：可模擬 iOS 的 UA
+        this.platform = options.platform || null;
         this.userDataDir = options.userDataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'cm-cdp-'));
         this.proc = null;
         this.ws = null;
@@ -89,6 +91,11 @@ class Browser {
         await this.send('Emulation.setDeviceMetricsOverride', {
             width: this.width, height: this.height, deviceScaleFactor: 2, mobile: this.mobile
         });
+        if (this.userAgent) {
+            await this.send('Emulation.setUserAgentOverride', {
+                userAgent: this.userAgent, platform: this.platform || 'iPhone'
+            });
+        }
 
         this.on('Runtime.consoleAPICalled', (p) => {
             if (p.type === 'error') this.consoleErrors.push((p.args || []).map((a) => a.value || a.description).join(' '));
