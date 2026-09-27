@@ -1601,12 +1601,12 @@ function focusCompetitionCard(compId) {
 // 為什麼要這樣寫：過去每個角色分支各自列 classList.add('hidden')，
 // 只要有分支漏寫（例如訪客分支忘了隱藏 CSV 按鈕），登出後就會殘留管理員功能。
 const CM_MENU_PERMISSIONS = {
-    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false, announce: false, guide: true },
-    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true, guide: true },
-    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true, guide: true },
-    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false, announce: true, guide: true },
-    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true, guide: true },
-    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true, guide: true }
+    guest:       { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: false, changePwd: false, twoFactor: false, backup: false, announce: false, guide: true, demoFlow: false },
+    user:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true, guide: true, demoFlow: false },
+    test:        { csvTool: false, trash: false, audit: false, errorLogs: false, adminMgmt: false, pushLogs: false, pushSettings: false, opsStats: false, create: false, myRegs: true,  changePwd: true,  twoFactor: false, backup: false, announce: true, guide: true, demoFlow: false },
+    admin:       { csvTool: true,  trash: true,  audit: false, errorLogs: false, adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: false, announce: true, guide: true, demoFlow: true },
+    super_admin: { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true, guide: true, demoFlow: true },
+    web_owner:   { csvTool: true,  trash: true,  audit: true,  errorLogs: true,  adminMgmt: true,  pushLogs: true,  pushSettings: true,  opsStats: true,  create: true,  myRegs: true,  changePwd: true,  twoFactor: true,  backup: true, announce: true, guide: true, demoFlow: true }
 };
 
 function applyMenuVisibility(role) {
@@ -1626,7 +1626,8 @@ function applyMenuVisibility(role) {
         ['backupBtn', perm.backup],
         ['announcementsBtn', perm.announce],  // v2.26.0：公告中心（登入即可）
         ['opsStatsBtn', perm.opsStats],       // v3.0.0：營運儀表板（管理員以上）
-        ['guideBtn', perm.guide]              // v3.6.0：使用說明（所有人，內容依身分）
+        ['guideBtn', perm.guide],             // v3.6.0：使用說明（所有人，內容依身分）
+        ['demoFlowBtn', perm.demoFlow]        // v3.9.2：示範流程（管理員以上）
     ];
     map.forEach(([id, visible]) => {
         const el = document.getElementById(id);

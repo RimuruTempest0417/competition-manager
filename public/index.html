@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.9.1</title>
+    <title>比賽管理系統 v3.9.2</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -120,6 +120,12 @@
                         <button id="btn-error-logs"
                             class="hidden w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 transition font-medium">
                             🚨 錯誤日誌
+                        </button>
+
+                        <!-- 管理員以上專屬：示範流程（一步步手動跑「建立比賽 → 報名 → 成績 → 公布」）v3.9.2 -->
+                        <button id="demoFlowBtn"
+                            class="hidden w-full text-left px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition font-medium">
+                            🧪 示範流程
                         </button>
 
                         <!-- 管理員以上專屬：CSV 匯入 / 匯出 -->
@@ -1527,12 +1533,12 @@
         <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-90vh modal-scroll cm-modal-panel">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-slate-800">📊 賽事回顧報告</h3>
-                <button onclick="CMReview.close()" class="text-slate-400 hover:text-slate-600">✕</button>
+                <button id="reviewCloseBtn" type="button" class="text-slate-400 hover:text-slate-600">✕</button>
             </div>
             <div id="reviewBody" class="space-y-4 text-sm text-slate-700"></div>
             <div class="flex justify-end gap-2 pt-1">
-                <button id="reviewCopyBtn" onclick="CMReview.copySummary()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">📋 複製文字摘要</button>
-                <button onclick="CMReview.close()"
+                <button id="reviewCopyBtn" type="button" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">📋 複製文字摘要</button>
+                <button id="reviewCloseBtn2" type="button"
                     class="px-4 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-800 font-medium">關閉</button>
             </div>
         </div>
@@ -1544,11 +1550,27 @@
         <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-90vh modal-scroll cm-modal-panel">
             <div class="flex justify-between items-center border-b pb-3">
                 <h3 class="text-lg font-bold text-slate-800">🏆 系列賽總積分</h3>
-                <button onclick="CMReview.closeSeries()" class="text-slate-400 hover:text-slate-600">✕</button>
+                <button id="seriesCloseBtn" type="button" class="text-slate-400 hover:text-slate-600">✕</button>
             </div>
             <div id="seriesBody" class="space-y-4 text-sm text-slate-700"></div>
             <div class="flex justify-end gap-2 pt-1">
-                <button onclick="CMReview.closeSeries()"
+                <button id="seriesCloseBtn2" type="button"
+                    class="px-4 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-800 font-medium">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 彈出視窗：示範流程（v3.9.2，一步步手動執行） -->
+    <div id="demoFlowModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 space-y-4 max-h-90vh modal-scroll cm-modal-panel">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="text-lg font-bold text-slate-800">🧪 示範流程（可一步一步手動執行）</h3>
+                <button id="demoFlowCloseBtn" type="button" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div id="demoFlowBody" class="space-y-4 text-sm text-slate-700"></div>
+            <div class="flex justify-end gap-2 pt-1">
+                <button id="demoFlowCloseBtn2" type="button"
                     class="px-4 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-800 font-medium">關閉</button>
             </div>
         </div>
@@ -2044,6 +2066,7 @@
     <script src="/js/form-fields.js"></script>
     <script src="/js/registration-form.js"></script>
     <script src="/js/review.js"></script>
+    <script src="/js/demo-flow.js"></script>
     <script src="/js/app.js"></script>
 </body>
 

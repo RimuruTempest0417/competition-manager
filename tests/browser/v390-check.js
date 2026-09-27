@@ -168,6 +168,69 @@ const login = async (browser, username, password) => {
         check(dnfRow.indexOf('未完賽') >= 0 && dnfRow.indexOf('+0') >= 0,
             `★v3.9.1：未完賽那一場顯示「未完賽 +0」（不是空白或「—」）`, dnfRow.slice(0, 120));
 
+        /* ③-b ★v3.9.2：彈窗按鈕真的按得動（CSP `script-src 'self'` 會把行內 onclick 直接擋掉，
+           按鈕看起來正常、按下去完全沒反應 —— v3.9.0 就是這樣壞的） */
+        await browser.evaluate(`
+            window.__cspViolations = [];
+            document.addEventListener('securitypolicyviolation', (e) => window.__cspViolations.push(e.effectiveDirective || 'csp'));
+            return true;
+        `);
+        const closeBy = async (label, modalId, buttonId) => {
+            await browser.evaluate(`CMReview.open(703); CMReview.openSeries(700); return true;`);
+            await browser.evaluate(`document.getElementById('${modalId}').classList.remove('hidden'); return true;`);
+            await browser.evaluate(`document.getElementById('${buttonId}').click(); return true;`);
+            await new Promise((r) => setTimeout(r, 150));
+            const hidden = await browser.evaluate(`return document.getElementById('${modalId}').classList.contains('hidden')`);
+            check(hidden, `★v3.9.2：${label} 按下去真的會關掉彈窗`, `hidden=${hidden}`);
+        };
+        await closeBy('回顧報告的 ✕', 'reviewModal', 'reviewCloseBtn');
+        await closeBy('回顧報告的「關閉」', 'reviewModal', 'reviewCloseBtn2');
+        await closeBy('系列總積分的 ✕', 'seriesModal', 'seriesCloseBtn');
+        await closeBy('系列總積分的「關閉」', 'seriesModal', 'seriesCloseBtn2');
+
+        // 回顧報告內文那顆「🏆 看這個系列的總積分」是動態產生的 → 用委派監聽，也要真的能開
+        await browser.evaluate(`CMReview.open(703); return true;`);
+        await browser.waitFor(`document.querySelector('#reviewBody [data-series-root]') !== null`, { timeout: 8000 });
+        await browser.evaluate(`document.querySelector('#reviewBody [data-series-root]').click(); return true;`);
+        await browser.waitFor(`!document.getElementById('seriesModal').classList.contains('hidden')`, { timeout: 5000 });
+        const opened = await browser.evaluate(`return document.getElementById('seriesBody').innerText.slice(0, 40)`);
+        check(opened.length > 3, '★v3.9.2：回顧報告裡的「看這個系列的總積分」按得動', opened);
+        await browser.evaluate(`CMReview.closeSeries(); return true;`);
+
+        // 複製文字摘要：真的把文字送去剪貼板（樁掉 clipboard 以免無頭環境被拒）
+        const copied = await browser.evaluate(`
+            return (async () => {
+                window.__copied = null;
+                try {
+                    Object.defineProperty(navigator, 'clipboard', { configurable: true,
+                        value: { writeText: async (t) => { window.__copied = t; } } });
+                } catch (err) { /* 改不動就用真的剪貼板 */ }
+                CMReview.open(703);
+                await new Promise((r) => setTimeout(r, 600));
+                document.getElementById('reviewCopyBtn').click();
+                await new Promise((r) => setTimeout(r, 300));
+                return window.__copied ? window.__copied.slice(0, 30) : '(沒送出文字)';
+            })()
+        `);
+        check(copied.indexOf('回顧報告') >= 0, '★v3.9.2：複製文字摘要按鈕有作用', copied);
+
+        // 這一整套流程（回顧／系列／報名與欄位編輯）不應該有任何 CSP 違規：
+        // 行內 onclick 會被 script-src-attr 擋（按鈕變啞的）、行內 style 會被 style-src-attr 擋（樣式安靜失效）
+        const violations = await browser.evaluate(`return window.__cspViolations.slice(0, 5)`);
+        check(violations.length === 0, '★v3.9.2：整個流程沒有 CSP 違規（行內事件／行內 style）', JSON.stringify(violations));
+
+        // 長條圖寬度真的套用（行內 style 被擋時會變成 0 或整條）
+        const barInfo = await browser.evaluate(`
+            CMReview.openSeries(700);
+            await new Promise((r) => setTimeout(r, 600));
+            const bars = Array.from(document.querySelectorAll('#seriesBody .cm-bar-0, #seriesBody [class*="cm-bar-"]'));
+            const widths = bars.map((b) => b.getBoundingClientRect().width);
+            return { count: bars.length, widths };
+        `);
+        check(barInfo.count >= 2 && barInfo.widths[0] > barInfo.widths[barInfo.widths.length - 1],
+            '★v3.9.2：積分長條的寬度真的套用了（用類別，不是被擋掉的行內 style）', JSON.stringify(barInfo));
+        await browser.evaluate(`CMReview.closeSeries(); return true;`);
+
         /* ④ 報名彈窗：自訂欄位畫得出來、必填會擋、選項來自設定 */
         await browser.evaluate(`CMReview.closeSeries(); return true;`);
         await browser.evaluate(`openRegisterModal(700); return true;`);

@@ -1511,3 +1511,20 @@ input[type="week"] {
     border-radius: 0.75rem;
     transition: box-shadow 0.3s ease;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   v3.9.2：系列總積分長條圖的寬度
+   ══════════════════════════════════════════════════════════════
+   CSP 是 style-src 'self'，**行內 style 屬性會被瀏覽器擋掉**（實測 securitypolicyviolation
+   回報 style-src-attr）—— 長條圖用 style="width:63%" 的話寬度根本不會套用。寬度一律用類別。 */
+.cm-bar-0 { width: 0; }
+.cm-bar-1 { width: 10%; }
+.cm-bar-2 { width: 20%; }
+.cm-bar-3 { width: 30%; }
+.cm-bar-4 { width: 40%; }
+.cm-bar-5 { width: 50%; }
+.cm-bar-6 { width: 60%; }
+.cm-bar-7 { width: 70%; }
+.cm-bar-8 { width: 80%; }
+.cm-bar-9 { width: 90%; }
+.cm-bar-10 { width: 100%; }

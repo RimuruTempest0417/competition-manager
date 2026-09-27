@@ -110,7 +110,9 @@
         }
 
         if (data.series_root_id) {
-            bits.push(`<button onclick="CMReview.openSeries(${Number(data.series_root_id)})"
+            // v3.9.2：CSP 是 script-src 'self'，行內 onclick 會被瀏覽器直接擋掉（按了沒反應）
+            // → 改用 data 屬性 ＋ 由下方委派監聽處理
+            bits.push(`<button type="button" data-series-root="${Number(data.series_root_id)}"
                 class="text-xs text-blue-700 underline">🏆 看這個系列的總積分</button>`);
         }
 
@@ -171,9 +173,10 @@
 
     /* ---------- 系列賽總積分 ---------- */
     function bar(points, max) {
-        const pct = max > 0 ? Math.max(2, Math.round((points / max) * 100)) : 0;
+        // 寬度用類別（CSP 的 style-src 'self' 會擋掉行內 style 屬性，行內 % 不會生效）
+        const step = max > 0 ? Math.max(1, Math.min(10, Math.round((points / max) * 10))) : 0;
         return `<div class="h-2 bg-slate-100 rounded-full overflow-hidden">
-            <div class="h-2 bg-blue-500" style="width:${pct}%"></div></div>`;
+            <div class="h-2 bg-blue-500 cm-bar-${step}"></div></div>`;
     }
 
     function renderSeries(host, data) {
@@ -245,8 +248,33 @@
         show('seriesModal', false);
     }
 
+    /* 綁定按鈕：一律用 addEventListener（CSP 的 script-src 'self' 會擋掉行內 onclick） */
+    function bind() {
+        const on = (id, fn) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('click', fn);
+        };
+        on('reviewCloseBtn', close);
+        on('reviewCloseBtn2', close);
+        on('seriesCloseBtn', closeSeries);
+        on('seriesCloseBtn2', closeSeries);
+        on('reviewCopyBtn', copySummary);
+
+        // 動態產生的按鈕用委派（回顧報告內文每次都會重畫）
+        const body = document.getElementById('reviewBody');
+        if (body) {
+            body.addEventListener('click', (ev) => {
+                const hit = ev.target && ev.target.closest ? ev.target.closest('[data-series-root]') : null;
+                if (hit) openSeries(hit.getAttribute('data-series-root'));
+            });
+        }
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+    else bind();
+
     root.CMReview = {
-        open, close, openSeries, closeSeries, copySummary, summaryText,
+        open, close, openSeries, closeSeries, copySummary, summaryText, _bind: bind,
         _renderReview: renderReview, _renderSeries: renderSeries, _donut: donut
     };
 }(typeof self !== 'undefined' ? self : this));

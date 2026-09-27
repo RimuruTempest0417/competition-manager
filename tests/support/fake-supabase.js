@@ -201,7 +201,10 @@ function startFakeSupabase(state, options = {}) {
                         // 唯一鍵檢查
                         for (const uk of uniqueKeys) {
                             if (uk.table !== table) continue;
-                            const clash = rows.some((r) => uk.columns.every((c) => String(r[c]) === String(item[c]))
+                            // 真正 Postgres 的唯一索引：**NULL 彼此不相等**，所以現場代報名（user_id 為 null）
+                            // 不會因為別人也是 null 而衝突。少了這個判斷，第二位現場報名者會被誤判成 23505。
+                            const hasValue = (v) => v !== null && v !== undefined;
+                            const clash = rows.some((r) => uk.columns.every((c) => hasValue(r[c]) && hasValue(item[c]) && String(r[c]) === String(item[c]))
                                 && (!uk.onlyActive || r.is_deleted === false));
                             if (clash) {
                                 return send(409, { code: '23505', message: 'duplicate key value violates unique constraint' });
