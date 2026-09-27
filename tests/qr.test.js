@@ -227,6 +227,50 @@ test('v3.6.5 QR 產生器：macOS Vision 解得出來', (t) => {
     }
 });
 
+/* ---------- ④ ★正式站等級的分享連結長網址（v3.8.2 修）---------- */
+test('★分享連結的長網址：等級 L 要掃得到、預設等級 M 要明確丟錯', (t) => {
+    // 實際災情：海報 QR 沒指定等級 → 用預設 M → 正式站網址 49 bytes > M 的 42 → 白框又掃不到
+    const prodUrl = 'https://competition-manager-hazel.vercel.app/#c50';
+    assert.throws(() => CMQr.encode(prodUrl), /內容太長/,
+        '★預設等級 M 塞不下長網址就必須明確丟錯（絕不可靜默產生掃不到的碼）');
+
+    const cases = [
+        [prodUrl, 3, '正式站（49 bytes）'],
+        ['https://registration.macaumusicassociation.com/#c1234', 3, '一般自有網域（53 bytes）'],
+        ['https://a-very-long-custom-domain-for-tests.example.org/#c9876', 4, '超長網域（62 bytes → v4-L）']
+    ];
+    const swiftc = (() => {
+        try { return execFileSync('xcrun', ['--find', 'swiftc'], { encoding: 'utf8' }).trim(); } catch (err) { return null; }
+    })();
+    if (!swiftc) t.diagnostic('沒有 swiftc，略過系統解碼（版本與容量仍已驗證）');
+
+    for (const [url, expectVersion, label] of cases) {
+        const { matrix, version } = CMQr.encode(url, { level: 'L' });
+        assert.strictEqual(version, expectVersion, `${label} 要用版本 ${expectVersion}`);
+        if (!swiftc) continue;
+        const png = path.join(os.tmpdir(), `cm-qr-share-${Date.now()}.png`);
+        fs.writeFileSync(png, pngFromMatrix(matrix));
+        try {
+            const out = execFileSync('swift', [path.join(ROOT, 'scripts', 'qr-decode.swift'), png], {
+                encoding: 'utf8', timeout: 180000
+            }).trim();
+            assert.strictEqual(out, url, `★${label} 的分享 QR 一定要掃得出來`);
+        } finally {
+            fs.rmSync(png, { force: true });   // 驗證完就刪，不留任何圖檔
+        }
+    }
+});
+
+test('★海報 QR 的呼叫必須指定等級 L（沒帶就會退回預設 M）', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+    const calls = src.match(/CMQr\.encode\(url[^)]*\)/g) || [];
+    assert.ok(calls.length > 0, '找不到海報 QR 的編碼呼叫（函式改名了嗎？）');
+    for (const call of calls) {
+        assert.ok(/level:\s*'L'/.test(call),
+            `★海報 QR 一定要指定等級 L，否則正式站網址塞不下（實際：${call}）`);
+    }
+});
+
 /* ---------- 邊界與 SVG ---------- */
 test('v3.6.5 QR 產生器：容量上限與 SVG 輸出', () => {
     assert.strictEqual(CMQr.capacity(1), 14, 'v1-M 可放 14 bytes');

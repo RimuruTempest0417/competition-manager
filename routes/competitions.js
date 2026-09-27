@@ -9,7 +9,8 @@ const CMPaging = require('../public/js/paging');                  // v3.0.0：�
 const CMVenue = require('../public/js/venue');                    // v2.27.0：地圖連結規則的唯一真實來源
 
 module.exports = function registerCompetitionsRoutes(app, ctx) {
-    const { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, cleanText, fetchCompetition, logPushEvent, notifyUser, scheduleSchemaReady, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady } = ctx;
+    const { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, cleanText, fetchCompetition, logPushEvent, notifyUser, scheduleSchemaReady, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady, allowPublicWrite, shareVisitsSchemaReady, shareSourceSchemaReady, SHARE_SOURCE_HINT } = ctx;
+    // v3.8.2：分享來源追蹤（訪客瀏覽記錄與後台成效統計）
 app.get('/api/competitions', async (req, res) => {
     try {
         // v3.0.0：分頁是 opt-in（沒帶 limit 就維持原本「一次回全部」）。
@@ -162,6 +163,66 @@ app.get('/api/competitions', async (req, res) => {
 });
 
 // 讀取回收桶 Handler (改用 'id' 排序，避免 deleted_at 欄位不存在報錯)
+/* v3.8.2：分享連結被打開時記錄一次瀏覽（未登入可寫 → 必須節流＋來源白名單）
+   ★不用 jsonb 計數器：讀-改-寫在 serverless 多實例下會掉數字，改成一列一次的 share_visits。 */
+const SHARE_STATS_MAX = 5000;
+
+app.post('/api/competitions/:id/share-visit', async (req, res) => {
+    if (!allowPublicWrite(req.ip, 'share-visit', 60, 60000)) {
+        return res.status(429).json({ error: '記錄過於頻繁，請稍後再試' });
+    }
+    try {
+        const source = CMCompetitionState.parseShareSource((req.body || {}).source);
+        if (!source) return res.status(400).json({ error: '來源不在允許的清單內' });
+        const comp = await fetchCompetition(req.params.id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+        if (!(await shareVisitsSchemaReady())) {
+            return res.status(202).json({ recorded: false, reason: SHARE_SOURCE_HINT });
+        }
+        const { error } = await supabase.from('share_visits').insert([{ competition_id: comp.id, source }]);
+        if (error) throw error;
+        res.json({ recorded: true, source, label: CMCompetitionState.shareSourceLabel(source) });
+    } catch (err) {
+        await logErrorToDb(req, 'share_visit_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* v3.8.2：分享成效（後台）—— 每個來源帶來幾次瀏覽、幾筆報名 */
+app.get('/api/competitions/:id/share-stats', requireAdmin, async (req, res) => {
+    try {
+        const comp = await fetchCompetition(req.params.id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const visitsReady = await shareVisitsSchemaReady();
+        let visits = [];
+        if (visitsReady) {
+            const { data, error } = await supabase.from('share_visits').select('source, created_at')
+                .eq('competition_id', comp.id).order('created_at', { ascending: false }).limit(SHARE_STATS_MAX);
+            if (error) throw error;
+            visits = data || [];
+        }
+
+        // 沒執行 migration 時 source 欄位不存在 → 退回只算總數，不要讓整個請求失敗
+        const sourceReady = await shareSourceSchemaReady();
+        const columns = sourceReady ? 'source, status' : 'status';
+        const { data: regs, error: regErr } = await supabase.from('registrations').select(columns)
+            .eq('competition_id', comp.id).eq('is_deleted', false).limit(SHARE_STATS_MAX);
+        if (regErr) throw regErr;
+
+        res.json({
+            competition_id: comp.id,
+            rows: CMCompetitionState.shareStatsSummary(visits, regs || []),
+            visits_total: visits.length,
+            signups_total: (regs || []).length,
+            tracking_ready: visitsReady && sourceReady
+        });
+    } catch (err) {
+        await logErrorToDb(req, 'share_stats_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/competitions/trash', requireAdmin, getTrashCompetitionsHandler);
 app.get('/api/competitions/deleted', requireAdmin, getTrashCompetitionsHandler);
 

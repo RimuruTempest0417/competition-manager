@@ -39,7 +39,8 @@ function seedState() {
     return {
         tables: {
             admin_users: [
-                { id: 60, username: PLAYER, password: PLAYER_PASS, role: 'user', is_active: true }
+                { id: 60, username: PLAYER, password: PLAYER_PASS, role: 'user', is_active: true },
+                { id: 61, username: 'owner-share', password: 'ownerpass123', role: 'web_owner', is_active: true }
             ],
             competitions: [
                 { id: COMP_ID, name: COMP_NAME, date: '2026-12-24', time: '10:00', end_date: '2026-12-24', end_time: '17:00',
@@ -50,6 +51,7 @@ function seedState() {
                   requires_approval: false, waitlist_enabled: true, tags: [], created_at: '2026-01-01T00:00:00.000Z',
                   poster_updated_at: '2026-09-27T10:00:00.000Z' }
             ],
+            share_visits: [],   // v3.8.2：分享連結的開啟紀錄
             registrations: [
                 // FULL_ID 這一場：名額 2、已報 2 → 額滿；開放候補
                 { id: 971, competition_id: FULL_ID, username: 'full-a', status: 'confirmed', is_deleted: false, created_at: '2026-09-01T00:00:00.000Z' },
@@ -73,6 +75,9 @@ const STUB_DIALOGS = `
     window.confirm = () => true;
     return true;
 `;
+
+// v3.8.2：登出＝叫登出端點（cookie 是 HttpOnly，清 localStorage 不夠）＋重新載入
+const logout = () => `await customFetch('/api/auth/logout', { method: 'POST' }).catch(() => {}); try { localStorage.clear(); } catch (e) { /* 忽略 */ } location.reload(); return true;`;
 
 const login = async (browser, username, password) => {
     await browser.waitFor(`document.getElementById('submitLoginBtn') !== null`, { timeout: 10000 });
@@ -122,11 +127,13 @@ const login = async (browser, username, password) => {
         await browser.evaluate(`document.querySelector('button[data-action="share-link"][data-id="${COMP_ID}"]').click(); return true;`);
         await browser.waitFor(`!document.getElementById('shareModal').classList.contains('hidden')`, { timeout: 8000 });
 
+        // v3.8.2：彈窗裡的 QR 用的是「帶來源」的連結（~qr），格子數要跟同一條比
+        const QR_URL = `${BASE}/#c${COMP_ID}~qr`;
         const info = JSON.parse(await browser.evaluate(`
             const modal = document.getElementById('shareModal');
             const svg = document.querySelector('#shareQrBox svg');
             const input = document.getElementById('shareLinkInput');
-            const expect = CMQr.encode(input.value, { level: 'L' });
+            const expect = CMQr.encode(${JSON.stringify(QR_URL)}, { level: 'L' });
             const expectedRects = expect.matrix.flat().filter(Boolean).length;
             return JSON.stringify({
                 label: (document.getElementById('shareComp') || {}).innerText || '',
@@ -142,7 +149,8 @@ const login = async (browser, username, password) => {
             });
         `));
 
-        check(info.link === `${BASE}/#c${COMP_ID}`, `連結是賽事的深連結（${info.link}）`);
+        check(info.link === `${BASE}/#c${COMP_ID}~link`,
+            `連結是賽事的深連結且帶來源（v3.8.2：${info.link}）`);
         check(info.readOnly, '連結欄位是唯讀的（避免誤改後複製到錯的連結）');
         check(/分享盃/.test(info.label), `彈窗標題帶出賽事名稱（${info.label}）`);
         check(info.svg === true, '彈窗裡真的畫出一張 QR（SVG）');
@@ -247,12 +255,29 @@ const login = async (browser, username, password) => {
                 const decoded = execFileSync('swift',
                     [path.join(__dirname, '..', '..', 'scripts', 'qr-decode.swift'), '-'],
                     { encoding: 'utf8', input: dataUrl }).trim();
-                const expected = `http://127.0.0.1:${PORT}/#c${COMP_ID}`;
+                const expected = `http://127.0.0.1:${PORT}/#c${COMP_ID}~poster`;   // v3.8.2：海報 QR 帶來源標記
                 check(decoded === expected,
                     `★海報右下角的 QR 掃出來就是分享連結（獨立解碼器解到「${decoded}」）`);
             } catch (err) {
                 check(false, '★海報 QR 必須能被獨立解碼器解出', String(err.message).slice(0, 140));
             }
+        }
+
+        /* ── v3.8.2：正式站等級的長網址（49 bytes）在頁面上也要編得出來 ── */
+        {
+            const probe = JSON.parse(await browser.evaluate(`
+                const out = {};
+                const longUrl = 'https://competition-manager-hazel.vercel.app/#c50';
+                try { out.longV = CMQr.encode(longUrl, { level: 'L' }).version; }
+                catch (e) { out.longV = 'ERR:' + e.message; }
+                try { CMQr.encode(longUrl); out.mDefault = 'ok'; }
+                catch (e) { out.mDefault = 'throw'; }
+                out.capacityL = CMQr.capacity(4, 'L');
+                return JSON.stringify(out);
+            `));
+            check(probe.longV === 3, `★正式站長度的分享網址在頁面上也編得出來（v${probe.longV}）`);
+            check(probe.mDefault === 'throw', '預設等級 M 對長網址會明確丟錯（不會產生掃不到的碼）');
+            check(probe.capacityL === 78, `等級 L 支援到版本 4（可放 ${probe.capacityL} bytes）`);
         }
 
         /* ── v3.8.1①：上傳自訂海報的賽事，海報也要帶 QR（預覽＝下載＝印出來的樣子） ── */
@@ -283,7 +308,7 @@ const login = async (browser, username, password) => {
                 const decoded = execFileSync('swift',
                     [path.join(__dirname, '..', '..', 'scripts', 'qr-decode.swift'), '-'],
                     { encoding: 'utf8', input: dataUrl }).trim();
-                check(decoded === `http://127.0.0.1:${PORT}/#c${FULL_ID}`,
+                check(decoded === `http://127.0.0.1:${PORT}/#c${FULL_ID}~poster`,
                     `★上傳海報上的 QR 掃出來就是分享連結（獨立解碼器解到「${decoded}」）`);
             } catch (err) {
                 check(false, '★上傳海報的 QR 必須能被獨立解碼器解出', String(err.message).slice(0, 140));
@@ -310,6 +335,72 @@ const login = async (browser, username, password) => {
             const shown = modalText.replace(/\n+/g, ' ⏎ ').slice(0, 80);
             check(/名額已滿|額滿/.test(modalText), `報名視窗說明目前名額已滿（「${shown}」）`);
             check(/候補/.test(modalText), '★並引導送出後會排入候補（不是只說不能報名）');
+        }
+
+        /* ── v3.8.2：分享連結要帶來源標記（否則後台分不出是誰帶來的）── */
+        {
+            const urls = JSON.parse(await browser.evaluate(`
+                return JSON.stringify({
+                    link: buildShareUrl(${COMP_ID}, 'link'),
+                    qr: buildShareUrl(${COMP_ID}, 'qr'),
+                    poster: posterQrPayload({ id: ${COMP_ID} }),
+                    text: buildShareUrl(${COMP_ID}, 'text'),
+                    bare: buildShareUrl(${COMP_ID})
+                });
+            `));
+            check(/#c\d+~link$/.test(urls.link), `複製的連結帶來源標記（${urls.link}）`);
+            check(/#c\d+~qr$/.test(urls.qr), '分享視窗的 QR 帶來源標記');
+            check(/#c\d+~poster$/.test(urls.poster), '★列印海報上的 QR 帶來源標記（海報帶來的報名才算得到海報頭上）');
+            check(/#c\d+~text$/.test(urls.text), '群組文案帶來源標記');
+            check(!/~/.test(urls.bare), '沒有指定來源時維持舊格式 #c50（已經印出去的舊連結不會壞）');
+        }
+
+        /* ── v3.8.2：從分享連結進站會記一次瀏覽，後台成效端點讀得回來（端到端）── */
+        await login(browser, 'owner-share', 'ownerpass123');
+        {
+            await browser.evaluate(`
+                try { window.sessionStorage.removeItem('cm_share_visit_done'); } catch (e) { /* 忽略 */ }
+                window.location.hash = '#c${COMP_ID}~poster';
+                return true;
+            `);
+            await browser.evaluate(`window.dispatchEvent(new Event('hashchange')); return true;`);
+
+            let stats = null;
+            for (let i = 0; i < 8 && !stats; i += 1) {
+                const raw = await browser.evaluate(`
+                    const res = await customFetch('/api/competitions/${COMP_ID}/share-stats');
+                    return JSON.stringify(res.ok ? await res.json() : {});
+                `);
+                const parsed = JSON.parse(raw);
+                if ((parsed.rows || []).some((r) => r.source === 'poster' && r.visits >= 1)) stats = parsed;
+                else await new Promise((resolve) => { setTimeout(resolve, 1000); });
+            }
+            check(!!stats, '★掃海報 QR 近來的那一次瀏覽有被記錄（後台成效讀得回來）');
+            if (stats) {
+                const posterRow = (stats.rows || []).find((r) => r.source === 'poster');
+                check(posterRow && posterRow.label === '列印海報的 QR', `來源標籤在後台是看得懂的中文（${posterRow && posterRow.label}）`);
+            }
+
+            // 後台看得到「📈 分享成效」按鈕，而且彈窗畫得出表格
+            const btn = await browser.evaluate(`
+                const b = document.querySelector('button[data-action="share-stats"][data-id="${COMP_ID}"]');
+                if (b) b.click();
+                return !!b;
+            `);
+            check(btn === true, '管理員在賽事卡片上看到「📈 分享成效」');
+            await browser.waitFor(`!document.getElementById('shareStatsModal').classList.contains('hidden')`, { timeout: 8000 });
+            await browser.waitFor(`!/載入中/.test(document.getElementById('shareStatsBody').innerText)`, { timeout: 8000 });
+            await browser.waitFor(`/列印海報的 QR/.test(document.getElementById('shareStatsBody').innerText)`, { timeout: 8000 });
+            const body = String(await browser.evaluate(`return document.getElementById('shareStatsBody').innerText;`));
+            check(/列印海報的 QR/.test(body) && /開啟/.test(body), `成效彈窗列出各來源的開啟與報名（「${body.replace(/\n/g, '⏎').slice(0, 60)}」)`);
+        }
+
+        /* ── v3.8.2：一般使用者看不到分享成效（只有管理員能看）── */
+        {
+            await browser.evaluate(logout());
+            await browser.waitFor(`!currentUser`, { timeout: 8000 });
+            await browser.waitFor(`!document.querySelector('button[data-action="share-stats"]')`, { timeout: 8000 });
+            check(true, '登出後「📈 分享成效」按鈕不再出現');
         }
 
         exitCode = fail === 0 ? 0 : 1;

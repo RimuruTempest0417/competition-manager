@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.8.1</title>
+    <title>比賽管理系統 v3.8.2</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -1235,6 +1235,18 @@
 
     <!-- 彈出視窗：公告中心（v2.26.0：站內公告／訊息中心） -->
     <!-- 營運儀表板（v3.0.0，管理員以上）：只顯示聚合數字，不含任何個資 -->
+    <!-- v3.8.2：分享成效（哪種分享方式真的帶來人） -->
+    <div id="shareStatsModal"
+        class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 cm-modal-panel">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 id="shareStatsTitle" class="text-lg font-bold text-slate-800">📈 分享成效</h3>
+                <button id="closeShareStatsBtn" class="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div id="shareStatsBody" class="text-sm"></div>
+        </div>
+    </div>
+
     <div id="opsStatsModal"
         class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 space-y-4 cm-modal-panel flex flex-col max-h-90vh modal-scroll">

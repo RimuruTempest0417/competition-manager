@@ -6,7 +6,9 @@
  * 刻意只做「夠用」的範圍（寧可小但要正確）：
  *   - byte mode（UTF-8）＋ 錯誤修正等級 M（約 15% 容錯，現場手機螢幕反光仍掃得到）
  *   - 版本 1／2／3：都是**單一 RS 區塊**，不需要交錯（interleaving），程式碼少一半、錯誤也少一半
- *   - 內容長度上限：v1-M 14 bytes、v2-M 26 bytes、v3-M 42 bytes（超過就丟錯，不靜默產生壞碼）
+ *   - 內容長度上限：等級 M＝v1 14／v2 26／v3 42 bytes；等級 L＝v1 17／v2 32／v3 53／v4 78 bytes
+ *     ★分享連結（正式站網址約 47–53 bytes）一定要用等級 L；用預設 M 會丟錯或（若亂加 v4-M）產生掃不到的碼。
+ *     超過容量一律丟錯，不靜默產生壞碼。
  *   - 不做版本資訊區塊（那是版本 7 以上才要）
  *
  * 產出是 SVG 字串（純文字、可放進 DOM、可列印、可被 <img> 或直接貼進 HTML）；
@@ -31,7 +33,11 @@
     const VERSIONS = {
         1: { total: 26, data: 16, ecc: 10, align: [] },
         2: { total: 44, data: 28, ecc: 16, align: [6, 18] },
-        3: { total: 70, data: 44, ecc: 26, align: [6, 22] }
+        3: { total: 70, data: 44, ecc: 26, align: [6, 22] },
+        // ⚠️ 這裡刻意沒有版本 4：v4-M 需要「雙區塊」交錯（36 個 EC 碼字拆成 2×18），
+        // 這個產生器只做單區塊 → 硬加會畫出掃不到的碼（已用 macOS Vision 實測證實；
+        // 若把 L 的數字（data 80／ecc 20）誤放進來，格式資訊位元說 M、內容卻是 L → 同樣掃不到）。
+        // 長網址一律走等級 L（v4-L 是單區塊，已驗證可掃）。
     };
 
     /* 等級 L（容錯較低、容量較大）：v3.7.0 起供「賽事分享連結 QR」使用——網址比報到碼長很多，
@@ -39,7 +45,8 @@
     const VERSIONS_L = {
         1: { total: 26, data: 19, ecc: 7, align: [] },
         2: { total: 44, data: 34, ecc: 10, align: [6, 18] },
-        3: { total: 70, data: 55, ecc: 15, align: [6, 22] }
+        3: { total: 70, data: 55, ecc: 15, align: [6, 22] },
+        4: { total: 100, data: 80, ecc: 20, align: [6, 26] }
     };
     const LEVEL_BITS = { L: 0b01, M: 0b00 };
     function versionTable(level) {
@@ -354,13 +361,14 @@
         const level = opts.level === 'L' ? 'L' : 'M';
         const tbl = versionTable(level);
         const bytes = utf8Bytes(text);
-        for (const version of [1, 2, 3]) {
+        for (const version of Object.keys(tbl).map(Number)) {   // 只走該等級真的支援的版本（M 只到 3、L 到 4）
             if (bytes.length <= tbl[version].data - 2) {   // 扣掉模式(4bit)與長度(8bit)後仍塞得下
                 const built = buildMatrix(bytes, version, level);
                 if (built) return built;
             }
         }
-        throw new Error(`內容太長（${bytes.length} bytes）：這個產生器支援到版本 3（等級 ${level} 最多 ${tbl[3].data - 2} bytes）`);
+        const maxV = Math.max(...Object.keys(tbl).map(Number));
+            throw new Error(`內容太長（${bytes.length} bytes）：這個產生器支援到版本 ${maxV}（等級 ${level} 最多 ${tbl[maxV].data - 2} bytes）`);
     }
 
     function svg(text, options) {

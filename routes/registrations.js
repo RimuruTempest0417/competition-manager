@@ -11,7 +11,8 @@ const { hashPassword, verifyPassword, needsPasswordUpgrade } = require('../lib/p
 // v2.15.0：兩步驟驗證（TOTP）—— 純手寫實作，只用 Node 內建 crypto，無外部套件
 
 module.exports = function registerRegistrationsRoutes(app, ctx) {
-    const { ATTENDANCE_HINT, CHECKIN_HINT, ADMIN_ROLES, setAuthCookie, clearAuthCookie, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, attendanceSchemaReady, checkinSchemaReady, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady } = ctx;
+    const { ATTENDANCE_HINT, CHECKIN_HINT, ADMIN_ROLES, setAuthCookie, clearAuthCookie, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, attendanceSchemaReady, checkinSchemaReady, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady, shareSourceSchemaReady, promotedAtSchemaReady, SHARE_SOURCE_HINT } = ctx;
+    // v3.8.2：分享來源追蹤所需的探針（由 server.js 提供）
 app.get('/api/registration-counts', async (req, res) => {
     try {
         // v2.20.0：公開端點只回「佔名額的人數」與「候補人數」這種聚合數字，不含任何個人資訊
@@ -218,6 +219,10 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
         if (exErr) throw exErr;
         if (existing) return res.status(409).json({ error: '你已經報名過此賽事了' });
 
+        // v3.8.2：這筆報名是從哪個分享來源進來的（海報 QR／分享 QR／複製連結／群組文案）
+        const shareSource = CMCompetitionState.parseShareSource(body.source);
+        const sourceReady = shareSource ? await shareSourceSchemaReady() : false;
+
         const teamName = cleanText(body.team_name, 40);
         if (comp.is_team_event && !teamName) {
             return res.status(400).json({ error: '此為組隊比賽，請填寫隊伍名稱' });
@@ -231,25 +236,26 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
             : { status: 'confirmed', waitlist_position: null, reason: '' };
         if (!decision.status) return res.status(400).json({ error: decision.reason });
 
-        const { data, error } = await supabase
-            .from('registrations')
-            .insert([{
-                competition_id: comp.id,
-                user_id: operator.sub,
-                username: operator.username,
-                team_name: teamName || null,
-                note: cleanText(body.note, 200) || null,
-                status: decision.status,
-                is_deleted: false,
-                created_at: new Date().toISOString()
-            }])
-            .select();
+        const insertRow = {
+            competition_id: comp.id,
+            user_id: operator.sub,
+            username: operator.username,
+            team_name: teamName || null,
+            note: cleanText(body.note, 200) || null,
+            status: decision.status,
+            is_deleted: false,
+            created_at: new Date().toISOString()
+        };
+        if (sourceReady) insertRow.source = shareSource;   // 沒執行 migration 就整欄不帶，網站照常運作
+
+        const { data, error } = await supabase.from('registrations').insert([insertRow]).select();
         if (error) throw error;
 
         const statusNote = decision.status === 'pending' ? '（待審核）'
             : decision.status === 'waitlisted' ? `（候補第 ${decision.waitlist_position} 位）` : '';
         await logAudit(operator.username, 'REGISTER_COMPETITION', comp.id,
-            `報名賽事: ${comp.name}${teamName ? '（隊伍：' + teamName + '）' : ''}${statusNote}`, req.userAgent);
+            `報名賽事: ${comp.name}${teamName ? '（隊伍：' + teamName + '）' : ''}${statusNote}`
+            + (sourceReady ? `｜來源：${CMCompetitionState.shareSourceLabel(shareSource)}` : ''), req.userAgent);
 
         const message = decision.status === 'pending' ? '已送出報名，等待主辦單位審核'
             : decision.status === 'waitlisted' ? `已排入候補（第 ${decision.waitlist_position} 位）`
@@ -260,6 +266,7 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
             status: decision.status,
             status_label: CMCompetitionState.REG_STATUS_LABELS[decision.status],
             waitlist_position: decision.waitlist_position,
+            source: sourceReady ? shareSource : null,
             needs_approval: decision.status === 'pending',
             registration: data[0],
             registrations: counts.slots + (decision.status === 'waitlisted' ? 0 : 1)
@@ -384,6 +391,8 @@ app.post('/api/competitions/:id/registrations/promote', authenticateToken, async
             reviewed_by: req.user.username,
             review_note: '候補遞補'
         };
+        // v3.8.2：遞補成立的時間（讓沒開推播的人也看得到「你已遞補上」）
+        if (await promotedAtSchemaReady()) patchFields.promoted_at = new Date().toISOString();
         const { error: updErr } = await supabase.from('registrations').update(patchFields).eq('id', next.id);
         if (updErr) throw updErr;
 
@@ -453,6 +462,8 @@ app.post('/api/registrations/:id/promote', authenticateToken, async (req, res) =
             reviewed_by: req.user.username,
             review_note: `指定遞補（原第 ${plan.position} 順位）`
         };
+        // v3.8.2：遞補成立的時間（讓沒開推播的人也看得到「你已遞補上」）
+        if (await promotedAtSchemaReady()) patchFields.promoted_at = new Date().toISOString();
         const { error: updErr } = await supabase.from('registrations').update(patchFields).eq('id', reg.id);
         if (updErr) throw updErr;
 
@@ -692,6 +703,8 @@ app.delete('/api/registrations/:id', authenticateToken, async (req, res) => {
                             reviewed_by: req.user.username,
                             review_note: '候補自動遞補'
                         };
+                        // v3.8.2：遞補成立的時間（讓沒開推播的人也看得到「你已遞補上」）
+                        if (await promotedAtSchemaReady()) patchFields.promoted_at = new Date().toISOString();
                         const { error: pErr } = await supabase.from('registrations').update(patchFields).eq('id', next.id);
                         if (pErr) throw pErr;
 

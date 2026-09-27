@@ -477,11 +477,57 @@
         return { open: !!st.can_register, reason: st.can_register ? '' : st.reason };
     }
 
+    /* ---------- v3.8.2：分享來源追蹤 ----------
+       為什麼放共用檔：分享連結由前端組（`#c50~poster`），來源名稱要顯示在後台，
+       前後端各寫一份清單遲早會漏字。這裡是唯一真實來源。 */
+    const SHARE_SOURCES = ['poster', 'qr', 'link', 'text'];
+    const SHARE_SOURCE_LABELS = {
+        poster: '列印海報的 QR',
+        qr: '分享視窗的 QR',
+        link: '複製的連結',
+        text: '群組文案',
+        direct: '直接進入（沒有來源標記）'
+    };
+
+    /* 只接受白名單內的來源，其餘一律當成「沒有來源」（不讓任意字串進資料庫或稽核） */
+    function parseShareSource(raw) {
+        const value = String(raw === undefined || raw === null ? '' : raw).trim().toLowerCase();
+        return SHARE_SOURCES.indexOf(value) >= 0 ? value : '';
+    }
+
+    function shareSourceLabel(source) {
+        const key = parseShareSource(source);
+        return SHARE_SOURCE_LABELS[key || String(source || '')] || '其他來源';
+    }
+
+    /* 深連結：'#c50'／'#c50~poster' → { id, source }；不是賽事深連結就回 null */
+    function parseDeepLink(hash) {
+        const match = /^#c(\d+)(?:~([A-Za-z0-9_-]{1,16}))?$/.exec(String(hash === undefined || hash === null ? '' : hash));
+        if (!match) return null;
+        return { id: Number(match[1]), source: parseShareSource(match[2]) };
+    }
+
+    /* 把「瀏覽紀錄」與「報名紀錄」合成後台要看的表：每個來源帶來幾次瀏覽、幾筆報名 */
+    function shareStatsSummary(visitRows, regRows) {
+        const bucket = {};
+        const touch = (source) => {
+            const key = parseShareSource(source) || 'direct';
+            if (!bucket[key]) bucket[key] = { source: key, label: shareSourceLabel(key), visits: 0, signups: 0 };
+            return bucket[key];
+        };
+        (Array.isArray(visitRows) ? visitRows : []).forEach((row) => { touch(row && row.source).visits += 1; });
+        (Array.isArray(regRows) ? regRows : []).forEach((row) => { touch(row && row.source).signups += 1; });
+        return Object.keys(bucket).map((key) => bucket[key])
+            .sort((a, b) => (b.signups - a.signups) || (b.visits - a.visits));
+    }
+
     return {
         LABELS, TONES, evaluate, registrationState, timeline, parseTimestamp, parseLocalDateTime, fmtDate, fmtDateTime,
         competitionNotice,
         // v2.20.0：報名審核與候補
         REG_STATUS_LABELS, REG_STATUS_TONES, countByStatus, normalizeRegStatus, reviewFlags,
+        // v3.8.2：分享來源追蹤
+        SHARE_SOURCES, SHARE_SOURCE_LABELS, parseShareSource, shareSourceLabel, parseDeepLink, shareStatsSummary,
         decideRegistration, waitlistQueue, nextWaitlist, promotionStatus,
         // v2.21.0：指定遞補與候補順位手動調整
         waitlistPosition, planWaitlistOrder, planPromotion, waitlistOrderNum,

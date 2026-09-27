@@ -533,14 +533,15 @@ function drawPosterQr(ctx, item, options) {
     const guide = shareStateGuide(item);
     const url = posterQrPayload(item);
 
-    canvasRoundRect(ctx, x, y, box, box, Math.round(box * 0.1));
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
+    if (url && typeof CMQr !== 'undefined' && typeof CMQr.encode !== 'function') url = '';
+    const canTry = !!url;
 
     let ok = false;
-    if (url && typeof CMQr !== 'undefined' && typeof CMQr.encode === 'function') {
+    if (canTry) {
         try {
-            const code = CMQr.encode(url);
+            // 一定要指定等級 L：正式站網址約 49 bytes，預設的 M 只能放 42 bytes，
+            // 會整張掃不到還只留一個空白白框（v3.8.1 的實際災情）。
+            const code = CMQr.encode(url, { level: 'L' });
             const n = code.matrix.length;
             const cell = Math.floor((box - pad * 2) / n);
             const offset = (box - cell * n) / 2;
@@ -555,7 +556,13 @@ function drawPosterQr(ctx, item, options) {
             ok = true;
         } catch (err) {
             ok = false;
+            // eslint-disable-next-line no-console
+            console.warn('海報 QR 產生失敗，改印文字說明', err && err.message);
         }
+    }
+    if (ok) {                       // ★只有真的畫出 QR 才鋪白色底卡，否則紙上會是一個空白方塊
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
     }
 
     const caption = ok ? guide.caption : '📷 請點分享連結報名';
@@ -1034,6 +1041,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     initResultsUi();   // v3.1.0：成績表與成績登錄
     bindPrintModalEvents();   // v3.2.0：列印版
     document.getElementById('closeOpsStatsBtn')?.addEventListener('click', closeOpsStatsModal);
+    // v3.8.2：分享成效彈窗（點背景或 ✕ 都可以關）
+    document.getElementById('closeShareStatsBtn')?.addEventListener('click', () => {
+        document.getElementById('shareStatsModal')?.classList.add('hidden');
+    });
+    document.getElementById('shareStatsModal')?.addEventListener('click', (e) => {
+        if (e.target && e.target.id === 'shareStatsModal') e.target.classList.add('hidden');
+    });
     document.getElementById('opsStatsRefreshBtn')?.addEventListener('click', () => loadOpsStats(true));
     document.getElementById('opsStatsRange')?.addEventListener('click', (event) => {
         const btn = event.target.closest('[data-ops-days]');
@@ -1408,7 +1422,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 (src && src.end_date) || btn.dataset.endDate,
                 (src && src.location) || btn.dataset.location, {
                 id: id,
-                url: id ? buildShareUrl(id) : '',
+                url: id ? buildShareUrl(id, 'text') : '',
                 time: src && src.time ? format24HourTime(src.time) : '',
                 registrationStart: src ? src.registration_start_at : '',
                 registrationEnd: src ? (src.registration_end_at || src.registration_deadline) : '',
@@ -1425,6 +1439,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             openShareModal(id);
         } else if (action === 'share-poster') {
             openPosterModal(id);
+        } else if (action === 'share-stats') {
+            openShareStatsModal(id);
         } else if (action === 'toggle-subscribe') {
             toggleSubscription(id);
         } else if (action === 'register-comp') {
@@ -2204,7 +2220,7 @@ async function confirmRegister() {
     try {
         const res = await customFetch(`/api/competitions/${item.id}/register`, {
             method: 'POST',
-            body: JSON.stringify({ team_name: teamName, note })
+            body: JSON.stringify({ team_name: teamName, note, source: pendingShareSource || undefined })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || '報名失敗');
@@ -2318,7 +2334,9 @@ function myRegStatusBadge(r) {
         slate: 'bg-slate-100 text-slate-500'
     }[tone] || 'bg-slate-100 text-slate-500';
     const extra = r.status === 'waitlisted' && r.waitlist_position ? `第 ${r.waitlist_position} 位` : '';
-    return `<span class="ml-1 align-middle text-xs font-medium px-2 py-0.5 rounded-full ${cls}">${escapeHtml(label)}${extra ? ' ' + extra : ''}</span>`;
+    // v3.8.2：遞補過的人要看得出來（沒有開推播通知的人也看得到）
+    const promotedNote = r.promoted_at && r.status !== 'waitlisted' ? '🎉 已從候補遞補' : '';
+    return `<span class="ml-1 align-middle text-xs font-medium px-2 py-0.5 rounded-full ${cls}">${escapeHtml(label)}${extra ? ' ' + extra : ''}${promotedNote ? ' ' + promotedNote : ''}</span>`;
 }
 
 /* ---------- v3.6.5：掃碼報到與報到碼 ----------
@@ -2513,8 +2531,11 @@ function closeMyRegsModal() {
 
 // 連結刻意做短（用 hash 帶賽事編號）：QR 在等級 L、版本 3 最多 53 bytes，
 // 網址越短越不容易在低階手機鏡頭下掃不到。
-function buildShareUrl(competitionId) {
-    return `${window.location.origin}/#c${competitionId}`;
+/* v3.8.2：可帶來源標記（#c50~poster）→ 用來統計哪種分享方式真的帶來人。
+   不給來源時維持原樣（#c50），舊連結照常有效。 */
+function buildShareUrl(competitionId, source) {
+    const key = CMCompetitionState.parseShareSource(source);
+    return `${window.location.origin}/#c${competitionId}${key ? '~' + key : ''}`;
 }
 
 /* v3.8.0：把賽事資訊組成「可以直接貼進群組」的文案（純函式，方便測試）。
@@ -2569,7 +2590,7 @@ function buildShareText(info) {
 /* v3.8.0：海報上用得到「掃碼報名」用的連結（與分享彈窗共用，#c<id> 不打伺服器、改版也不失效） */
 function posterQrPayload(item) {
     if (!item || item.id == null) return '';
-    return buildShareUrl(item.id);
+    return buildShareUrl(item.id, 'poster');   // 列印海報上的 QR＝poster 來源
 }
 
 function openShareModal(competitionId) {
@@ -2577,18 +2598,20 @@ function openShareModal(competitionId) {
     const modal = document.getElementById('shareModal');
     if (!modal) return;
 
-    const url = buildShareUrl(competitionId);
+    // v3.8.2：同一場賽事的分享連結依用途帶不同來源（連結＝link／QR＝qr），後台才分得出成效
+    const urlForLink = buildShareUrl(competitionId, 'link');
+    const urlForQr = buildShareUrl(competitionId, 'qr');
     const label = document.getElementById('shareComp');
     if (label) label.innerText = item ? `${item.name}｜${item.date || ''}` : '';
 
     const input = document.getElementById('shareLinkInput');
-    if (input) input.value = url;
+    if (input) input.value = urlForLink;
 
     const box = document.getElementById('shareQrBox');
     if (box) {
         if (window.CMQr) {
             try {
-                box.innerHTML = CMQr.svg(url, {
+                box.innerHTML = CMQr.svg(urlForQr, {
                     level: 'L', scale: 5, margin: 3,
                     alt: `${item ? item.name : '賽事'} 報名連結 QR`
                 });
@@ -2660,9 +2683,10 @@ async function copyShareLink() {
 /* 深連結：掃 QR 進站時網址是 /#c<賽事編號>，捲到那張卡片並直接開報名（未登入會先要求登入）。
    掃碼進來的人多半是第一次用，所以這一段要自己找時機（等列表渲染完），並只做一次。 */
 function handleCompetitionDeepLink() {
-    const match = /^#c(\d+)$/.exec(window.location.hash || '');
-    if (!match) return true;
-    const id = Number(match[1]);
+    const link = CMCompetitionState.parseDeepLink(window.location.hash || '');
+    if (!link) return true;
+    const id = link.id;
+    recordShareVisit(id, link.source);
     const trigger = document.querySelector(`button[data-action="register-comp"][data-id="${id}"]`)
         || document.querySelector(`button[data-action="manage-teams"][data-id="${id}"]`)
         || document.querySelector(`button[data-action="share-link"][data-id="${id}"]`);
@@ -2679,12 +2703,36 @@ function handleCompetitionDeepLink() {
 }
 
 function scheduleDeepLink() {
-    if (!/^#c\d+$/.test(window.location.hash || '')) return;
+    if (!CMCompetitionState.parseDeepLink(window.location.hash || '')) return;
     let tries = 0;
     const timer = setInterval(() => {
         tries += 1;
         if (handleCompetitionDeepLink() || tries >= 20) clearInterval(timer);
     }, 500);
+}
+
+/* v3.8.2：掃到的來源記一次瀏覽（同一個瀏覽器工作階段同一場只記一次，避免重整灌水）。
+   記錄失敗（例如尚未執行 migration）一律不影響使用者，只是沒有統計。 */
+let pendingShareSource = '';
+const SHARE_VISIT_SESSION_KEY = 'cm_share_visit_done';
+
+function recordShareVisit(competitionId, source) {
+    const key = CMCompetitionState.parseShareSource(source);
+    if (!key || !competitionId) return;
+    const stamp = `${competitionId}~${key}`;
+    try {
+        const done = JSON.parse(window.sessionStorage.getItem(SHARE_VISIT_SESSION_KEY) || '{}');
+        if (done[stamp]) { pendingShareSource = key; return; }
+        done[stamp] = Date.now();
+        window.sessionStorage.setItem(SHARE_VISIT_SESSION_KEY, JSON.stringify(done));
+    } catch (err) { /* 無痕模式／儲存被擋：照樣記，不擋流程 */ }
+    pendingShareSource = key;      // 這位訪客之後報名時，來源就記這個
+    try {
+        customFetch(`/api/competitions/${competitionId}/share-visit`, {
+            method: 'POST',
+            body: JSON.stringify({ source: key })
+        }).catch(() => {});
+    } catch (err) { /* 純統計，失敗不需要讓使用者知道 */ }
 }
 
 async function cancelRegistration(regId) {
@@ -5039,6 +5087,68 @@ function resultCardButtonsHtml(item) {
     return html;
 }
 
+/* v3.8.2：分享成效（哪種分享方式真的帶來人）——只有管理員看得到 */
+function shareStatsButtonHtml(item) {
+    if (!canManageResults()) return '';
+    return `<button data-action="share-stats" data-id="${item.id}"
+                class="text-xs text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded transition">
+                📈 分享成效</button>`;
+}
+
+function shareStatsHtml(data) {
+    const rows = (data && data.rows) || [];
+    if (!rows.length) {
+        return '<p class="text-xs text-slate-500 py-3">還沒有人透過分享連結進來。分享出去（海報 QR／連結／群組文案）之後就會開始累計。</p>';
+    }
+    const visits = rows.reduce((sum, r) => sum + r.visits, 0);
+    const signups = rows.reduce((sum, r) => sum + r.signups, 0);
+    return `
+        <table class="w-full text-xs">
+            <thead>
+                <tr class="text-slate-500 text-left">
+                    <th class="py-1 font-medium">來源</th>
+                    <th class="font-medium">開啟次數</th>
+                    <th class="font-medium">帶來報名</th>
+                    <th class="font-medium">轉換</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows.map((r) => `<tr class="border-t border-slate-100">
+                    <td class="py-1.5 text-slate-700">${escapeHtml(r.label)}</td>
+                    <td class="text-slate-600">${r.visits}</td>
+                    <td class="${r.signups ? 'font-bold text-emerald-700' : 'text-slate-400'}">${r.signups}</td>
+                    <td class="text-slate-500">${r.visits ? Math.round((r.signups / r.visits) * 100) + '%' : '—'}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>
+        <p class="text-[11px] text-slate-400 mt-2">
+            共 ${visits} 次開啟、${signups} 筆報名。同一個瀏覽器工作階段重複開啟只算一次。
+            ${data && data.tracking_ready === false ? '⚠️ 資料庫尚未執行 v3.8.2 migration，統計可能不完整。' : ''}
+        </p>`;
+}
+
+async function openShareStatsModal(competitionId) {
+    const item = (typeof allCompetitions !== 'undefined' ? allCompetitions : [])
+        .find((c) => Number(c.id) === Number(competitionId));
+    const modal = document.getElementById('shareStatsModal');
+    if (!modal) return;
+
+    const title = document.getElementById('shareStatsTitle');
+    if (title) title.innerText = item ? `📈 ${item.name}｜分享成效` : '📈 分享成效';
+    const body = document.getElementById('shareStatsBody');
+    if (body) body.innerHTML = '<p class="text-xs text-slate-500 py-3">載入中…</p>';
+    modal.classList.remove('hidden');
+
+    try {
+        const res = await customFetch(`/api/competitions/${competitionId}/share-stats`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '讀取分享成效失敗');
+        if (body) body.innerHTML = shareStatsHtml(data);
+    } catch (err) {
+        if (body) body.innerHTML = `<p class="text-xs text-red-600 py-3">${escapeHtml(err.message)}</p>`;
+    }
+}
+
 /* ---------- 前台：成績表 ---------- */
 
 function resultsPodiumHtml(stats) {
@@ -5643,6 +5753,7 @@ function competitionCardHtml(item) {
                 </button>
 
                 ${resultCardButtonsHtml(item)}
+                ${shareStatsButtonHtml(item)}
 
                 ${isAdminUser() ? `
                     <button data-action="copy-comp" data-id="${item.id}" class="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded transition">複製發佈</button>
