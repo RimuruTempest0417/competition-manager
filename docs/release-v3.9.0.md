@@ -87,7 +87,7 @@
 | 項目 | 結果 |
 |---|---|
 | `npm test` | **672 通過 / 0 失敗**（v3.8.2 為 644） |
-| `npm run check:browser` | **28 支套件全綠**（新增 `v390-check.js` 23 項） |
+| `npm run check:browser` | **28 支套件、962 項全綠**（新增 `v390-check.js` 23 項）。其中 `checkin-qr-check.js` 在整套連跑時會偶發「拿不到相機權限（NotAllowedError）」，單獨重跑 **28／0**——與 v3.8.2 同一支已知的環境偶發，不是程式問題。 |
 | `npm run check:coverage` | 每一條路由都有測試或檢查涵蓋 |
 | 新增守門 | `tests/route-ctx.test.js`（routes 解構的 ctx 欄位 server.js 必須提供） |
 | 新測試 | `tests/form-fields.test.js`（9）、`tests/series-review.test.js`（7）、`tests/v390-api.test.js`（10） |
