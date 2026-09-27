@@ -23,6 +23,10 @@ const COMP_ID = 851;
 const COMP_NAME = '分享盃';
 const PLAYER = 'player-share';
 const PLAYER_PASS = 'playerpass123';
+// v3.8.1：第二場賽事——已額滿、開放候補、而且發佈者上傳過自訂海報
+const FULL_ID = 852;
+const FULL_NAME = '額滿盃';
+const POSTER_PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAlgAAAMgCAIAAABwAouTAAAJhElEQVR42u3VQQ0AAAjEsJODJtQhFRskNKmCfZbqAYC3IgEARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARgiAEaoAgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECgBECYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAGKEKABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIgBFKAIARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAmCEKgBghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghAAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQBGqAIARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARggARgiAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQKAEQJghBIAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAGKEKABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghABghAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIAEYIgBGqAIARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAoARAmCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEAGCEABihBAAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQAYIQBcsCwGgnWU0av9AAAAAElFTkSuQmCC';
 
 let pass = 0;
 let fail = 0;
@@ -40,9 +44,21 @@ function seedState() {
             competitions: [
                 { id: COMP_ID, name: COMP_NAME, date: '2026-12-24', time: '10:00', end_date: '2026-12-24', end_time: '17:00',
                   location: '分享體育館', is_registration_open: true, is_deleted: false, max_registrations: 30,
-                  requires_approval: false, waitlist_enabled: true, tags: [], created_at: '2026-01-01T00:00:00.000Z' }
+                  requires_approval: false, waitlist_enabled: true, tags: [], created_at: '2026-01-01T00:00:00.000Z' },
+                { id: FULL_ID, name: FULL_NAME, date: '2026-12-30', time: '14:00', end_date: '2026-12-30', end_time: '17:00',
+                  location: '額滿體育館', is_registration_open: true, is_deleted: false, max_registrations: 2,
+                  requires_approval: false, waitlist_enabled: true, tags: [], created_at: '2026-01-01T00:00:00.000Z',
+                  poster_updated_at: '2026-09-27T10:00:00.000Z' }
             ],
-            registrations: [],
+            registrations: [
+                // FULL_ID 這一場：名額 2、已報 2 → 額滿；開放候補
+                { id: 971, competition_id: FULL_ID, username: 'full-a', status: 'confirmed', is_deleted: false, created_at: '2026-09-01T00:00:00.000Z' },
+                { id: 972, competition_id: FULL_ID, username: 'full-b', status: 'confirmed', is_deleted: false, created_at: '2026-09-01T00:00:00.000Z' }
+            ],
+            // v3.8.1：上傳的自訂海報（600×800 純色 PNG，測試用最小的合法圖）
+            competition_posters: [
+                { competition_id: FULL_ID, mime: 'image/png', data: POSTER_PNG_B64 }
+            ],
             audit_logs: [],
             push_subscriptions: [],
             app_settings: []
@@ -216,7 +232,7 @@ const login = async (browser, username, password) => {
             await browser.evaluate(`
                 const modal = document.getElementById('posterModal');
                 if (modal) modal.classList.add('hidden');
-                const btn = document.querySelector('button[data-action="share-poster"]');
+                const btn = document.querySelector('button[data-action="share-poster"][data-id="${COMP_ID}"]');
                 if (btn) btn.click();
                 return true;
             `);
@@ -239,9 +255,67 @@ const login = async (browser, username, password) => {
             }
         }
 
+        /* ── v3.8.1①：上傳自訂海報的賽事，海報也要帶 QR（預覽＝下載＝印出來的樣子） ── */
+        {
+            await browser.evaluate(`
+                const modal = document.getElementById('posterModal');
+                if (modal) modal.classList.add('hidden');
+                const btn = document.querySelector('button[data-action="share-poster"][data-id="${FULL_ID}"]');
+                if (btn) btn.click();
+                return true;
+            `);
+            await browser.waitFor(`!document.getElementById('posterModal').classList.contains('hidden')`, { timeout: 8000 });
+            await browser.waitFor(`document.getElementById('posterImage').classList.contains('hidden')
+                && document.getElementById('posterCanvas').width > 0`, { timeout: 8000 });
+            const info = JSON.parse(await browser.evaluate(`
+                const c = document.getElementById('posterCanvas');
+                return JSON.stringify({ w: c.width, h: c.height,
+                    hint: document.getElementById('posterSourceHint').innerText,
+                    imgHidden: document.getElementById('posterImage').classList.contains('hidden') });
+            `));
+            check(info.imgHidden === true, '上傳的海報改由 canvas 呈現（這樣才會帶 QR，下載也才拿得到）');
+            check(/已自動加上報名 QR/.test(info.hint), `說明有提到已加上 QR（實際「${info.hint}」）`);
+            check(info.w === 600 && info.h === 800, `canvas 使用上傳圖的尺寸（${info.w}×${info.h}）`);
+
+            const dataUrl = String(await browser.evaluate(
+                `return document.getElementById('posterCanvas').toDataURL('image/png');`));
+            try {
+                const decoded = execFileSync('swift',
+                    [path.join(__dirname, '..', '..', 'scripts', 'qr-decode.swift'), '-'],
+                    { encoding: 'utf8', input: dataUrl }).trim();
+                check(decoded === `http://127.0.0.1:${PORT}/#c${FULL_ID}`,
+                    `★上傳海報上的 QR 掃出來就是分享連結（獨立解碼器解到「${decoded}」）`);
+            } catch (err) {
+                check(false, '★上傳海報的 QR 必須能被獨立解碼器解出', String(err.message).slice(0, 140));
+            }
+        }
+
+        /* ── v3.8.1②：掃到「已額滿＋可候補」的賽事，報名視窗要明確引導候補 ── */
+        {
+            await browser.evaluate(`
+                ['posterModal', 'registerModal'].forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (el) el.classList.add('hidden');
+                });
+                window.location.hash = '';
+                window.location.hash = '#c${FULL_ID}';
+                return true;
+            `);
+            // 等到真的是「這一場」的內容（上一場的彈窗可能還開著）
+            await browser.waitFor(`!document.getElementById('registerModal').classList.contains('hidden')
+                && document.getElementById('registerCompInfo').innerText.indexOf('${FULL_NAME}') >= 0`,
+                { timeout: 10000 });
+            const modalText = String(await browser.evaluate(
+                `return document.getElementById('registerCompInfo').innerText;`));
+            const shown = modalText.replace(/\n+/g, ' ⏎ ').slice(0, 80);
+            check(/名額已滿|額滿/.test(modalText), `報名視窗說明目前名額已滿（「${shown}」）`);
+            check(/候補/.test(modalText), '★並引導送出後會排入候補（不是只說不能報名）');
+        }
+
         exitCode = fail === 0 ? 0 : 1;
     } catch (err) {
         console.log(`   ❌ 檢查過程發生例外：${err.message}`);
+        fail += 1;   // v3.8.1：例外也要算失敗，否則統計會印出「0 失敗」而讓人誤判
         exitCode = 1;
     } finally {
         try { await browser.close(); } catch (err) { /* 忽略 */ }

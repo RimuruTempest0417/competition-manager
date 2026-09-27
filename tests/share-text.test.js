@@ -18,7 +18,10 @@ function grab(name, re) {
 }
 const FN_RE = (n) => new RegExp(`function ${n}\\([^)]*\\)[\\s\\S]*?\\n\\}`);
 const ctx = vm.runInNewContext(
-    `${grab('shareDateLabel', FN_RE('shareDateLabel'))}\n${grab('buildShareText', FN_RE('buildShareText'))}\n({ shareDateLabel, buildShareText })`,
+    `${grab('shareDateLabel', FN_RE('shareDateLabel'))}`
+    + `\n${grab('shareStateGuide', FN_RE('shareStateGuide'))}`
+    + `\n${grab('buildShareText', FN_RE('buildShareText'))}`
+    + `\n({ shareDateLabel, buildShareText })`,
     {});
 const { buildShareText, shareDateLabel } = ctx;
 

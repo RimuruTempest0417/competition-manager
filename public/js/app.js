@@ -371,10 +371,31 @@ function syncPosterSource(item) {
 
     const hasCustom = !!(item && item.poster_updated_at);
     if (hasCustom) {
-        image.src = `/api/competitions/${item.id}/poster?v=${Date.parse(item.poster_updated_at) || Date.now()}`;
-        image.classList.remove('hidden');
-        canvas.classList.add('hidden');
-        if (hint) hint.innerText = '🖼️ 此海報由發佈者手動上傳';
+        /* v3.8.1：改畫進 canvas（並自動加上報名 QR）。
+           預覽、複製圖片、下載三條路都吃 canvas——這樣「下載海報」拿到的
+           才是有 QR、真的印得出來的那一張（以前會拿到沒有 QR 的版本）。 */
+        const url = `/api/competitions/${item.id}/poster?v=${Date.parse(item.poster_updated_at) || Date.now()}`;
+        image.src = url;              // 保留 src：既有檢查用它確認載入的是「原圖」而不是縮圖
+        image.classList.add('hidden');
+        canvas.classList.remove('hidden');
+        if (hint) hint.innerText = '🖼️ 此海報由發佈者手動上傳（已自動加上報名 QR）';
+
+        const loader = new Image();
+        loader.onload = () => {
+            if (!currentPosterItem || String(currentPosterItem.id) !== String(item.id)) return;
+            try {
+                renderCustomPosterCanvas(item, loader);
+            } catch (err) {
+                /* 畫不出來就維持原樣，不要讓整個視窗壞掉 */
+            }
+        };
+        loader.onerror = () => {
+            image.src = url;
+            image.classList.remove('hidden');
+            canvas.classList.add('hidden');
+            if (hint) hint.innerText = '⚠️ 讀不到上傳的海報，先顯示原圖（沒有 QR）';
+        };
+        loader.src = url;
     } else {
         image.removeAttribute('src');
         image.classList.add('hidden');
@@ -469,60 +490,124 @@ function renderPosterCanvas(item) {
         descY += 24;
     }
 
-    /* ── v3.8.0：海報自動帶「報名 QR」 ──
+    /* ── v3.8.0：海報自動帶「報名 QR」（v3.8.1：說明文字跟著賽事狀態走） ──
        印出來貼在場地／發傳單時，家長掃碼就直接進報名頁（連結與分享彈窗共用 #c<id>）。 */
-    const qrUrl = posterQrPayload(item);
-    const qrBox = 140;
-    const qrPad = 12;
-    const qrX = 40;
-    const qrY = infoY + descHeight + 18;
-
-    canvasRoundRect(ctx, qrX, qrY, qrBox, qrBox, 14);
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
-
-    let qrOk = false;
-    if (qrUrl && typeof CMQr !== 'undefined' && typeof CMQr.encode === 'function') {
-        try {
-            const code = CMQr.encode(qrUrl);
-            const n = code.matrix.length;
-            const cell = Math.floor((qrBox - qrPad * 2) / n);
-            const offset = (qrBox - cell * n) / 2;
-            ctx.fillStyle = '#0f172a';
-            for (let r = 0; r < n; r += 1) {
-                for (let c = 0; c < n; c += 1) {
-                    if (code.matrix[r][c]) {
-                        ctx.fillRect(qrX + offset + c * cell, qrY + offset + r * cell, cell, cell);
-                    }
-                }
-            }
-            qrOk = true;
-        } catch (err) {
-            qrOk = false;
-        }
-    }
-
-    const qrTextX = qrX + qrBox + 20;
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = 'bold 16px sans-serif';
-    ctx.fillText(qrOk ? '📷 用手機掃碼直接報名' : '📷 請點分享連結報名', qrTextX, qrY + 44);
-
-    if (qrOk) {
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '13px sans-serif';
-        ctx.fillText(qrUrl.replace(/^https?:\/\//, ''), qrTextX, qrY + 70);
-        ctx.fillStyle = '#64748b';
-        ctx.font = '12px sans-serif';
-        ctx.fillText('掃描後直接進報名頁，', qrTextX, qrY + 94);
-        ctx.fillText('也可以把連結貼給隊友和家長。', qrTextX, qrY + 112);
-    }
+    drawPosterQr(ctx, item, { x: 40, y: infoY + descHeight + 18, box: 140, caption: 'right' });
 
     ctx.fillStyle = '#64748b';
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('關注系統獲取最新賽事資訊', width / 2, height - 26);
     ctx.textAlign = 'left';
+}
+
+/* v3.8.1：QR 旁的說明要跟著賽事狀態走——海報印出去就改不了，
+   已額滿且有候補時要引導對方登記候補，已截止／已取消也要說清楚，不要讓人白掃。 */
+function shareStateGuide(item) {
+    const data = item || {};
+    const stateKey = String(data.state || '');
+    const open = data.can_register === undefined ? !!data.is_registration_open : !!data.can_register;
+    const waitlist = !!(data.is_waitlist || data.waitlist_enabled);
+    // ★「額滿」和「已截止」是兩件事：報名期過了、但名額還有的賽事不該被說成額滿。
+    //   後端的狀態機已經把原因算好（state_detail／reason 會寫「名額已滿」），優先信它。
+    const reasonText = `${data.state_detail || ''} ${data.reason || data.registration_reason || ''}`;
+    const full = /額滿|已滿|full/i.test(reasonText);
+
+    if (stateKey === 'cancelled') return { key: 'cancelled', caption: '⛔ 此賽事已取消', short: '此賽事已取消' };
+    if (open) return { key: 'open', caption: '📷 用手機掃碼直接報名', short: '開放報名中' };
+    if (stateKey === 'registration_upcoming') return { key: 'upcoming', caption: '🕒 報名尚未開放（掃碼看賽事）', short: '報名尚未開放' };
+    if (waitlist && full) return { key: 'waitlist', caption: '📷 已額滿，掃碼登記候補', short: '已額滿，可登記候補' };
+    if (stateKey === 'ongoing') return { key: 'ongoing', caption: '🏁 賽事進行中（掃碼看資訊）', short: '賽事進行中' };
+    if (stateKey === 'finished') return { key: 'finished', caption: '🏁 賽事已結束（掃碼看資訊）', short: '賽事已結束' };
+    if (stateKey === 'unscheduled') return { key: 'unscheduled', caption: '📷 日期未定（掃碼看賽事）', short: '日期未定' };
+    return { key: 'closed', caption: '🔒 報名已截止（掃碼看資訊）', short: '報名已截止' };
+}
+
+/* 把報名 QR（白色圓角底卡＋格線）畫到任何 canvas 上：自動生成的海報與上傳的海報共用同一支。 */
+function drawPosterQr(ctx, item, options) {
+    const opt = options || {};
+    const box = Number(opt.box) || 140;
+    const x = Number(opt.x) || 0;
+    const y = Number(opt.y) || 0;
+    const pad = Math.max(8, Math.round(box * 0.08));
+    const guide = shareStateGuide(item);
+    const url = posterQrPayload(item);
+
+    canvasRoundRect(ctx, x, y, box, box, Math.round(box * 0.1));
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
+    let ok = false;
+    if (url && typeof CMQr !== 'undefined' && typeof CMQr.encode === 'function') {
+        try {
+            const code = CMQr.encode(url);
+            const n = code.matrix.length;
+            const cell = Math.floor((box - pad * 2) / n);
+            const offset = (box - cell * n) / 2;
+            ctx.fillStyle = '#0f172a';
+            for (let r = 0; r < n; r += 1) {
+                for (let c = 0; c < n; c += 1) {
+                    if (code.matrix[r][c]) {
+                        ctx.fillRect(x + offset + c * cell, y + offset + r * cell, cell, cell);
+                    }
+                }
+            }
+            ok = true;
+        } catch (err) {
+            ok = false;
+        }
+    }
+
+    const caption = ok ? guide.caption : '📷 請點分享連結報名';
+    if (opt.caption === 'above') {
+        // 上傳的海報任何底色都可能出現 → 說明文字加一層深色底，保證看得見
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'left';
+        const tw = ctx.measureText(caption).width;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+        canvasRoundRect(ctx, x + box - tw - 22, y - 34, tw + 22, 26, 8);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(caption, x + box - tw - 11, y - 15);
+    } else {
+        const textX = x + box + 20;
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.fillText(caption, textX, y + 44);
+        if (ok) {
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '13px sans-serif';
+            ctx.fillText(url.replace(/^https?:\/\//, ''), textX, y + 70);
+            ctx.fillStyle = '#64748b';
+            ctx.font = '12px sans-serif';
+            ctx.fillText('掃描後直接進賽事頁，', textX, y + 94);
+            ctx.fillText('也可以把連結貼給隊友和家長。', textX, y + 112);
+        }
+    }
+    return { ok: ok, guide: guide, url: url };
+}
+
+/* v3.8.1：上傳的自訂海報也要帶 QR——畫進 canvas（預覽＝複製＝下載＝印出來的樣子）。 */
+function renderCustomPosterCanvas(item, image) {
+    const canvas = document.getElementById('posterCanvas');
+    if (!canvas || !item) return;
+    const ctx = canvas.getContext('2d');
+    const naturalW = image.naturalWidth || 900;
+    const naturalH = image.naturalHeight || 1200;
+    const scale = Math.min(1, 1000 / naturalW);
+    const width = Math.max(320, Math.round(naturalW * scale));
+    const height = Math.max(320, Math.round(naturalH * scale));
+    canvas.width = width;
+    canvas.height = height;
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(image, 0, 0, width, height);
+
+    const box = Math.max(120, Math.round(width * 0.16));
+    const margin = Math.max(16, Math.round(width * 0.04));
+    drawPosterQr(ctx, item, { x: width - margin - box, y: height - margin - box, box: box, caption: 'above' });
 }
 
 /* v3.8.0：canvas 的圓角矩形（不用 ctx.roundRect——iOS Safari 16.4 以前沒有） */
@@ -1329,7 +1414,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 registrationEnd: src ? (src.registration_end_at || src.registration_deadline) : '',
                 quota: src ? src.max_registrations : 0,
                 requiresApproval: src ? !!(src.requires_approval || src.needs_approval) : false,
-                waitlist: src ? !!(src.waitlist_enabled || src.is_waitlist) : false
+                waitlist: src ? !!(src.waitlist_enabled || src.is_waitlist) : false,
+                state: src ? src.state : '',
+                state_detail: src ? (src.state_detail || src.registration_reason || '') : '',
+                max_registrations: src ? src.max_registrations : 0,
+                can_register: src ? src.can_register : undefined,
+                is_waitlist: src ? src.is_waitlist : false
             });
         } else if (action === 'share-link') {
             openShareModal(id);
@@ -1660,7 +1750,11 @@ function clientRegistrationState(item) {
             // v2.20.0：額滿但有候補／需審核時，按鈕與提示要跟著變
             waitlist: !!item.is_waitlist,
             waitlist_position: item.waitlist_position || null,
-            needs_approval: !!item.needs_approval
+            needs_approval: !!item.needs_approval,
+            // v3.8.1：介面要分辨「額滿」與「已截止」——後端原因優先，其次用名額與報名人數推算
+            is_full: /額滿|已滿/.test(String(item.registration_reason || ''))
+                || (Number(item.max_registrations) > 0
+                    && (Number(regCounts[String(item.id)]) || 0) >= Number(item.max_registrations))
         };
     }
     return localRegistrationState(item);
@@ -1677,7 +1771,19 @@ function localRegistrationState(item) {
         : null;
 
     if (st) {
-        return { open: !!st.can_register, reason: st.can_register ? '' : st.reason, state: st.state, label: st.label, tone: st.tone, detail: st.detail };
+        return {
+            open: !!st.can_register,
+            reason: st.can_register ? '' : st.reason,
+            state: st.state,
+            label: st.label,
+            tone: st.tone,
+            detail: st.detail,
+            waitlist: !!item.is_waitlist || !!item.waitlist_enabled,
+            // v3.8.1：分辨「額滿」與「已截止」——原因文字優先，其次用名額與報名人數推算
+            is_full: /額滿|已滿/.test(`${st.detail || ''} ${st.reason || ''}`)
+                || (Number(item.max_registrations) > 0
+                    && Number(regCounts[String(item.id)] || 0) >= Number(item.max_registrations))
+        };
     }
 
     // 連共用模組都載不到時的極簡推算（不應發生；僅為避免整頁壞掉）
@@ -2046,6 +2152,7 @@ function openRegisterModal(id) {
             ${item.is_team_event ? '<p class="text-indigo-700 font-medium mt-1">👥 此為組隊比賽，請填寫隊伍名稱（管理員會再依此編排）</p>' : ''}
             ${count > 0 ? `<p class="mt-1 text-emerald-600">目前已報名 ${count} 人</p>` : ''}
             ${state.open ? '' : `<p class="text-red-600 font-medium mt-1">🔒 ${escapeHtml(state.reason)}</p>`}
+            ${(state.is_full && state.waitlist) ? '<p class="text-amber-700 font-medium mt-1">🕒 目前名額已滿，送出後會排入候補（有人取消就依序遞補）</p>' : ''}
         `;
     }
 
@@ -2445,9 +2552,13 @@ function buildShareText(info) {
         if (data.waitlist) line += '，額滿可候補';
         lines.push(line);
     }
+    const guide = shareStateGuide(data);
+    if (guide.key !== 'open') {
+        lines.push(`🔔 目前狀態：${guide.short}`);
+    }
     if (url) {
         lines.push('');
-        lines.push('👉 線上報名（手機掃碼或點連結都可以）：');
+        lines.push(guide.key === 'open' ? '👉 線上報名（手機掃碼或點連結都可以）：' : '👉 賽事頁面（手機掃碼或點連結都可以）：');
         lines.push(url);
     }
     lines.push('');
