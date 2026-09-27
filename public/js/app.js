@@ -804,6 +804,7 @@ function cycleTheme() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    applyDateHints();
     loadAppVersion();
     initTimeSelects();
     updateThemeButton(getStoredTheme());
@@ -1460,7 +1461,9 @@ function updateUIByRole() {
 
         if (currentUser.role === 'web_owner') {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-bold";
-            authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
+            authStatus.innerHTML = `${getRoleEmoji(currentUser.role, currentUser.username)} `
+                + `<span class="cm-auth-role">${escapeHtml(getRoleLabel(currentUser.role, currentUser.username))}: </span>`
+                + escapeHtml(currentUser.username || '');
             auditLogBtn?.classList.remove('hidden');
             btnErrorLogs?.classList.remove('hidden');
             adminMgmtBtn?.classList.remove('hidden');
@@ -1468,7 +1471,9 @@ function updateUIByRole() {
             csvToolBtn?.classList.remove('hidden');
         } else if (currentUser.role === 'super_admin') {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300";
-            authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
+            authStatus.innerHTML = `${getRoleEmoji(currentUser.role, currentUser.username)} `
+                + `<span class="cm-auth-role">${escapeHtml(getRoleLabel(currentUser.role, currentUser.username))}: </span>`
+                + escapeHtml(currentUser.username || '');
             auditLogBtn?.classList.remove('hidden');
             btnErrorLogs?.classList.remove('hidden');
             adminMgmtBtn?.classList.remove('hidden');
@@ -1476,7 +1481,9 @@ function updateUIByRole() {
             csvToolBtn?.classList.remove('hidden');
         } else if (currentUser.role === 'test') {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-purple-100 text-purple-700 border border-purple-300";
-            authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
+            authStatus.innerHTML = `${getRoleEmoji(currentUser.role, currentUser.username)} `
+                + `<span class="cm-auth-role">${escapeHtml(getRoleLabel(currentUser.role, currentUser.username))}: </span>`
+                + escapeHtml(currentUser.username || '');
             auditLogBtn?.classList.add('hidden');
             btnErrorLogs?.classList.add('hidden');
             adminMgmtBtn?.classList.add('hidden');
@@ -1485,7 +1492,9 @@ function updateUIByRole() {
         } else if (currentUser.role === 'user') {
             // 普通用戶：可瀏覽、報名、管理自己的報名與密碼；不可發佈或管理賽事
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300";
-            authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
+            authStatus.innerHTML = `${getRoleEmoji(currentUser.role, currentUser.username)} `
+                + `<span class="cm-auth-role">${escapeHtml(getRoleLabel(currentUser.role, currentUser.username))}: </span>`
+                + escapeHtml(currentUser.username || '');
             createSection?.classList.add('hidden');
             auditLogBtn?.classList.add('hidden');
             btnErrorLogs?.classList.add('hidden');
@@ -1495,7 +1504,9 @@ function updateUIByRole() {
         } else if (currentUser.role === 'admin') {
             // 管理員：可發佈、管理賽事、檢視與建立帳號（v2.12.0 起可管理使用者）
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
-            authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
+            authStatus.innerHTML = `${getRoleEmoji(currentUser.role, currentUser.username)} `
+                + `<span class="cm-auth-role">${escapeHtml(getRoleLabel(currentUser.role, currentUser.username))}: </span>`
+                + escapeHtml(currentUser.username || '');
             auditLogBtn?.classList.add('hidden');
             btnErrorLogs?.classList.add('hidden');
             adminMgmtBtn?.classList.remove('hidden');
@@ -1503,7 +1514,9 @@ function updateUIByRole() {
             csvToolBtn?.classList.remove('hidden');
         } else {
             authStatus.className = "text-sm font-medium px-3 py-1 rounded-full bg-blue-100 text-blue-700 border border-blue-300";
-            authStatus.innerText = `${getRoleEmoji(currentUser.role, currentUser.username)} ${getRoleLabel(currentUser.role, currentUser.username)}: ${currentUser.username}`;
+            authStatus.innerHTML = `${getRoleEmoji(currentUser.role, currentUser.username)} `
+                + `<span class="cm-auth-role">${escapeHtml(getRoleLabel(currentUser.role, currentUser.username))}: </span>`
+                + escapeHtml(currentUser.username || '');
             auditLogBtn?.classList.add('hidden');
             btnErrorLogs?.classList.add('hidden');
             adminMgmtBtn?.classList.add('hidden');
@@ -5330,6 +5343,35 @@ async function handleFormSubmit(e) {
     }
 }
 
+/* v3.6.8：iOS 上空的 <input type="date">／<input type="datetime-local"> 完全不顯示任何文字，
+   使用者只看到一個「空白方框」，不知道要填什麼。這裡替每個日期欄加一個看得見的提示，
+   有值時自動隱藏（桌機 Chrome 本來就會顯示「年/月/日」，加了也不衝突）。 */
+function syncDateHint(input) {
+    const wrap = input.closest('.cm-date-wrap');
+    if (!wrap) return;
+    wrap.classList.toggle('has-value', !!(input.value && String(input.value).trim()));
+}
+
+function applyDateHints(root) {
+    const scope = root || document;
+    scope.querySelectorAll('input[type="date"], input[type="datetime-local"]').forEach((input) => {
+        if (!input.closest('.cm-date-wrap')) {
+            const wrap = document.createElement('span');
+            wrap.className = 'cm-date-wrap';
+            input.parentNode.insertBefore(wrap, input);
+            wrap.appendChild(input);
+            const hint = document.createElement('span');
+            hint.className = 'cm-date-hint';
+            hint.setAttribute('aria-hidden', 'true');
+            hint.textContent = '年/月/日';
+            wrap.appendChild(hint);
+            input.addEventListener('input', () => syncDateHint(input));
+            input.addEventListener('change', () => syncDateHint(input));
+        }
+        syncDateHint(input);
+    });
+}
+
 function startEdit(id) {
     const item = allCompetitions.find(c => c.id === id);
     if (!item) return;
@@ -5362,6 +5404,7 @@ function startEdit(id) {
     document.getElementById('requires_approval').checked = !!item.requires_approval;
     document.getElementById('waitlist_enabled').checked = !!item.waitlist_enabled;
     updateFormStatePreview();
+    applyDateHints();   // v3.6.8：填入值後同步提示顯示
     renderTagPreview();
 
     document.getElementById('formTitle').innerText = '✏️ 編輯比賽資料';
@@ -5397,6 +5440,7 @@ function copyCompetition(id) {
     document.getElementById('registration_start_at').value = isoToLocalInput(item.registration_start_at);
     document.getElementById('registration_end_at').value = isoToLocalInput(legacyEnd);
     updateFormStatePreview();
+    applyDateHints();   // v3.6.8：填入值後同步提示顯示
     renderTagPreview();
 
     document.getElementById('formTitle').innerText = '➕ 發佈新比賽 (複製內容)';
@@ -5418,7 +5462,9 @@ function copyToClipboard(name, date, endDate, location) {
 }
 
 function resetForm() {
+    applyDateHints();
     updateFormStatePreview();
+    applyDateHints();   // v3.6.8：填入值後同步提示顯示
     document.getElementById('competitionForm').reset();
     document.getElementById('editingId').value = '';
     renderTagPreview();

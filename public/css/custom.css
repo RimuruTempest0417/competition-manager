@@ -1163,7 +1163,7 @@ canvas {
 
     /* 2) 標題列壓縮：標題、身份標籤與選單按鈕要在 360px 內排得下 */
     .cm-app-title {
-        font-size: 1rem;
+        font-size: 0.95rem;
         line-height: 1.3;
         /* 手機上「比賽管理系統」被折成「比賽管理系／統」很難看 → 整串不換行 */
         white-space: nowrap;
@@ -1183,9 +1183,14 @@ canvas {
         white-space: nowrap;
     }
 
+    /* 手機上只顯示「emoji + 名字」：整個「Web Owner: 」在窄螢幕會折成兩行 */
+    .cm-auth-role {
+        display: none;
+    }
+
     .cm-auth-pill {
         /* 允許換行（角色名稱較長時不會擠壓標題），但整體仍保持精簡 */
-        max-width: 7rem;
+        max-width: 9.5rem;
         font-size: 0.65rem;
         line-height: 1.25;
         text-align: center;
@@ -1258,6 +1263,11 @@ canvas {
     }
 
     .cm-filter-row > :first-child {
+        grid-column: 1 / -1;
+    }
+
+    /* 日期篩選：標籤與欄位同一格並佔滿一整列（否則標籤獨佔半格、旁邊一片空白） */
+    .cm-filter-row > .cm-filter-date {
         grid-column: 1 / -1;
     }
 
@@ -1397,3 +1407,66 @@ canvas {
 .cm-card-body {
     min-width: 0;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   v3.6.8：日期／時間欄位（使用者手機回報：「方框是空白的」＋「凸出去了」）
+
+   1. iOS 的原生日期欄有較大的「內在最小寬度」，在 grid／flex 裡被 min-width:auto
+      撐著 → 方框會超出卡片右緣（Chrome 的內在寬度小，本機檢查抓不到，只能強制壓縮）。
+   2. iOS 上空值時完全不顯示文字 → 用 .cm-date-hint 顯示可讀提示，有值時隱藏。
+   ══════════════════════════════════════════════════════════════ */
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"],
+input[type="month"],
+input[type="week"] {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.cm-date-wrap {
+    position: relative;
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.cm-date-wrap > input[type="date"],
+.cm-date-wrap > input[type="datetime-local"] {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.cm-date-hint {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #94a3b8;
+    font-size: 0.875rem;
+    line-height: 1;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.cm-date-wrap.has-value .cm-date-hint {
+    display: none;
+}
+
+@media (max-width: 640px) {
+    /* 「時／分」下拉也一樣，避免整列被撐出去 */
+    #start_hour,
+    #start_minute,
+    #end_hour,
+    #end_minute {
+        min-width: 0;
+    }
+}
+
+/* 註（v3.6.8）：這裡刻意「不」用 -webkit-appearance:none 去壓 iOS 原生日期欄。
+   那招雖然能讓寬度更好控制，但有可能讓點擊後叫不出日期轉盤（變成不能填日期，
+   比凸出卡片更糟）。根因是 grid／flex 的 min-width:auto 底線，用 min-width:0 即可解掉。 */

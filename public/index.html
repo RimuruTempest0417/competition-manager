@@ -9,7 +9,7 @@
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#f1f5f9" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-    <title>比賽管理系統 v3.6.7</title>
+    <title>比賽管理系統 v3.6.8</title>
     <!-- PWA：可「加入主畫面」；iOS Safari 的推播通知必須以主畫面 App 開啟才支援 -->
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/favicon.ico" sizes="any">
@@ -457,9 +457,11 @@
                         class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                         <option value="">全部標籤</option>
                     </select>
-                    <label for="filterDateInput" class="text-xs text-slate-500 shrink-0 self-center">📅 日期</label>
-                    <input type="date" id="filterDateInput" aria-label="依日期篩選" title="依日期篩選"
-                        class="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <div class="cm-filter-date flex items-center gap-2 min-w-0">
+                        <label for="filterDateInput" class="text-xs text-slate-500 shrink-0">📅 日期</label>
+                        <input type="date" id="filterDateInput" aria-label="依日期篩選" title="依日期篩選"
+                            class="flex-1 min-w-0 px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
                     <button id="clearFilterBtn"
                         class="text-xs text-slate-500 hover:text-slate-800 px-2 py-1 bg-slate-100 rounded border">清除篩選</button>
 

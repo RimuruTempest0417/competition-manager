@@ -155,6 +155,58 @@ const MEASURE = `
         formRight: cardRight(form),
         filterDate: rect('filterDateInput'),
         posterBlock: rect('posterBlock'),
+        dateFields: (() => {
+            const ids = ['date', 'end_date', 'registration_start_at', 'registration_end_at'];
+            const base = document.getElementById('name');
+            const baseRight = base ? Math.round(base.getBoundingClientRect().right) : null;
+            return ids.map((id) => {
+                const el = document.getElementById(id);
+                if (!el) return { id: id, missing: true };
+                const wrap = el.closest('.cm-date-wrap');
+                const hint = wrap ? wrap.querySelector('.cm-date-hint') : null;
+                const cs = getComputedStyle(el);
+                return {
+                    id: id,
+                    w: Math.round(el.getBoundingClientRect().width),
+                    right: Math.round(el.getBoundingClientRect().right),
+                    overflow: baseRight !== null ? Math.round(el.getBoundingClientRect().right) - baseRight : null,
+                    wrap: !!wrap,
+                    hintVisible: !!hint && getComputedStyle(hint).display !== 'none',
+                    minW: cs.minWidth, maxW: cs.maxWidth,
+                    val: String(el.value || '')
+                };
+            });
+        })(),
+        filterDateRow: (() => {
+            const wrap = document.querySelector('.cm-filter-date');
+            if (!wrap) return null;
+            const r = wrap.getBoundingClientRect();
+            const lab = wrap.querySelector('label');
+            const inp = wrap.querySelector('input');
+            if (!lab || !inp) return null;
+            const lb = lab.getBoundingClientRect(), ib = inp.getBoundingClientRect();
+            return {
+                w: Math.round(r.width),
+                sameRow: Math.abs((lb.top + lb.height / 2) - (ib.top + ib.height / 2)) <= 6,
+                labelAlone: Math.abs(lb.width - r.width) < 8   // 標籤自己佔滿整格 = 壞掉
+            };
+        })(),
+        headerParts: (() => {
+            const h = document.querySelector('.cm-header-inner');
+            if (!h) return null;
+            const kids = Array.from(h.children).map((el) => Math.round(el.getBoundingClientRect().width));
+            return { total: Math.round(h.getBoundingClientRect().width), kids: kids };
+        })(),
+        authPill: (() => {
+            const el = document.getElementById('authStatus');
+            if (!el) return null;
+            const cs = getComputedStyle(el);
+            return {
+                h: Math.round(el.getBoundingClientRect().height), lh: Math.round(parseFloat(cs.lineHeight) || 0),
+                fs: cs.fontSize, sw: el.scrollWidth, cw: el.clientWidth,
+                maxW: cs.maxWidth, text: String(el.innerText || '').replace(/\s+/g, ' ').trim()
+            };
+        })(),
         filterDateNamed: (() => {
             const el = document.getElementById('filterDateInput');
             if (!el) return false;
@@ -202,7 +254,7 @@ const MEASURE = `
                 await new Promise((r) => setTimeout(r, 400));
 
                 const m = JSON.parse(await browser.evaluate(`return (() => { ${MEASURE} })();`));
-                console.log(`   ℹ️ 視窗 ${m.vw}px｜頁面 scrollWidth ${m.pageScroll}｜發佈比賽按鈕 ${m.submitBtn.w}×${m.submitBtn.h}px｜報名欄位 ${JSON.stringify(m.regStart)}／${JSON.stringify(m.regEnd)}｜卡片右緣 ${m.formRight}｜篩選日期 ${JSON.stringify(m.filterDate)}｜海報區塊 ${JSON.stringify(m.posterBlock)}`);
+                console.log(`   ℹ️ 視窗 ${m.vw}px｜頁面 scrollWidth ${m.pageScroll}｜發佈比賽按鈕 ${m.submitBtn.w}×${m.submitBtn.h}px｜報名欄位 ${JSON.stringify(m.regStart)}／${JSON.stringify(m.regEnd)}｜卡片右緣 ${m.formRight}｜篩選日期 ${JSON.stringify(m.filterDate)}｜海報區塊 ${JSON.stringify(m.posterBlock)}｜日期欄 ${(m.dateFields || []).map((f) => `${f.id}:${f.w}px/超出${f.overflow}px/提示${f.hintVisible ? '有' : '無'}`).join('、')}｜header ${JSON.stringify(m.headerParts)}｜pill ${JSON.stringify(m.authPill)}`);
 
                 check(m.submitBtn.w >= 88, `${step}｜「發佈比賽」按鈕沒有被壓成細條（寬 ${m.submitBtn.w}px ≥ 88px）`);
                 check(!m.overflow, `${step}｜沒有橫向溢出`, m.overflowers.length ? '超出者：' + m.overflowers.join(', ') : '');
@@ -222,6 +274,19 @@ const MEASURE = `
 
                     /* ③ 篩選列的日期欄位要有名字（手機上 date 欄位沒有 placeholder → 會變成空白框） */
                     check(m.filterDateNamed, `${step}｜篩選列的日期欄位有標籤可辨識（不是一個空白框）`);
+                    m.dateFields.forEach((f) => {
+                        if (f.missing) { check(false, `${step}｜找不到日期欄位 ${f.id}`); return; }
+                        check(f.wrap && f.hintVisible,
+                            `${step}｜${f.id} 空值時有看得見的提示（iOS 上空日期欄完全不顯示文字）`);
+                        check(f.overflow !== null && f.overflow <= 1,
+                            `${step}｜${f.id} 沒有凸出卡片（右緣超出 ${f.overflow}px）`);
+                        check(f.minW === '0px' && f.maxW === '100%',
+                            `${step}｜${f.id} 已可被壓縮（min-width ${f.minW}／max-width ${f.maxW}）— iOS 原生日期欄的內在寬度會把方框頂出去`);
+                    });
+                    check(!!m.filterDateRow && m.filterDateRow.sameRow && !m.filterDateRow.labelAlone && m.filterDateRow.w >= Math.round(size.width * 0.6),
+                        `${step}｜篩選列「📅 日期」與欄位同一列且佔滿寬度（寬 ${m.filterDateRow && m.filterDateRow.w}px）`);
+                    check(!!m.authPill && m.authPill.h <= m.authPill.lh * 1.8,
+                        `${step}｜右上身份標籤沒有被折成多行（高 ${m.authPill && m.authPill.h}px、行高 ${m.authPill && m.authPill.lh}px）`);
 
                     /* ④ 沒有文字按鈕被壓成比 44px 還窄（手機點不到） */
                     check(m.crushed.length === 0, `${step}｜沒有文字按鈕被壓成細條`, m.crushed.join(', '));
