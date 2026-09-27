@@ -12,6 +12,7 @@
  * 用法：node tests/browser/share-qr-check.js
  */
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { once } = require('node:events');
 const { Browser } = require('./lib/cdp');
 const { startFakeSupabase } = require('../support/fake-supabase');
@@ -184,6 +185,59 @@ const login = async (browser, username, password) => {
         check(overflow <= 1, `手機寬度（414px）沒有橫向溢出（${overflow}px）`);
         const errors = browser.errors || [];
         check(errors.length === 0, '過程中沒有前端例外', errors.slice(0, 2).join(' | '));
+
+        /* ── v3.8.0：卡片上的「📋 複製文字」要產生可直接貼群組的完整文案（含報名連結）──
+           把剪貼簿換成攔截器，直接看它實際寫入了什麼。 */
+        {
+            await browser.evaluate(`
+                window.__copied = null;
+                const stub = { writeText: (t) => { window.__copied = String(t); return Promise.resolve(); } };
+                try { Object.defineProperty(navigator, 'clipboard', { value: stub, configurable: true }); }
+                catch (err) { navigator.clipboard.writeText = stub.writeText; }
+                const btn = document.querySelector('button[data-action="copy-text"][data-id="${COMP_ID}"]');
+                if (btn) btn.click();
+                return true;
+            `);
+            await browser.waitFor(`!!window.__copied`, { timeout: 5000 });
+            const copied = String(await browser.evaluate(`return window.__copied;`));
+            check(copied.includes(COMP_NAME),
+                `複製的文案含賽事名稱（檢查「${COMP_NAME}」）— 開頭「${copied.slice(0, 30).replace(/\n/g, '⏎')}」`);
+            check(copied.includes(`/#c${COMP_ID}`), `★複製的文案含可直接點的報名連結（#c${COMP_ID}）`);
+            check(/報名：/.test(copied) || /名額：/.test(copied),
+                '複製的文案帶到報名期間或名額等實用資訊（不是只有名稱與地點）');
+            check(!copied.includes('undefined') && !copied.includes('null'),
+                '複製的文案沒有 undefined／null 這種漏欄位的痕跡');
+        }
+
+        /* ── v3.8.0：海報必須自動帶一張「掃得到報名頁」的 QR ──
+           驗法是拿 canvas 產生的 PNG 交給 macOS Vision 這支獨立解碼器解，
+           解出來的內容必須正好是分享連結。畫錯格子不會報錯，只會掃不到。 */
+        {
+            await browser.evaluate(`
+                const modal = document.getElementById('posterModal');
+                if (modal) modal.classList.add('hidden');
+                const btn = document.querySelector('button[data-action="share-poster"]');
+                if (btn) btn.click();
+                return true;
+            `);
+            await browser.waitFor(`!document.getElementById('posterModal').classList.contains('hidden')`, { timeout: 8000 });
+            const dataUrl = String(await browser.evaluate(
+                `return document.getElementById('posterCanvas').toDataURL('image/png');`));
+            check(/^data:image\/png;base64,/.test(dataUrl), '海報 canvas 有畫出內容（產生了 PNG）');
+
+            try {
+                // 檢查腳本一律不得自己寫圖檔（no-screenshot-check 守門），
+                // 所以把 base64 用管線餵給解碼器，完全不落地。
+                const decoded = execFileSync('swift',
+                    [path.join(__dirname, '..', '..', 'scripts', 'qr-decode.swift'), '-'],
+                    { encoding: 'utf8', input: dataUrl }).trim();
+                const expected = `http://127.0.0.1:${PORT}/#c${COMP_ID}`;
+                check(decoded === expected,
+                    `★海報右下角的 QR 掃出來就是分享連結（獨立解碼器解到「${decoded}」）`);
+            } catch (err) {
+                check(false, '★海報 QR 必須能被獨立解碼器解出', String(err.message).slice(0, 140));
+            }
+        }
 
         exitCode = fail === 0 ? 0 : 1;
     } catch (err) {

@@ -449,7 +449,9 @@ function renderPosterCanvas(item) {
 
     ctx.fillStyle = '#1e293b';
     ctx.strokeStyle = '#334155';
-    const descHeight = height - infoY - 80;
+    const qrBand = 168;   // v3.8.0：海報下方留給「掃碼報名」QR 的區塊
+    // 名稱很長時 infoY 會被推低，這裡給描述框一個下限，避免被壓成負數而和 QR 疊在一起
+    const descHeight = Math.max(150, height - infoY - 80 - qrBand);
     ctx.fillRect(40, infoY, width - 80, descHeight);
     ctx.strokeRect(40, infoY, width - 80, descHeight);
 
@@ -467,11 +469,72 @@ function renderPosterCanvas(item) {
         descY += 24;
     }
 
+    /* ── v3.8.0：海報自動帶「報名 QR」 ──
+       印出來貼在場地／發傳單時，家長掃碼就直接進報名頁（連結與分享彈窗共用 #c<id>）。 */
+    const qrUrl = posterQrPayload(item);
+    const qrBox = 140;
+    const qrPad = 12;
+    const qrX = 40;
+    const qrY = infoY + descHeight + 18;
+
+    canvasRoundRect(ctx, qrX, qrY, qrBox, qrBox, 14);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+
+    let qrOk = false;
+    if (qrUrl && typeof CMQr !== 'undefined' && typeof CMQr.encode === 'function') {
+        try {
+            const code = CMQr.encode(qrUrl);
+            const n = code.matrix.length;
+            const cell = Math.floor((qrBox - qrPad * 2) / n);
+            const offset = (qrBox - cell * n) / 2;
+            ctx.fillStyle = '#0f172a';
+            for (let r = 0; r < n; r += 1) {
+                for (let c = 0; c < n; c += 1) {
+                    if (code.matrix[r][c]) {
+                        ctx.fillRect(qrX + offset + c * cell, qrY + offset + r * cell, cell, cell);
+                    }
+                }
+            }
+            qrOk = true;
+        } catch (err) {
+            qrOk = false;
+        }
+    }
+
+    const qrTextX = qrX + qrBox + 20;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(qrOk ? '📷 用手機掃碼直接報名' : '📷 請點分享連結報名', qrTextX, qrY + 44);
+
+    if (qrOk) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '13px sans-serif';
+        ctx.fillText(qrUrl.replace(/^https?:\/\//, ''), qrTextX, qrY + 70);
+        ctx.fillStyle = '#64748b';
+        ctx.font = '12px sans-serif';
+        ctx.fillText('掃描後直接進報名頁，', qrTextX, qrY + 94);
+        ctx.fillText('也可以把連結貼給隊友和家長。', qrTextX, qrY + 112);
+    }
+
     ctx.fillStyle = '#64748b';
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('關注系統獲取最新賽事資訊', width / 2, height - 30);
+    ctx.fillText('關注系統獲取最新賽事資訊', width / 2, height - 26);
     ctx.textAlign = 'left';
+}
+
+/* v3.8.0：canvas 的圓角矩形（不用 ctx.roundRect——iOS Safari 16.4 以前沒有） */
+function canvasRoundRect(ctx, x, y, w, h, r) {
+    const radius = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + w, y, x + w, y + h, radius);
+    ctx.arcTo(x + w, y + h, x, y + h, radius);
+    ctx.arcTo(x, y + h, x, y, radius);
+    ctx.arcTo(x, y, x + w, y, radius);
+    ctx.closePath();
 }
 
 function wrapCanvasText(ctx, text, maxWidth) {
@@ -1250,7 +1313,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         const id = Number(btn.dataset.id);
         const action = btn.dataset.action;
         if (action === 'copy-text') {
-            copyToClipboard(btn.dataset.name, btn.dataset.date, btn.dataset.endDate, btn.dataset.location);
+            const src = (Array.isArray(allCompetitions) ? allCompetitions : [])
+                .find((c) => String(c.id) === String(id)) || null;
+            /* v3.8.0：優先用賽事資料（不是每顆複製鈕都帶了 data-name，例如名單彈窗裡的），
+               按鈕上的 data-* 只當後備——否則文案會變成「未命名比賽」。 */
+            copyToClipboard(
+                (src && src.name) || btn.dataset.name,
+                (src && src.date) || btn.dataset.date,
+                (src && src.end_date) || btn.dataset.endDate,
+                (src && src.location) || btn.dataset.location, {
+                id: id,
+                url: id ? buildShareUrl(id) : '',
+                time: src && src.time ? format24HourTime(src.time) : '',
+                registrationStart: src ? src.registration_start_at : '',
+                registrationEnd: src ? (src.registration_end_at || src.registration_deadline) : '',
+                quota: src ? src.max_registrations : 0,
+                requiresApproval: src ? !!(src.requires_approval || src.needs_approval) : false,
+                waitlist: src ? !!(src.waitlist_enabled || src.is_waitlist) : false
+            });
         } else if (action === 'share-link') {
             openShareModal(id);
         } else if (action === 'share-poster') {
@@ -2330,6 +2410,57 @@ function buildShareUrl(competitionId) {
     return `${window.location.origin}/#c${competitionId}`;
 }
 
+/* v3.8.0：把賽事資訊組成「可以直接貼進群組」的文案（純函式，方便測試）。
+   帶上短連結——手機掃碼或點連結都能直接進報名頁。 */
+function shareDateLabel(value) {
+    const text = String(value == null ? '' : value).trim();
+    if (!text) return '';
+    return text.replace('T', ' ').replace(/\.\d+/, '').slice(0, 16);
+}
+
+function buildShareText(info) {
+    const data = info || {};
+    const url = String(data.url || '').trim();
+    const lines = [];
+    lines.push(`🏆 【${String(data.name || '').trim() || '未命名比賽'}】`);
+    lines.push('');
+
+    const start = shareDateLabel(data.date);
+    const end = shareDateLabel(data.endDate);
+    let when = start || '未定';
+    if (start && end) when = `${start} ~ ${end}`;
+    if (start && data.time) when += ` ${data.time}`;
+    lines.push(`📅 時間：${when}`);
+    lines.push(`📍 地點：${String(data.location || '').trim() || '未定'}`);
+
+    const regStart = shareDateLabel(data.registrationStart);
+    const regEnd = shareDateLabel(data.registrationEnd);
+    if (regStart || regEnd) {
+        lines.push(`🚦 報名：${regStart || '不限'} ~ ${regEnd || '額滿為止'}`);
+    }
+    const quota = Number(data.quota);
+    if (quota > 0) {
+        let line = `👥 名額：${quota} 人`;
+        if (data.requiresApproval) line += '（需審核）';
+        if (data.waitlist) line += '，額滿可候補';
+        lines.push(line);
+    }
+    if (url) {
+        lines.push('');
+        lines.push('👉 線上報名（手機掃碼或點連結都可以）：');
+        lines.push(url);
+    }
+    lines.push('');
+    lines.push('名額有限、額滿為止，歡迎轉給隊友和家長。');
+    return lines.join('\n');
+}
+
+/* v3.8.0：海報上用得到「掃碼報名」用的連結（與分享彈窗共用，#c<id> 不打伺服器、改版也不失效） */
+function posterQrPayload(item) {
+    if (!item || item.id == null) return '';
+    return buildShareUrl(item.id);
+}
+
 function openShareModal(competitionId) {
     const item = (typeof allCompetitions !== 'undefined' ? allCompetitions : []).find((c) => Number(c.id) === Number(competitionId));
     const modal = document.getElementById('shareModal');
@@ -2362,6 +2493,7 @@ function openShareModal(competitionId) {
     const textBtn = document.getElementById('shareCopyTextBtn');
     if (textBtn && item) {
         textBtn.dataset.action = 'copy-text';
+        textBtn.dataset.id = item.id;
         textBtn.dataset.name = item.name || '';
         textBtn.dataset.date = item.date || '';
         textBtn.dataset.endDate = item.end_date || '';
@@ -5366,6 +5498,7 @@ function competitionCardHtml(item) {
 
             <div class="cm-card-actions flex items-start gap-1.5 self-end md:self-start flex-wrap">
                 <button data-action="copy-text" 
+                        data-id="${item.id}"
                         data-name="${escapeHtml(item.name)}" 
                         data-date="${item.date || ''}" 
                         data-end-date="${item.end_date || ''}" 
@@ -5607,12 +5740,11 @@ function copyCompetition(id) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-function copyToClipboard(name, date, endDate, location) {
-    let dateStr = date || '未定';
-    if (date && endDate) {
-        dateStr = `${date} ~ ${endDate}`;
-    }
-    const textToCopy = `🏆 【${name}】\n📅 日期：${dateStr}\n📍 地點：${location || '未定'}\n\n👉 歡迎關注與報名！`;
+function copyToClipboard(name, date, endDate, location, extra) {
+    /* v3.8.0：改成完整版群組文案（含報名期間／名額／可直接點的短連結）。
+       舊呼叫端（只有名稱／日期／地點）仍然可用，找不到賽事就用傳進來的欄位。 */
+    const info = Object.assign({ name, date, endDate, location }, extra || {});
+    const textToCopy = buildShareText(info);
 
     navigator.clipboard.writeText(textToCopy)
         .then(() => alert('✅ 比賽資訊已成功複製到剪貼簿！'))
