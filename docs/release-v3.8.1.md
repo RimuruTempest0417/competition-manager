@@ -63,7 +63,7 @@ v3.8.1 把上傳的海報**畫進 canvas 並疊上報名 QR**（右下角白色�
 | ★上傳海報的 QR 獨立解碼（macOS Vision） | 解出 `http://127.0.0.1:3326/#c852`＝分享連結 ✓ |
 | `ops-dashboard-«redacted-vault-secret».js`（回歸） | **42 通過 / 0 失敗** |
 | 路由覆蓋 | 99／99（本版無新增端點） |
-| 正式站 `npm run check:prod` | （發佈後填入） |
+| 正式站 `npm run check:prod` | **109／12／16／41 全綠、`PROD_EXIT=0`**（線上是 v3.8.1，線上 `app.js` 已含 `shareStateGuide`／`renderCustomPosterCanvas`） |
 
 ## 升級注意
 
