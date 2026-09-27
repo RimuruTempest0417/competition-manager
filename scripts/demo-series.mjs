@@ -22,6 +22,7 @@ const { loadEnv, ownerToken, resolveSite, apiRequest, parseArgv } = require('./l
 const ROOT = path.join(import.meta.dirname, '..');
 const PREFIX = '【示範】';
 const NAMES = ['示範小明', '示範阿華', '示範小美', '示範阿德'];
+const LATE = '示範阿強';   // 只在第二站出賽且未完賽 → 舊版（v3.9.0）會在系列排行裡整筆消失
 
 const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const shift = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return d; };
@@ -107,11 +108,21 @@ async function main() {
         process.exit(1);
     }
     console.log(`② 第二站已由週期建立：id ${childId}（${dateB}）`);
+    // 週期建立時會沿用第一站的名稱 → 改成「第二站」，系列裡才看得出兩場的差別
+    const renamed = await api(`/api/competitions/${childId}`, {
+        method: 'PUT',
+        body: {
+            name: `${PREFIX}秋季系列 第二站`, date: dateB, time: '09:00', end_date: dateB, end_time: '16:00',
+            location: '澳門（示範場地）', is_registration_open: false
+        }
+    });
+    console.log(`   ${renamed.ok ? '✅' : '❌'} 第二站改名為「${PREFIX}秋季系列 第二站」（HTTP ${renamed.status}）`);
 
     /* ③ 兩場各報名 4 人（現場代報名，不需要真的有帳號） */
     const regs = { [rootId]: [], [childId]: [] };
     for (const compId of [rootId, childId]) {
-        for (const name of NAMES) {
+        const names = compId === childId ? [...NAMES, LATE] : NAMES;
+        for (const name of names) {
             const r = await api(`/api/competitions/${compId}/onsite-registration`, { method: 'POST', body: { username: name } });
             if (!r.ok) { console.error(`   ❌ ${compId} 代報名 ${name}：${r.status} ${r.text?.slice(0, 120)}`); continue; }
             regs[compId].push({ id: r.body.registration ? r.body.registration.id : r.body.id, name });
@@ -119,13 +130,15 @@ async function main() {
         console.log(`③ ${compId} 已報名 ${regs[compId].length} 人`);
     }
 
-    /* ④ 成績：第一站 1~4 名；第二站「示範小美」未完賽（超表 0 分，驗證不會整筆消失） */
+    /* ④ 成績：第一站 1~4 名；第二站「示範小美」「示範阿強」未完賽（超表 0 分，驗證不會整筆消失） */
     const raceA = regs[rootId].map((r, i) => ({
         registration_id: r.id, rank: i + 1, status: 'finished', score_text: `1${i + 2}:${30 - i * 7}.0`
     }));
     const raceB = regs[childId].map((r, i) => (
         r.name === '示範小美'
-            ? { registration_id: r.id, status: 'dnf', note: '示範：未完賽' }
+            ? { registration_id: r.id, status: 'dnf', note: '示範：未完賽（同系列另一場有名次）' }
+            : r.name === LATE
+                ? { registration_id: r.id, status: 'dnf', note: '示範：未完賽（只有這一場→ 舊版會整筆消失）' }
             : { registration_id: r.id, rank: i + 1, status: 'finished', score_text: `1${i + 3}:1${i}.0` }
     ));
     for (const [compId, rows] of [[rootId, raceA], [childId, raceB]]) {

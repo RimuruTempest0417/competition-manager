@@ -50,7 +50,7 @@ node scripts/demo-series.mjs --remove   # 移除所有「【示範】…」的�
 | Strict-Transport-Security Header Not Set | 低 | `content-autofill.googleapis.com` | **不是本站**（Chrome 的服務）；本站實測有 `max-age=31536000; includeSubDomains` |
 | Suspicious Comments | 提示 | `GET /js/competition-state.js` | **命中我自己寫的註解**（`\bUSERNAME\b`）。已把註解裡的 `username` 改掉（`results.js`、`app.js` 一起），程式碼不動 |
 | Information in Browser localStorage | 提示 | `GET /` | 是通知偏好 `cm-notify`（沒有憑證；權杖在 HttpOnly cookie）。維持現狀 |
-| Re-examine Cache-control Directives | 提示 | `GET /`（`public, max-age=0`） | 首頁是單頁應用的殼，改成 `no-cache, no-store, must-revalidate`（避免共享快取留存） |
+| Re-examine Cache-control Directives | 提示 | `GET /`（`public, max-age=0`） | **部分修正、其餘不動**：`/index.html` 已改成 `no-cache, no-store, must-revalidate`；根路徑 `/` 由 **Express 靜態中介層**回應（`public, max-age=0` ＝ 每次都要重新驗證，語意上不構成共享快取留存風險），Vercel 的 `headers` 規則蓋不到該請求，因此不強改 |
 | Retrieved from Cache、Tech Detected（HSTS／HTTP/3／OpenGSE／PWA／Tailwind／Vercel） | 提示 | — | 技術指紋與 CDN 快取，不是問題 |
 
 ## 三、測試結果
@@ -72,3 +72,10 @@ node scripts/demo-series.mjs --remove   # 移除所有「【示範】…」的�
 - `scripts/demo-series.mjs`（新）、`tests/non-finish-status.test.js`（新）、`tests/series-review.test.js`、`tests/v390-api.test.js`、`tests/browser/checkin-qr-check.js`、`tests/browser/v390-check.js`
 
 **無 migration、無新增端點、CSP 不變、無新增前端套件。**
+
+## 六、發佈後補充（同一個版本內的追蹤修正）
+
+1. `vercel.json`：原本為了根路徑 `/` 又加了一條 `/(index\.html)?` 規則，**實測對 `/` 無效**（那個請求由 Express 靜態中介層回應），已收回，只保留對 `/index.html` 有效的那條。
+2. `scripts/demo-series.mjs`：示範資料加了第二位未完賽選手（`示範阿強`，**只在第二站出賽**）——這正是 v3.9.0 會「在系列排行裡整筆消失」的情況，現在會以 **0 分／出賽 1 場** 留在榜上；週期建立的第二站會沿用第一站名稱，腳本會自動改名成「第二站」。
+
+示範資料目前存在於正式站（`#c54`／`#c55`），驗完用 `node scripts/demo-series.mjs --remove` 一鍵清除。
