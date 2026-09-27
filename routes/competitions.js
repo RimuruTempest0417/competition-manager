@@ -9,7 +9,7 @@ const CMPaging = require('../public/js/paging');                  // v3.0.0：�
 const CMVenue = require('../public/js/venue');                    // v2.27.0：地圖連結規則的唯一真實來源
 
 module.exports = function registerCompetitionsRoutes(app, ctx) {
-    const { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, cleanText, fetchCompetition, logPushEvent, notifyUser, scheduleSchemaReady, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady, allowPublicWrite, shareVisitsSchemaReady, shareSourceSchemaReady, SHARE_SOURCE_HINT } = ctx;
+    const { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, cleanText, fetchCompetition, logPushEvent, notifyUser, scheduleSchemaReady, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady, optionalAuth, ADMIN_ROLES, allowPublicWrite, shareVisitsSchemaReady, shareSourceSchemaReady, SHARE_SOURCE_HINT, V390_HINT, seriesPointsSchemaReady, formFieldsSchemaReady, normalizeSeriesPointsPayload, normalizeFormFieldsPayload, hasSeriesPointsContent, hasFormFieldsContent } = ctx;
     // v3.8.2：分享來源追蹤（訪客瀏覽記錄與後台成效統計）
 app.get('/api/competitions', async (req, res) => {
     try {
@@ -223,6 +223,126 @@ app.get('/api/competitions/:id/share-stats', requireAdmin, async (req, res) => {
     }
 });
 
+/* v3.9.0：系列積分與報名表自訂欄位併進 payload（欄位不存在時整組不帶，網站照常運作） */
+async function appendV390Fields(payload, body) {
+    const out = Object.assign({}, payload);
+    if (hasSeriesPointsContent(body) && await seriesPointsSchemaReady()) {
+        out.series_points = normalizeSeriesPointsPayload(body);
+    }
+    if (hasFormFieldsContent(body) && await formFieldsSchemaReady()) {
+        out.form_fields = normalizeFormFieldsPayload(body);
+    }
+    return out;
+}
+
+/* v3.9.0：賽事回顧報告 —— 賽事結束後的一份成績單（公開；分享成效只給管理員看） */
+app.get('/api/competitions/:id/review', optionalAuth, async (req, res) => {
+    try {
+        const comp = await fetchCompetition(req.params.id);
+        if (!comp) return res.status(404).json({ error: '找不到該賽事' });
+
+        const { data: regRows, error: regErr } = await supabase.from('registrations')
+            .select('id, username, status, is_deleted, attended_at, source')
+            .eq('competition_id', comp.id).limit(2000);
+        if (regErr) throw regErr;
+        const regs = (regRows || []).filter((row) => row.is_deleted !== true);
+
+        // 成績表還沒建（未執行 v3.1.0 migration）就當作沒有成績，不要讓整份回顧失敗
+        let results = [];
+        try {
+            const { data: rows, error } = await supabase.from('competition_results')
+                .select('rank, username, status, score_text, note')
+                .eq('competition_id', comp.id).limit(2000);
+            if (error) throw error;
+            results = rows || [];
+        } catch (err) {
+            results = [];
+        }
+
+        const isAdmin = !!(req.currentUser && ADMIN_ROLES.indexOf(req.currentUser.role) >= 0);
+        let shareRows = [];
+        if (isAdmin && await shareVisitsSchemaReady()) {
+            const { data: visits } = await supabase.from('share_visits').select('source')
+                .eq('competition_id', comp.id).limit(SHARE_STATS_MAX);
+            shareRows = CMCompetitionState.shareStatsSummary(visits || [], regs);
+        }
+
+        const review = CMCompetitionState.competitionReview({ competition: comp, registrations: regs, results, shareRows });
+        review.can_see_share = isAdmin;
+        // 系列（週期性賽事）→ 前端可以順便給一個「看總積分」的入口
+        review.series_root_id = Number(comp.recurrence_parent_id || comp.id);
+        review.status = competitionState(comp, new Date()).state;
+        res.json(review);
+    } catch (err) {
+        await logErrorToDb(req, 'competition_review_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/* v3.9.0：系列賽總積分 —— 系列＝週期性賽事的根 + 它的子場次（用既有欄位，不新增資料結構） */
+app.get('/api/series/:id/standings', async (req, res) => {
+    try {
+        const root = await fetchCompetition(req.params.id);
+        if (!root) return res.status(404).json({ error: '找不到該系列' });
+
+        const { data: all, error: compErr } = await supabase.from('competitions')
+            .select('id, name, date, series_points, recurrence_parent_id, is_deleted')
+            .eq('is_deleted', false).limit(500);
+        if (compErr) throw compErr;
+
+        const rootKey = String(root.recurrence_parent_id || root.id);
+        const races = (all || [])
+            .filter((c) => String(c.id) === rootKey || String(c.recurrence_parent_id || '') === rootKey)
+            .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+        const raceById = {};
+        races.forEach((c) => { raceById[String(c.id)] = c; });
+
+        // 不用 .in()（伺服器端一次撈、在記憶體過濾，資料量小且假後端也支援）
+        const [{ data: resultRows }, { data: regRows }] = await Promise.all([
+            supabase.from('competition_results').select('competition_id, registration_id, username, rank, status').limit(5000),
+            supabase.from('registrations').select('id, competition_id, user_id, username, is_deleted').limit(5000)
+        ]);
+        const regById = {};
+        (regRows || []).forEach((row) => { regById[String(row.id)] = row; });
+
+        const rows = (resultRows || [])
+            .filter((row) => raceById[String(row.competition_id)])
+            .filter((row) => Number.isFinite(Number(row.rank)) && Number(row.rank) > 0 && row.status !== 'hidden')
+            .map((row) => {
+                const reg = regById[String(row.registration_id)] || {};
+                const race = raceById[String(row.competition_id)];
+                return {
+                    competition_id: row.competition_id,
+                    competition_name: race.name || '',
+                    date: race.date || '',
+                    user_id: reg.user_id === undefined ? null : reg.user_id,
+                    username: reg.username || row.username || '',
+                    rank: Number(row.rank)
+                };
+            });
+
+        const standings = CMCompetitionState.seriesStandings(rows, {
+            config: CMCompetitionState.normalizeSeriesPoints(root.series_points),
+            raceCount: races.length
+        });
+        res.json({
+            series: {
+                id: root.id,
+                name: root.name,
+                root_id: Number(rootKey),
+                is_root: String(root.id) === rootKey
+            },
+            races: races.map((c) => ({ id: c.id, name: c.name || '', date: c.date || '' })),
+            config: standings.config,
+            race_count: standings.race_count,
+            standings: standings.rows
+        });
+    } catch (err) {
+        await logErrorToDb(req, 'series_standings_error', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/competitions/trash', requireAdmin, getTrashCompetitionsHandler);
 app.get('/api/competitions/deleted', requireAdmin, getTrashCompetitionsHandler);
 
@@ -293,7 +413,7 @@ app.post('/api/competitions', requireAdmin, async (req, res) => {
 
         const { data, error } = await supabase
             .from('competitions')
-            .insert([payload])
+            .insert([await appendV390Fields(payload, req.body)])
             .select();
 
         if (error) throw error;
@@ -533,7 +653,7 @@ app.put('/api/competitions/:id', requireAdmin, async (req, res) => {
 
         const { data, error } = await supabase
             .from('competitions')
-            .update(payload)
+            .update(await appendV390Fields(payload, req.body))
             .eq('id', id)
             .select();
 

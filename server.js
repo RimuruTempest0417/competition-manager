@@ -304,7 +304,7 @@ const MIGRATION_HINT =
 const serverState = {
     taxonomy: null, teamFields: null, registrationWindow: null,
     recurrence: null, tfa: null, waitlistNotify: null,
-    registrationReview: null, shareSource: null, promotedAt: null, shareVisits: null, waitlistOrder: null,
+    registrationReview: null, seriesPoints: null, formFields: null, shareSource: null, promotedAt: null, shareVisits: null, waitlistOrder: null,
     webpush: null, vapid: null,
     opsStatsCache: { at: 0, days: 0, payload: null },
     lastCronRun: 0,
@@ -497,6 +497,7 @@ function toDateString(input) {
    狀態即時由「當下時間」推導（不存資料庫、不需要排程）→ 時間一到就自動切換。
 */
 const CMCompetitionState = require('./public/js/competition-state');
+const CMFormFields = require('./public/js/form-fields');   // v3.9.0：報名表自訂欄位（前後端共用）
 const CMAnnouncements = require('./public/js/announcements');   // v2.26.0：公告可見性的唯一真實來源
 const CMVenue = require('./public/js/venue');                    // v2.27.0：地圖連結規則的唯一真實來源
 const CMStaff = require('./public/js/staff');                    // v2.27.0：工作人員角色規則的唯一真實來源
@@ -1051,6 +1052,51 @@ function parseResolveIds(input) {
 }
 
 /* ---------- 錯誤日誌與系統日誌 API：v3.4.0 起移到 routes/error-logs.js ---------- */
+/* v3.9.0：系列積分、報名表自訂欄位（欄位不存在時功能自動降級，網站照常運作） */
+const V390_HINT =
+    '資料庫尚未執行 v3.9.0 migration（migrations/2026-09-27-v3.9.0-review-series-form.sql）：' +
+    '需要 competitions.series_points／competitions.form_fields／registrations.form_answers。';
+
+async function seriesPointsSchemaReady() {
+    if (serverState.seriesPoints !== null && serverState.seriesPoints !== undefined) return serverState.seriesPoints;
+    serverState.seriesPoints = await columnExists('competitions', 'series_points');
+    if (!serverState.seriesPoints) console.warn('⚠️ 尚未執行 v3.9.0 migration：系列積分停用');
+    return serverState.seriesPoints;
+}
+
+async function formFieldsSchemaReady() {
+    if (serverState.formFields !== null && serverState.formFields !== undefined) return serverState.formFields;
+    serverState.formFields = await columnExists('competitions', 'form_fields')
+        && await columnExists('registrations', 'form_answers');
+    if (!serverState.formFields) console.warn('⚠️ 尚未執行 v3.9.0 migration：報名表自訂欄位停用');
+    return serverState.formFields;
+}
+
+/* 系列積分規則：沒帶＝不變更；帶 null／空物件＝清除（回到預設名次配分） */
+function normalizeSeriesPointsPayload(body) {
+    const raw = body && body.series_points;
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length === 0) {
+        return CMCompetitionState.normalizeSeriesPoints({});
+    }
+    return CMCompetitionState.normalizeSeriesPoints(raw);
+}
+
+function hasSeriesPointsContent(body) {
+    return !!(body && Object.prototype.hasOwnProperty.call(body, 'series_points') && body.series_points !== undefined);
+}
+
+/* 報名表自訂欄位：一律用共用模組正規化（最多 10 個、key 唯一、選項去重） */
+function normalizeFormFieldsPayload(body) {
+    const raw = body && body.form_fields;
+    if (raw === null || raw === undefined) return null;
+    return CMFormFields.normalizeFields(raw);
+}
+
+function hasFormFieldsContent(body) {
+    return !!(body && Object.prototype.hasOwnProperty.call(body, 'form_fields') && body.form_fields !== undefined);
+}
+
 /* v3.8.2：分享來源追蹤所需欄位／資料表（沒執行 migration 時功能自動降級，網站照常運作） */
 const SHARE_SOURCE_HINT =
     '資料庫尚未執行 v3.8.2 migration（migrations/2026-09-27-v3.8.2-share-source.sql）：' +
@@ -1776,7 +1822,9 @@ const SCHEDULE_HINT =
 
 const scheduleSchemaReady = createSchemaProbe(() => columnExists('competitions', 'cancelled_at'));
 
-require('./routes/competitions')(app, { allowPublicWrite, shareVisitsSchemaReady, shareSourceSchemaReady, SHARE_SOURCE_HINT, COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, cleanText, fetchCompetition, logPushEvent, notifyUser, requireAdmin, scheduleSchemaReady, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady });
+require('./routes/competitions')(app, { optionalAuth, ADMIN_ROLES, allowPublicWrite,
+    V390_HINT, seriesPointsSchemaReady, formFieldsSchemaReady, normalizeSeriesPointsPayload,
+    normalizeFormFieldsPayload, hasSeriesPointsContent, hasFormFieldsContent, shareVisitsSchemaReady, shareSourceSchemaReady, SHARE_SOURCE_HINT, COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, cleanText, fetchCompetition, logPushEvent, notifyUser, requireAdmin, scheduleSchemaReady, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady });
 
 
 async function fetchCompetition(id) {
@@ -2159,7 +2207,9 @@ async function logPushEvent(competitionId, kind, sentCount, extra) {
 // 各賽事報名人數（公開的彙總資訊，未執行 migration 時回空物件）
 
 /* ---------- 報名、審核、候補與帳號：v3.4.0 起移到 routes/registrations.js ---------- */
-require('./routes/registrations')(app, { shareSourceSchemaReady, promotedAtSchemaReady, SHARE_SOURCE_HINT, ATTENDANCE_HINT, CHECKIN_HINT, ADMIN_ROLES, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, attendanceSchemaReady, checkinSchemaReady, registrationReviewSchemaReady, registrationSummary, clearAuthCookie, requireAdmin, setAuthCookie, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
+require('./routes/registrations')(app, { shareSourceSchemaReady, promotedAtSchemaReady, SHARE_SOURCE_HINT,
+    V390_HINT, formFieldsSchemaReady,
+ ATTENDANCE_HINT, CHECKIN_HINT, ADMIN_ROLES, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, attendanceSchemaReady, checkinSchemaReady, registrationReviewSchemaReady, registrationSummary, clearAuthCookie, requireAdmin, setAuthCookie, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });
 
 /* ---------- 隊伍與隊員編排：v3.4.0 起移到 routes/teams.js ---------- */
 require('./routes/teams')(app, { ADMIN_ROLES, REGISTRATION_HINT, SUPER_ADMIN_ROLES, attendanceSchemaReady, authenticateToken, cleanText, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, notifyOnPromote, registrationReviewSchemaReady, requireAdmin, requireSuperAdmin, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady });

@@ -5,13 +5,14 @@
  */
 // 套件／自寫模組（原封不動搬過來；相對路徑補一層，因為本檔在 routes/ 底下）
 const CMCompetitionState = require('../public/js/competition-state');
+const CMFormFields = require('../public/js/form-fields');      // v3.9.0：報名表自訂欄位（前後端共用）
 const CMPaging = require('../public/js/paging');                  // v3.0.0：分頁規則的唯一真實來源（前後端共用）
 const jwt = require('jsonwebtoken');
 const { hashPassword, verifyPassword, needsPasswordUpgrade } = require('../lib/passwords');
 // v2.15.0：兩步驟驗證（TOTP）—— 純手寫實作，只用 Node 內建 crypto，無外部套件
 
 module.exports = function registerRegistrationsRoutes(app, ctx) {
-    const { ATTENDANCE_HINT, CHECKIN_HINT, ADMIN_ROLES, setAuthCookie, clearAuthCookie, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, attendanceSchemaReady, checkinSchemaReady, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady, shareSourceSchemaReady, promotedAtSchemaReady, SHARE_SOURCE_HINT } = ctx;
+    const { ATTENDANCE_HINT, CHECKIN_HINT, ADMIN_ROLES, setAuthCookie, clearAuthCookie, GENERIC_DB_ERROR, JWT_SECRET, PASSWORD_RE, REGISTRATIONS_PAGE_MAX, REGISTRATION_HINT, REGISTRATION_REVIEW_HINT, USERNAME_RE, WAITLIST_HISTORY_MAX_WINDOW, WAITLIST_NOTIFY_HINT, WAITLIST_ORDER_HINT, allowRegisterAttempt, attendanceSchemaReady, checkinSchemaReady, auditActionLabel, authenticateToken, cleanText, competitionState, fetchCompetition, isMissingTableError, logAudit, logErrorToDb, logPushEvent, notifyOnPromote, notifyUser, registrationReviewSchemaReady, registrationSummary, requireAdmin, requireSuperAdmin, staffSchemaReady, supabase, waitlistNotifySchemaReady, waitlistOrderSchemaReady, shareSourceSchemaReady, promotedAtSchemaReady, SHARE_SOURCE_HINT, V390_HINT, formFieldsSchemaReady } = ctx;
     // v3.8.2：分享來源追蹤所需的探針（由 server.js 提供）
 app.get('/api/registration-counts', async (req, res) => {
     try {
@@ -219,6 +220,16 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
         if (exErr) throw exErr;
         if (existing) return res.status(409).json({ error: '你已經報名過此賽事了' });
 
+        // v3.9.0：報名表自訂欄位（主辦沒設定就完全不影響，行為與以前一樣）
+        const formFields = Array.isArray(comp.form_fields) ? comp.form_fields : [];
+        let formAnswers = null;
+        if (formFields.length) {
+            const checked = CMFormFields.validateAnswers(formFields, body.form_answers);
+            if (!checked.ok) return res.status(400).json({ error: '報名資料有誤，請檢查後再送出', errors: checked.errors });
+            formAnswers = Object.keys(checked.clean).length ? checked.clean : null;
+            if (formAnswers && !(await formFieldsSchemaReady())) formAnswers = null;   // 未 migration → 不帶欄位
+        }
+
         // v3.8.2：這筆報名是從哪個分享來源進來的（海報 QR／分享 QR／複製連結／群組文案）
         const shareSource = CMCompetitionState.parseShareSource(body.source);
         const sourceReady = shareSource ? await shareSourceSchemaReady() : false;
@@ -247,6 +258,7 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
             created_at: new Date().toISOString()
         };
         if (sourceReady) insertRow.source = shareSource;   // 沒執行 migration 就整欄不帶，網站照常運作
+        if (formAnswers) insertRow.form_answers = formAnswers;
 
         const { data, error } = await supabase.from('registrations').insert([insertRow]).select();
         if (error) throw error;
@@ -255,7 +267,8 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
             : decision.status === 'waitlisted' ? `（候補第 ${decision.waitlist_position} 位）` : '';
         await logAudit(operator.username, 'REGISTER_COMPETITION', comp.id,
             `報名賽事: ${comp.name}${teamName ? '（隊伍：' + teamName + '）' : ''}${statusNote}`
-            + (sourceReady ? `｜來源：${CMCompetitionState.shareSourceLabel(shareSource)}` : ''), req.userAgent);
+            + (sourceReady ? `｜來源：${CMCompetitionState.shareSourceLabel(shareSource)}` : '')
+            + (formAnswers ? `｜${CMFormFields.answersSummary(formFields, formAnswers)}` : ''), req.userAgent);
 
         const message = decision.status === 'pending' ? '已送出報名，等待主辦單位審核'
             : decision.status === 'waitlisted' ? `已排入候補（第 ${decision.waitlist_position} 位）`
@@ -267,6 +280,7 @@ app.post('/api/competitions/:id/register', authenticateToken, async (req, res) =
             status_label: CMCompetitionState.REG_STATUS_LABELS[decision.status],
             waitlist_position: decision.waitlist_position,
             source: sourceReady ? shareSource : null,
+            form_answers: formAnswers,
             needs_approval: decision.status === 'pending',
             registration: data[0],
             registrations: counts.slots + (decision.status === 'waitlisted' ? 0 : 1)

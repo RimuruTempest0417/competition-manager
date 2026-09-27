@@ -10,6 +10,18 @@ const CM_STATE_FILTERS = [
     { value: 'finished', label: '🏁 已結束' }
 ];
 let currentUser = null;
+
+/* v3.9.0：寫進 localStorage 的只有「畫面真的會用到」的欄位
+   （ZAP 報告點出 localStorage 資訊揭露；整包 user 物件塞進去會多留 email 等個資） */
+function publicUser(user) {
+    if (!user) return null;
+    return { id: user.id, username: user.username, role: user.role };
+}
+
+function saveLocalUser() {
+    const safe = publicUser(currentUser);
+    if (safe) localStorage.setItem('competition_user', JSON.stringify(safe));
+}
 let guideActiveSection = null;   // v3.6.0：使用說明目前選取的段落
 let guideSearchTimer = 0;        // 搜尋輸入的節流計時器
 let currentBase64Screenshot = '';
@@ -190,7 +202,7 @@ async function verifySession() {
         const data = await res.json();
         if (data && data.user) {
             currentUser = data.user;
-            localStorage.setItem('competition_user', JSON.stringify(currentUser));
+            saveLocalUser();
             updateUIByRole();
         }
     } catch (e) {
@@ -1128,6 +1140,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('logoutBtn')?.addEventListener('click', () => { handleLogout(); closeNavDropdown(); });
 
     document.getElementById('competitionForm')?.addEventListener('submit', handleFormSubmit);
+    // v3.9.0：自訂欄位編輯器
+    document.getElementById('addFormFieldBtn')?.addEventListener('click', addFormField);
+    document.getElementById('formFieldsEditor')?.addEventListener('click', handleFormFieldsEditorClick);
+    document.getElementById('formFieldsEditor')?.addEventListener('change', handleFormFieldsEditorChange);
     document.getElementById('cancelEditBtn')?.addEventListener('click', resetForm);
 
     document.getElementById('searchInput')?.addEventListener('input', filterCompetitions);
@@ -1439,6 +1455,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             openShareModal(id);
         } else if (action === 'share-poster') {
             openPosterModal(id);
+        } else if (action === 'view-review') {
+            CMReview.open(id);
+        } else if (action === 'view-series') {
+            CMReview.openSeries(id);
         } else if (action === 'share-stats') {
             openShareStatsModal(id);
         } else if (action === 'toggle-subscribe') {
@@ -1487,10 +1507,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     localStorage.removeItem('auth_token');   // v3.5.0：舊版把權杖存在這裡，升級後一律清掉
-    const savedUser = localStorage.getItem('competition_user');
+    const savedUser = localStorage.getItem('competition_user');   // v3.9.0：只會有 id／username／role
     if (savedUser) {
         // 先樂觀套用（畫面不用等），真正的權威是 cookie → 立刻向伺服器確認一次
-        try { currentUser = JSON.parse(savedUser); } catch (e) { currentUser = null; }
+        // v3.9.0：舊資料可能存了整包 user → 讀出來也過一次白名單，下一次寫入就自動縮小
+        try { currentUser = publicUser(JSON.parse(savedUser)); } catch (e) { currentUser = null; }
     } else {
         currentUser = null;
     }
@@ -2051,7 +2072,7 @@ async function performRegister() {
 
         // v3.5.0：權杖已由伺服器放進 HttpOnly cookie，前端只留顯示用的帳號資訊
         localStorage.removeItem('auth_token');
-        localStorage.setItem('competition_user', JSON.stringify(data.user));
+        localStorage.setItem('competition_user', JSON.stringify(publicUser(data.user)));
         currentUser = data.user;
 
         closeLoginModal();
@@ -2185,6 +2206,9 @@ function openRegisterModal(id) {
         hint.innerText = bits.join('\n');
     }
 
+    // v3.9.0：主辦自訂的報名欄位（沒設定就整區隱藏，跟以前一樣）
+    CMRegistrationForm.render(document.getElementById('registerCustomFields'), item.form_fields);
+
     document.getElementById('registerTeamWrap')?.classList.toggle('hidden', !item.is_team_event);
     const teamInput = document.getElementById('registerTeamName');
     if (teamInput) teamInput.value = '';
@@ -2214,16 +2238,33 @@ async function confirmRegister() {
 
     if (item.is_team_event && !teamName) return setRegisterMsg('此為組隊比賽，請填寫隊伍名稱', 'error');
 
+    // v3.9.0：自訂欄位先在本機驗一次（規則與後端完全相同），不要送出後才被退回
+    const customWrap = document.getElementById('registerCustomFields');
+    const customCheck = CMRegistrationForm.validate(customWrap);
+    if (!customCheck.ok) {
+        CMRegistrationForm.showErrors(customWrap, customCheck.errors);
+        return setRegisterMsg('有些欄位還沒填好，請看紅字說明', 'error');
+    }
+    CMRegistrationForm.clearErrors(customWrap);
+
     const btn = document.getElementById('confirmRegisterBtn');
     if (btn) btn.disabled = true;
 
     try {
         const res = await customFetch(`/api/competitions/${item.id}/register`, {
             method: 'POST',
-            body: JSON.stringify({ team_name: teamName, note, source: pendingShareSource || undefined })
+            body: JSON.stringify({
+                team_name: teamName,
+                note,
+                source: pendingShareSource || undefined,
+                form_answers: customCheck.clean
+            })
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || '報名失敗');
+        if (!res.ok) {
+            if (data.errors) CMRegistrationForm.showErrors(customWrap, data.errors);
+            throw new Error(data.error || '報名失敗');
+        }
 
         closeRegisterModal();
         await Promise.all([fetchRegistrationCounts(), fetchMyRegistrations()]);
@@ -2489,6 +2530,8 @@ function renderMyRegs() {
                 <p class="text-xs text-slate-500 mt-0.5">📅 ${escapeHtml(comp.date || '')}${comp.time ? ' ' + escapeHtml(comp.time) : ''}${comp.location ? ' ｜ 📍 ' + escapeHtml(comp.location) : ''}</p>
                 ${comp.is_team_event && r.team_name ? `<p class="text-xs text-indigo-600 mt-0.5">👥 隊伍：${escapeHtml(r.team_name)}</p>` : ''}
                 ${r.note ? `<p class="text-xs text-slate-500 mt-0.5">📝 ${escapeHtml(r.note)}</p>` : ''}
+                ${CMFormFields.answersSummary(registrationFieldsFor(r), r.form_answers)
+                    ? `<p class="text-xs text-slate-500 mt-0.5">${escapeHtml(CMFormFields.answersSummary(registrationFieldsFor(r), r.form_answers))}</p>` : ''}
                 ${r.checkin_code ? `<div class="mt-1.5">
                     <button type="button" data-action="show-checkin-qr" data-id="${r.id}"
                         class="text-xs text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded transition">📷 報到碼 / QR（現場出示）</button>
@@ -2754,6 +2797,153 @@ async function cancelRegistration(regId) {
     }
 }
 
+/* ---------- v3.9.0：賽事回顧報告與系列總積分 ---------- */
+
+/* 卡片按鈕：賽事開打／結束後才看回顧；屬於系列的賽事可以看總積分 */
+function seriesReviewButtonsHtml(item) {
+    const bits = [];
+    const state = clientRegistrationState(item);
+    const phase = state && state.state;
+    if (phase === 'finished' || phase === 'in_progress') {
+        bits.push(`<button data-action="view-review" data-id="${item.id}"
+                    class="text-xs text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded transition">
+                    📊 回顧報告</button>`);
+    }
+    if (item.recurrence_parent_id || item.recurrence_id || item.series_id) {
+        const rootId = item.recurrence_parent_id || item.recurrence_id || item.series_id || item.id;
+        bits.push(`<button data-action="view-series" data-id="${rootId}"
+                    class="text-xs text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 px-2.5 py-1 rounded transition">
+                    🏆 系列總積分</button>`);
+    }
+    return bits.join('\n                ');
+}
+
+/* ---------- v3.9.0：賽事表單的自訂欄位編輯器 ---------- */
+let draftFormFields = [];
+
+function renderFormFieldsEditor() {
+    const host = document.getElementById('formFieldsEditor');
+    if (!host) return;
+    if (!draftFormFields.length) {
+        host.innerHTML = '<p class="text-xs text-slate-400">還沒有欄位。不新增就維持原本的報名表（姓名＋備註）。</p>';
+        return;
+    }
+    const typeOptions = (selected) => CMFormFields.FIELD_TYPES
+        .map((type) => `<option value="${type}"${type === selected ? ' selected' : ''}>${CMFormFields.TYPE_LABELS[type]}</option>`)
+        .join('');
+    host.innerHTML = draftFormFields.map((field, index) => `
+        <div class="border border-slate-200 rounded-lg p-2 bg-white space-y-1.5" data-field-row="${index}">
+            <input type="hidden" data-ff="key" value="${escapeHtml(field.key || '')}">
+            <div class="flex gap-2 items-center">
+                <input type="text" data-ff="label" maxlength="${CMFormFields.LIMITS.label}" value="${escapeHtml(field.label || '')}"
+                    placeholder="欄位名稱（例如：衣服尺寸）" class="flex-1 px-2 py-1.5 border border-slate-300 rounded text-xs">
+                <select data-ff="type" class="px-2 py-1.5 border border-slate-300 rounded text-xs">${typeOptions(field.type || 'text')}</select>
+                <label class="flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap">
+                    <input type="checkbox" data-ff="required"${field.required ? ' checked' : ''}> 必填</label>
+                <button type="button" data-ff="up" class="text-xs text-slate-500 px-1" title="上移">↑</button>
+                <button type="button" data-ff="down" class="text-xs text-slate-500 px-1" title="下移">↓</button>
+                <button type="button" data-ff="remove" class="text-xs text-red-600 px-1" title="刪除">✕</button>
+            </div>
+            <input type="text" data-ff="options" value="${escapeHtml((field.options || []).join(', '))}"
+                placeholder="下拉選單的選項（用逗號分隔；其他型別可留空）"
+                class="w-full px-2 py-1.5 border border-slate-300 rounded text-xs ${field.type === 'select' ? '' : 'hidden'}">
+        </div>`).join('');
+}
+
+function syncDraftFromEditor() {
+    const host = document.getElementById('formFieldsEditor');
+    if (!host) return;
+    host.querySelectorAll('[data-field-row]').forEach((row) => {
+        const index = Number(row.dataset.fieldRow);
+        const field = draftFormFields[index];
+        if (!field) return;
+        const keyInput = row.querySelector('[data-ff="key"]');
+        field.key = keyInput ? keyInput.value : (field.key || '');   // ★既有欄位的 key 不能重新產生
+        field.label = row.querySelector('[data-ff="label"]').value;
+        field.type = row.querySelector('[data-ff="type"]').value;
+        field.required = row.querySelector('[data-ff="required"]').checked;
+        const opts = row.querySelector('[data-ff="options"]');
+        field.options = opts ? opts.value.split(',').map((t) => t.trim()).filter(Boolean) : [];
+    });
+}
+
+function addFormField() {
+    syncDraftFromEditor();
+    if (draftFormFields.length >= CMFormFields.LIMITS.maxFields) {
+        return alert(`最多 ${CMFormFields.LIMITS.maxFields} 個自訂欄位。`);
+    }
+    draftFormFields.push({ key: '', label: '', type: 'text', required: false, options: [] });
+    renderFormFieldsEditor();
+}
+
+function handleFormFieldsEditorClick(e) {
+    const btn = e.target.closest('button[data-ff]');
+    if (!btn) return;
+    const row = btn.closest('[data-field-row]');
+    if (!row) return;
+    const index = Number(row.dataset.fieldRow);
+    const kind = btn.dataset.ff;
+    syncDraftFromEditor();
+    if (kind === 'remove') draftFormFields.splice(index, 1);
+    else if (kind === 'up' && index > 0) draftFormFields.splice(index - 1, 0, draftFormFields.splice(index, 1)[0]);
+    else if (kind === 'down' && index < draftFormFields.length - 1) draftFormFields.splice(index + 1, 0, draftFormFields.splice(index, 1)[0]);
+    else return;
+    renderFormFieldsEditor();
+}
+
+function handleFormFieldsEditorChange(e) {
+    // 換型別要立刻顯示／隱藏「選項」欄
+    if (e.target.dataset.ff === 'type') {
+        syncDraftFromEditor();
+        renderFormFieldsEditor();
+    }
+}
+
+function readFormFieldsFromEditor() {
+    syncDraftFromEditor();
+    // normalizeFields 對「已經有合法 key」的欄位會沿用，只有全新的欄位才由標籤產生 key
+    return CMFormFields.normalizeFields(draftFormFields);
+}
+
+function fillFormFieldsEditor(raw) {
+    draftFormFields = CMFormFields.normalizeFields(raw).map((field) => ({
+        key: field.key,        // ★保留原本的 key：改標籤不該讓舊報名的答案對不上
+        label: field.label, type: field.type, required: !!field.required, options: (field.options || []).slice()
+    }));
+    renderFormFieldsEditor();
+}
+
+/* 我的報名：找出那場賽事的自訂欄位定義（名單裡只有答案，標籤要回頭找賽事） */
+function registrationFieldsFor(reg) {
+    const comp = allCompetitions.find((c) => String(c.id) === String(reg.competition_id));
+    return comp ? comp.form_fields : null;
+}
+
+/* ---------- v3.9.0：系列積分表 ---------- */
+function readSeriesPointsFromForm() {
+    const input = document.getElementById('seriesPointsInput');
+    const best = document.getElementById('seriesCountBest');
+    const points = (input ? input.value : '').split(',')
+        .map((t) => Number(t.trim()))
+        .filter((n) => Number.isFinite(n) && n >= 0)
+        .slice(0, 50);
+    return {
+        points: points.length ? points : CMCompetitionState.DEFAULT_SERIES_POINTS.slice(),
+        count_best: Math.max(0, Math.min(50, Number(best ? best.value : 0) || 0))
+    };
+}
+
+function fillSeriesPointsForm(item) {
+    const input = document.getElementById('seriesPointsInput');
+    const best = document.getElementById('seriesCountBest');
+    const cfg = CMCompetitionState.normalizeSeriesPoints(item && item.series_points);
+    if (input) {
+        const isDefault = JSON.stringify(cfg.points) === JSON.stringify(CMCompetitionState.DEFAULT_SERIES_POINTS);
+        input.value = isDefault ? '' : cfg.points.join(',');
+    }
+    if (best) best.value = cfg.count_best || 0;
+}
+
 /* ---------- 報名名單與隊伍編排（管理員以上） ---------- */
 function setTeamMsg(message, type) {
     const el = document.getElementById('teamMsg');
@@ -2794,6 +2984,13 @@ async function exportCompetitionRegistrationsCsv() {
             簽到: r.attended_at ? `已簽到 ${String(r.attended_at).slice(11, 16)}` : '未簽到',
             現場代報名: r.onsite ? '是' : '',
             備註: r.note || '',
+            ...(() => {
+                const extra = {};
+                CMFormFields.normalizeFields(comp.form_fields).forEach((field) => {
+                    extra[field.label] = CMFormFields.answerText(field, (r.form_answers || {})[field.key]);
+                });
+                return extra;
+            })(),
             報名時間: String(r.created_at || '').slice(0, 16).replace('T', ' ')
         }));
         const csv = window.CMCSV
@@ -5182,7 +5379,13 @@ function resultsTableHtml(rows, highlightName) {
                             <td class="py-2 pr-3 text-slate-700 cm-break">${escapeHtml(String(r.display_name || r.username || '（未具名）'))}${highlightName && r.username === highlightName ? ' <span class="text-xs text-blue-600">（你）</span>' : ''}</td>
                             <td class="py-2 pr-3 text-slate-700">${escapeHtml(CMResults.displayScoreOrStatus(r))}</td>
                             <td class="py-2 pr-3 text-slate-500 text-xs">${escapeHtml(CMResults.statusLabel(r.status))}</td>
-                            <td class="py-2 text-xs text-slate-500 cm-break">${escapeHtml(r.note || '')}</td>
+                            <td class="py-2 text-xs text-slate-500 cm-break">${escapeHtml(r.note || '')}
+                                ${(() => {
+                                    // ★這個表格同時被成績表與名單用到，所以欄位定義只能靠報名自己找出來
+                                    const fields = registrationFieldsFor(r);
+                                    const text = CMFormFields.answersSummary(fields, r.form_answers);
+                                    return text ? `<div class="text-slate-600">${escapeHtml(text)}</div>` : '';
+                                })()}</td>
                         </tr>`).join('')}
                 </tbody>
             </table>
@@ -5753,6 +5956,7 @@ function competitionCardHtml(item) {
                 </button>
 
                 ${resultCardButtonsHtml(item)}
+                ${seriesReviewButtonsHtml(item)}
                 ${shareStatsButtonHtml(item)}
 
                 ${isAdminUser() ? `
@@ -5801,6 +6005,10 @@ async function handleFormSubmit(e) {
         requires_approval: !!document.getElementById('requires_approval').checked,
         waitlist_enabled: !!document.getElementById('waitlist_enabled').checked
     };
+
+    // v3.9.0：系列積分與報名表自訂欄位（表單裡的選填區塊）
+    payload.series_points = readSeriesPointsFromForm();
+    payload.form_fields = readFormFieldsFromEditor();
 
     const url = editingId ? `/api/competitions/${editingId}` : '/api/competitions';
     const method = editingId ? 'PUT' : 'POST';
@@ -5916,6 +6124,9 @@ function startEdit(id) {
     // v2.20.0：審核與候補開關
     document.getElementById('requires_approval').checked = !!item.requires_approval;
     document.getElementById('waitlist_enabled').checked = !!item.waitlist_enabled;
+    // v3.9.0：系列積分與自訂欄位
+    fillSeriesPointsForm(item);
+    fillFormFieldsEditor(item.form_fields);
     updateFormStatePreview();
     applyDateHints();   // v3.6.8：填入值後同步提示顯示
     renderTagPreview();
@@ -5979,6 +6190,10 @@ function resetForm() {
     applyDateHints();   // v3.6.8：填入值後同步提示顯示
     document.getElementById('competitionForm').reset();
     document.getElementById('editingId').value = '';
+    // v3.9.0：清空自訂欄位編輯器與積分表
+    draftFormFields = [];
+    renderFormFieldsEditor();
+    fillSeriesPointsForm(null);
     renderTagPreview();
     setSelectedTime('', 'start_hour', 'start_minute');
     setSelectedTime('', 'end_hour', 'end_minute');
@@ -6160,7 +6375,7 @@ function setLoginStep(step) {
 function completeLogin(data) {
     currentUser = data.user;
     localStorage.removeItem('auth_token');   // v3.5.0：權杖在 cookie，不留任何一份在 JS 手上
-    localStorage.setItem('competition_user', JSON.stringify(currentUser));
+    saveLocalUser();   // v3.9.0：只留 id／username／role
     setLoginStep('credentials');
     closeLoginModal();
     updateUIByRole();

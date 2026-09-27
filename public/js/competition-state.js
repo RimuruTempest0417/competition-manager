@@ -521,6 +521,140 @@
             .sort((a, b) => (b.signups - a.signups) || (b.visits - a.visits));
     }
 
+    /* ---------- v3.9.0：系列賽總積分 ----------
+       系列＝既有的週期性賽事（根賽事 + recurrence_parent_id 指過來的子場次），不新增欄位。
+       積分規則放在根賽事（competitions.series_points）：{ points: [10,8,6,…], count_best: 0 } */
+    const DEFAULT_SERIES_POINTS = [10, 8, 6, 5, 4, 3, 2, 1];
+
+    function normalizeSeriesPoints(raw) {
+        const src = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+        const list = Array.isArray(src.points) ? src.points : DEFAULT_SERIES_POINTS;
+        const points = list
+            .map((n) => Math.max(0, Math.min(999, Math.floor(Number(n) || 0))))
+            .slice(0, 50);
+        const countBest = Math.max(0, Math.min(50, Math.floor(Number(src.count_best) || 0)));
+        const result = {
+            points: points.length ? points : DEFAULT_SERIES_POINTS.slice(),
+            count_best: countBest
+        };
+        const note = String(src.note || '').trim().slice(0, 80);
+        if (note) result.note = note;      // 沒填就別存空字串，資料庫才看得出「沒設定」
+        return result;
+    }
+
+    function pointsForRank(config, rank) {
+        const cfg = normalizeSeriesPoints(config);
+        const place = Math.floor(Number(rank));
+        if (!Number.isFinite(place) || place < 1) return 0;
+        // 名次超出積分表 → 0 分（不要給「安慰分數」，那會讓排行榜看起來像每個人都得分）
+        return place <= cfg.points.length ? cfg.points[place - 1] : 0;
+    }
+
+    /* 系列總積分：rows 每一筆＝某人在某場的名次
+       rows: [{ competition_id, user_id, username, rank }]
+       options: { config, raceCount }（raceCount＝這個系列共幾場，用來顯示出席率） */
+    function seriesStandings(rows, options) {
+        const opts = options || {};
+        const config = normalizeSeriesPoints(opts.config);
+        const people = {};
+        (Array.isArray(rows) ? rows : []).forEach((row) => {
+            if (!row) return;
+            const key = String(row.user_id === undefined || row.user_id === null ? row.username : row.user_id);
+            if (!people[key]) {
+                people[key] = { user_id: row.user_id === undefined ? null : row.user_id, username: row.username || '', races: [], total: 0 };
+            }
+            const person = people[key];
+            const points = pointsForRank(config, row.rank);
+            person.races.push({
+                competition_id: row.competition_id,
+                name: row.competition_name || '',
+                date: row.date || '',
+                rank: Number.isFinite(Number(row.rank)) ? Number(row.rank) : null,
+                points
+            });
+            person.total += points;
+        });
+
+        const list = Object.keys(people).map((key) => {
+            const person = people[key];
+            person.races.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+            person.race_count = person.races.length;
+            // count_best>0：只取最好的 N 場計分（常見的系列賽規則），但每一場都還是列出來
+            if (config.count_best > 0 && person.races.length > config.count_best) {
+                const sorted = person.races.map((r) => r.points).sort((a, b) => b - a);
+                person.total = sorted.slice(0, config.count_best).reduce((sum, n) => sum + n, 0);
+                person.counted = config.count_best;
+            } else {
+                person.counted = person.races.length;
+            }
+            const ranks = person.races.map((r) => r.rank).filter((r) => Number.isFinite(r) && r > 0);
+            person.best_rank = ranks.length ? Math.min.apply(null, ranks) : null;
+            person.podiums = ranks.filter((r) => r <= 3).length;
+            return person;
+        }).sort((a, b) => (b.total - a.total) || ((a.best_rank || 999) - (b.best_rank || 999))
+            || String(a.username).localeCompare(String(b.username)));
+
+        list.forEach((person, index) => {
+            person.position = index + 1;
+            const prev = list[index - 1];
+            person.tie = !!(prev && prev.total === person.total && (prev.best_rank || 999) === (person.best_rank || 999));
+        });
+        return {
+            config,
+            race_count: Number(opts.raceCount) || 0,
+            rows: list
+        };
+    }
+
+    /* ---------- v3.9.0：賽事回顧報告（賽事結束後的成績單）----------
+       純加總，資料哪裡來由呼叫端決定（後端撈資料庫、前端畫畫面），這樣規則只有一份。 */
+    function competitionReview(input) {
+        const src = input || {};
+        const regs = (Array.isArray(src.registrations) ? src.registrations : [])
+            .filter((r) => r && r.is_deleted !== true);
+        const results = (Array.isArray(src.results) ? src.results : [])
+            .filter((r) => r && r.status !== 'hidden');
+
+        const byStatus = countByStatus(regs);
+        const attended = regs.filter((r) => r.attended_at).length;
+        const attendanceBase = regs.filter((r) => r.status === 'confirmed').length;
+
+        const podium = results
+            .filter((r) => Number.isFinite(Number(r.rank)) && Number(r.rank) > 0)
+            .sort((a, b) => Number(a.rank) - Number(b.rank))
+            .slice(0, 8)
+            .map((r) => ({ rank: Number(r.rank), username: r.username || '', score_text: r.score_text || '', note: r.note || '' }));
+
+        const finished = results.filter((r) => r.status === 'finished').length;
+
+        return {
+            name: (src.competition && src.competition.name) || '',
+            date: (src.competition && src.competition.date) || '',
+            location: (src.competition && src.competition.location) || '',
+            signups: {
+                total: regs.length,
+                confirmed: byStatus.confirmed || 0,
+                waitlisted: byStatus.waitlisted || 0,
+                pending: byStatus.pending || 0,
+                rejected: byStatus.rejected || 0
+            },
+            attendance: {
+                attended,
+                base: attendanceBase,
+                rate: attendanceBase ? Math.round((attended / attendanceBase) * 100) : null
+            },
+            results: {
+                count: results.length,
+                finished,
+                podium
+            },
+            share: (Array.isArray(src.shareRows) ? src.shareRows : []).slice(0, 8),
+            headline: `${(src.competition && src.competition.name) || '賽事'}：${regs.length} 人報名`
+                + (attendanceBase ? `、實到 ${attended} 人（${Math.round((attended / attendanceBase) * 100)}%）` : '')
+                + (results.length ? `、${results.length} 筆成績` : '')
+        };
+    }
+
     return {
         LABELS, TONES, evaluate, registrationState, timeline, parseTimestamp, parseLocalDateTime, fmtDate, fmtDateTime,
         competitionNotice,
@@ -528,6 +662,8 @@
         REG_STATUS_LABELS, REG_STATUS_TONES, countByStatus, normalizeRegStatus, reviewFlags,
         // v3.8.2：分享來源追蹤
         SHARE_SOURCES, SHARE_SOURCE_LABELS, parseShareSource, shareSourceLabel, parseDeepLink, shareStatsSummary,
+        // v3.9.0：系列總積分與賽事回顧
+        DEFAULT_SERIES_POINTS, normalizeSeriesPoints, pointsForRank, seriesStandings, competitionReview,
         decideRegistration, waitlistQueue, nextWaitlist, promotionStatus,
         // v2.21.0：指定遞補與候補順位手動調整
         waitlistPosition, planWaitlistOrder, planPromotion, waitlistOrderNum,

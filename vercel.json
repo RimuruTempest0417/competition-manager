@@ -40,6 +40,23 @@
                     "value": "strict-origin-when-cross-origin"
                 }
             ]
+        },
+        {
+            "source": "/(js|css|img)/(.*)",
+            "headers": [
+                {
+                    "key": "Access-Control-Allow-Origin",
+                    "value": "https://competition-manager-hazel.vercel.app"
+                },
+                {
+                    "key": "Cross-Origin-Resource-Policy",
+                    "value": "same-origin"
+                },
+                {
+                    "key": "X-Content-Type-Options",
+                    "value": "nosniff"
+                }
+            ]
         }
     ]
 }
