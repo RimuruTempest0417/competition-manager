@@ -143,9 +143,27 @@ const logout = async (browser) => {
             '面板裡有輸入報到碼的欄位（iPhone 等沒有掃碼功能的裝置靠這條路）');
 
         /* ---------- 2. 沒有掃碼能力的裝置 → 老實說明，不開一個沒用的畫面 ---------- */
+        // v3.9.1：相機在無頭瀏覽器裡不穩定（有時直接 NotAllowedError、有時延遲很久），
+        // 檢查會因此偶發紅燈。這裡自己裝一個「一定失敗」的相機（可控制延遲），
+        // 要驗的是「失敗之後畫面告訴使用者什麼」，不是這台機器有沒有鏡頭。
+        const STUB_CAMERA = `
+            window.__cameraCalls = 0;
+            window.__cameraDelay = window.__cameraDelay || 300;
+            navigator.mediaDevices.getUserMedia = (constraints) => {
+                window.__cameraCalls++;
+                const delay = window.__cameraDelay;
+                return new Promise((resolve, reject) => setTimeout(() => {
+                    const err = new Error('Permission denied（檢查用的假相機）');
+                    err.name = 'NotAllowedError';
+                    reject(err);
+                }, delay));
+            };
+            return true;
+        `;
+        await browser.evaluate(STUB_CAMERA);
         const hasDetector = await browser.evaluate(`return typeof window.BarcodeDetector === 'function';`);
         await browser.evaluate(`document.getElementById('attendanceScanBtn').click(); return true;`);
-        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((r) => setTimeout(r, 700));
         if (!hasDetector) {
             const hint = await scanHint();
             check(/沒有掃碼功能/.test(hint) && /輸入 8 碼/.test(hint),
@@ -154,6 +172,8 @@ const logout = async (browser) => {
                 '沒有掃碼能力時不會打開一個空的相機畫面');
         } else {
             check(true, `這台裝置有 BarcodeDetector（${await browser.evaluate('return navigator.userAgent.slice(0, 40);')}…）`);
+            check(/拿不到相機權限/.test(await scanHint()),
+                '有掃碼能力但相機被拒 → 說「請允許相機後再試，或改用輸入報到碼」（不假裝掃得到）');
         }
 
         // 這台 Mac 的 Chrome 有 BarcodeDetector，所以「沒有這個 API」的那條路不會被走到；
@@ -163,12 +183,38 @@ const logout = async (browser) => {
             document.getElementById('attendanceScanBtn').click();
             return true;
         `);
-        await new Promise((r) => setTimeout(r, 500));
+        await browser.waitFor(`/沒有掃碼功能/.test((document.getElementById('attendanceScanHint') || {}).textContent || '')`, { timeout: 5000 })
+            .catch(() => { /* 逾時就讓下面的斷言報紅，附上實際文字 */ });
         const hintIos = await scanHint();
         check(/沒有掃碼功能/.test(hintIos) && /輸入 8 碼/.test(hintIos),
             `★模擬 iPhone（沒有 BarcodeDetector）時明確告知改用輸入報到碼（${hintIos.slice(0, 34)}…）`);
         check(await browser.evaluate(`return document.getElementById('attendanceScanBox').classList.contains('hidden');`),
             '模擬 iPhone 時不會打開一個空的相機畫面（不給按了沒反應的介面）');
+
+        /* ---------- 2b. ★v3.9.1：慢的相機失敗不可以蓋掉後來的畫面 ----------
+         * 現場真的會發生：按了掃碼 → 相機還在要權限 → 使用者改按別的方式。
+         * 這時那次「慢的失敗」回來，如果直接寫提示，畫面就會顯示與現狀不符的訊息
+         * （v3.9.0 實測就是這樣：整套連跑時這條一路紅）。 */
+        await browser.evaluate(`
+            window.__cameraDelay = 900;
+            window.BarcodeDetector = function () { return { detect: async () => [] }; };
+            document.getElementById('attendanceScanBtn').click();   // 開始等相機（900ms 後才會失敗）
+            return true;
+        `);
+        await new Promise((r) => setTimeout(r, 150));
+        await browser.evaluate(`
+            window.BarcodeDetector = undefined;
+            document.getElementById('attendanceScanBtn').click();   // 使用者等不及 → 這台裝置沒有掃碼
+            return true;
+        `);
+        await new Promise((r) => setTimeout(r, 1400));              // 讓那個慢的失敗回來
+        const hintLate = await scanHint();
+        check(/沒有掃碼功能/.test(hintLate),
+            `★慢的相機失敗回來後，提示仍是「改用輸入報到碼」（實際：${hintLate.slice(0, 30)}…）`);
+        check(await browser.evaluate(`return document.getElementById('attendanceScanBox').classList.contains('hidden');`),
+            '★慢的相機失敗不會把空的相機畫面打開');
+        check(await browser.evaluate(`return window.__cameraCalls >= 1;`),
+            `檢查用的假相機真的被呼叫過（${await browser.evaluate('return window.__cameraCalls;')} 次）`);
 
         /* ---------- 3. 手打 8 碼簽到（含小寫與空白，模擬現場手打）---------- */
         await browser.evaluate(`

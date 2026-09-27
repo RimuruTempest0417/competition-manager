@@ -212,7 +212,13 @@
                     return `<tr class="border-t"><td class="py-1 pr-3 font-medium">${escapeHtml(row.username)}</td>
                         ${(data.races || []).map((race) => {
                             const hit = byRace[String(race.id)];
-                            return `<td class="py-1 pr-3">${hit && hit.rank ? `第 ${hit.rank} 名 <span class="text-slate-400">+${hit.points}</span>` : '<span class="text-slate-300">—</span>'}</td>`;
+                            if (!hit) return '<td class="py-1 pr-3"><span class="text-slate-300">—</span></td>';
+                            if (hit.rank) return `<td class="py-1 pr-3">第 ${hit.rank} 名 <span class="text-slate-400">+${hit.points}</span></td>`;
+                            // v3.9.1：有出賽但沒有名次（未完賽／未出賽／取消資格）→ 明講狀態並標 0 分，
+                            // 不要顯示成「—」（那會讓人以為他沒報名這場）
+                            const label = (typeof CMResults !== 'undefined' && CMResults.statusLabel)
+                                ? CMResults.statusLabel(hit.status) : (hit.status || '未完成');
+                            return `<td class="py-1 pr-3">${escapeHtml(label)} <span class="text-slate-400">+0</span></td>`;
                         }).join('')}
                         <td class="py-1 text-right font-bold">${row.total}</td></tr>`;
                 }).join('')}</tbody></table></div></details>`);

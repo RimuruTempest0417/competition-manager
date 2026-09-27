@@ -26,6 +26,10 @@
     ];
     const DEFAULT_STATUS = 'other';
     const RANKED_STATUS = 'finished';
+    /* v3.9.1：這些狀態＝有出賽但沒有名次（超表），系列積分要算 0 分並保留紀錄，
+       不能因為「沒有名次」就整筆消失——否則系列賽裡會看不到這個人出賽過。 */
+    const NON_FINISH_STATUSES = ['dnf', 'dns', 'dsq'];
+    const isNonFinish = (status) => NON_FINISH_STATUSES.indexOf(normalizeStatus(status)) !== -1;
     const SCORE_MAX = 60;
     const NOTE_MAX = 200;
     const SUMMARY_MAX = 500;
@@ -213,7 +217,7 @@
     }
 
     /* ---------- 公布前檢查 ----------
-     * approved：已核准的報名陣列（{id,user_id,username}）
+     * approved：已核准的報名陣列（{id, user_id, user}）
      * results：目前登錄的成績陣列
      * 回傳提示清單：缺成績的人、重複名次、名次跳號——都只是提示，不擋公布。
      */
@@ -330,7 +334,7 @@
     return {
         RESULT_STATUSES, DEFAULT_STATUS, RANKED_STATUS,
         SCORE_MAX, NOTE_MAX, SUMMARY_MAX,
-        isValidStatus, normalizeStatus, statusLabel,
+        isValidStatus, normalizeStatus, statusLabel, NON_FINISH_STATUSES, isNonFinish,
         normalizeScoreText, displayScore, displayScoreOrStatus,
         parseScoreValue, isRankable, autoRank,
         medalFor, formatRank, resultLine, compareResults, sortResults,

@@ -1507,7 +1507,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     localStorage.removeItem('auth_token');   // v3.5.0：舊版把權杖存在這裡，升級後一律清掉
-    const savedUser = localStorage.getItem('competition_user');   // v3.9.0：只會有 id／username／role
+    const savedUser = localStorage.getItem('competition_user');   // v3.9.0：只會有 id／顯示名稱／role
     if (savedUser) {
         // 先樂觀套用（畫面不用等），真正的權威是 cookie → 立刻向伺服器確認一次
         // v3.9.0：舊資料可能存了整包 user → 讀出來也過一次白名單，下一次寫入就自動縮小
@@ -2388,6 +2388,9 @@ function myRegStatusBadge(r) {
  */
 let cmScanStream = null;
 let cmScanTimer = null;
+/* v3.9.1：每次啟動／停止都換一個號碼。相機是非同步的，前一次沒拿到的鏡頭或用不到的錯誤
+   回來時可能已經換了狀態——沒有這個號碼就會把新的提示蓋掉（掃碼頁面顯示的訊息與實際狀態不符）。 */
+let cmScanToken = 0;
 
 function scanSupported() {
     return typeof window.BarcodeDetector === 'function'
@@ -2428,6 +2431,7 @@ async function submitCheckinCode(rawCode) {
 }
 
 function stopCheckinScan() {
+    cmScanToken++;                                        // v3.9.1：作廢「還在等相機」的那一次啟動
     if (cmScanTimer) { clearTimeout(cmScanTimer); cmScanTimer = null; }
     if (cmScanStream) {
         try { cmScanStream.getTracks().forEach((track) => track.stop()); } catch (err) { /* 忽略 */ }
@@ -2440,13 +2444,23 @@ function stopCheckinScan() {
 }
 
 async function startCheckinScan() {
+    const token = ++cmScanToken;
+    const noScanHint = '這台裝置的瀏覽器沒有掃碼功能（iPhone／Safari 都沒有）→ 請直接輸入 8 碼報到碼，或請對方把手機給你手動核對。';
     if (!scanSupported()) {
-        setScanHint('這台裝置的瀏覽器沒有掃碼功能（iPhone／Safari 都沒有）→ 請直接輸入 8 碼報到碼，或請對方把手機給你手動核對。');
+        setScanHint(noScanHint);
         return;
     }
     try {
-        cmScanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (token !== cmScanToken) {                      // 等待期間被停止 → 拿到的鏡頭要關掉，不要留著開
+            try { stream.getTracks().forEach((track) => track.stop()); } catch (err) { /* 忽略 */ }
+            return;
+        }
+        cmScanStream = stream;
     } catch (err) {
+        if (token !== cmScanToken) return;                // 舊的失敗不要蓋掉現在的畫面
+        // 等到相機失敗才發現這台裝置其實不支援掃碼（例如同時拔掉 API 的模擬情境）→ 仍然要說清楚能怎麼做
+        if (!scanSupported()) { setScanHint(noScanHint); return; }
         setScanHint(`拿不到相機權限（${err && err.name ? err.name : '未知'}）：請允許相機後再試，或改用輸入報到碼。`);
         return;
     }
@@ -6375,7 +6389,7 @@ function setLoginStep(step) {
 function completeLogin(data) {
     currentUser = data.user;
     localStorage.removeItem('auth_token');   // v3.5.0：權杖在 cookie，不留任何一份在 JS 手上
-    saveLocalUser();   // v3.9.0：只留 id／username／role
+    saveLocalUser();   // v3.9.0：只留 id／顯示名稱／role
     setLoginStep('credentials');
     closeLoginModal();
     updateUIByRole();

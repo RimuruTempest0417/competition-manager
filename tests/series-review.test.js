@@ -47,6 +47,31 @@ test('count_best：只取最好的 N 場計分，但每一場還是都要列出�
     assert.strictEqual(ming.races.length, 2, '兩場的出賽紀錄都要留著');
 });
 
+test('★v3.9.1：超表（未完賽／未出賽／取消資格）＝0 分，而且要保留那一場的紀錄與狀態', () => {
+    const rows = [
+        { competition_id: 1, user_id: 7, username: '小美', rank: null, status: 'dnf', date: '2026-09-01' },
+        { competition_id: 2, user_id: 7, username: '小美', rank: 1, status: 'finished', date: '2026-09-08' }
+    ];
+    const st = S.seriesStandings(rows, { config: { points: [10, 8] }, raceCount: 2 });
+    const mei = st.rows.find((r) => r.username === '小美');
+    assert.strictEqual(mei.total, 10, '超表那場 0 分，另一場第 1 名 10 分');
+    assert.strictEqual(mei.race_count, 2, '未完賽那一場也要算「出賽過」（出席率才對）');
+    const dnf = mei.races.find((r) => r.competition_id === 1);
+    assert.strictEqual(dnf.points, 0);
+    assert.strictEqual(dnf.rank, null);
+    assert.strictEqual(dnf.status, 'dnf', '狀態要帶到前端，才顯示得出「未完賽」而不是空白');
+});
+
+test('★v3.9.1：取最好 N 場時，超表那場（0 分）不會被當成「最好的一場」', () => {
+    const rows = [
+        { competition_id: 1, user_id: 7, username: '小美', rank: null, status: 'dns', date: '2026-09-01' },
+        { competition_id: 2, user_id: 7, username: '小美', rank: 2, status: 'finished', date: '2026-09-08' }
+    ];
+    const st = S.seriesStandings(rows, { config: { points: [10, 8], count_best: 1 }, raceCount: 2 });
+    assert.strictEqual(st.rows[0].total, 8, '只算最好的那場（第 2 名 8 分），不是 0 分那場');
+    assert.strictEqual(st.rows[0].races.length, 2, '兩場都還是要列出來');
+});
+
 test('沒有成績的系列回得出空排行（不是錯誤）', () => {
     const st = S.seriesStandings([], { config: null, raceCount: 3 });
     assert.deepStrictEqual(st.rows, []);

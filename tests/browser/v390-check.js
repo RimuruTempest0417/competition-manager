@@ -60,14 +60,17 @@ function seedState() {
                 { id: 3, competition_id: 703, user_id: 5, username: '小美', status: 'waitlisted', is_deleted: false, attended_at: null, created_at: daysAgo(31) },
                 { id: 11, competition_id: 700, user_id: 3, username: '阿明', status: 'confirmed', is_deleted: false, created_at: daysAgo(9) },
                 { id: 12, competition_id: 701, user_id: 4, username: '阿華', status: 'confirmed', is_deleted: false, created_at: daysAgo(9) },
-                { id: 13, competition_id: 701, user_id: 3, username: '阿明', status: 'confirmed', is_deleted: false, created_at: daysAgo(9) }
+                { id: 13, competition_id: 701, user_id: 3, username: '阿明', status: 'confirmed', is_deleted: false, created_at: daysAgo(9) },
+                { id: 14, competition_id: 702, user_id: 5, username: '小美', status: 'confirmed', is_deleted: false, created_at: daysAgo(9) }
             ],
             competition_results: [
                 { id: 1, competition_id: 703, registration_id: 1, username: '阿明', rank: 1, status: 'finished', score_text: '12.50' },
                 { id: 2, competition_id: 703, registration_id: 2, username: '阿華', rank: 2, status: 'finished', score_text: '11.75' },
                 { id: 21, competition_id: 700, registration_id: 11, username: '阿明', rank: 1, status: 'finished' },
                 { id: 22, competition_id: 701, registration_id: 12, username: '阿華', rank: 1, status: 'finished' },
-                { id: 23, competition_id: 701, registration_id: 13, username: '阿明', rank: 2, status: 'finished' }
+                { id: 23, competition_id: 701, registration_id: 13, username: '阿明', rank: 2, status: 'finished' },
+                // v3.9.1：有出賽但未完賽（超表）→ 要在榜上看到「未完賽 +0」，不能整筆消失
+                { id: 24, competition_id: 702, registration_id: 14, username: '小美', rank: null, status: 'dnf' }
             ],
             audit_logs: [], error_logs: [], app_settings: [], push_subscriptions: [], share_visits: []
         },
@@ -150,6 +153,20 @@ const login = async (browser, username, password) => {
         check(seriesText.indexOf('阿明') >= 0 && seriesText.indexOf('阿華') >= 0, '兩位選手都在榜上');
         check(/18/.test(seriesText), '阿明 10（第1站冠軍）＋8（第2站亞軍）＝18 分', seriesText.slice(0, 120));
         check(seriesText.indexOf('共 3 場') >= 0, '系列場次數正確（3 場）');
+        // v3.9.1：超表（未完賽）＝0 分，但仍然要出現在排行與每一場的明細裡
+        check(seriesText.indexOf('小美') >= 0, '★v3.9.1：只有未完賽紀錄的人也要在榜上（不是整筆消失）', seriesText.slice(0, 200));
+        const dnfRow = await browser.evaluate(`
+            const details = document.querySelectorAll('#seriesBody details');
+            if (!details.length) return '（沒有每一場的明細區塊）';
+            details[0].open = true;
+            // 只看明細表（排行表在最外層，那一列只有總分，不會有「未完賽」）
+            const rows = Array.from(details[0].querySelectorAll('table tbody tr'));
+            const hit = rows.find((tr) => tr.textContent.indexOf('小美') >= 0);
+            if (!hit) return '（明細表裡找不到小美）';
+            return hit.textContent.split(/\s+/).filter(Boolean).join(' ');
+        `);
+        check(dnfRow.indexOf('未完賽') >= 0 && dnfRow.indexOf('+0') >= 0,
+            `★v3.9.1：未完賽那一場顯示「未完賽 +0」（不是空白或「—」）`, dnfRow.slice(0, 120));
 
         /* ④ 報名彈窗：自訂欄位畫得出來、必填會擋、選項來自設定 */
         await browser.evaluate(`CMReview.closeSeries(); return true;`);

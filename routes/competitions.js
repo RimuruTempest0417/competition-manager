@@ -7,6 +7,7 @@
 const CMCompetitionState = require('../public/js/competition-state');
 const CMPaging = require('../public/js/paging');                  // v3.0.0：分頁規則的唯一真實來源（前後端共用）
 const CMVenue = require('../public/js/venue');                    // v2.27.0：地圖連結規則的唯一真實來源
+const CMResults = require('../public/js/results');                // v3.1.0：成績狀態的唯一真實來源（v3.9.1 起系列積分要用）
 
 module.exports = function registerCompetitionsRoutes(app, ctx) {
     const { COMPETITIONS_PAGE_MAX, MIGRATION_HINT, SCHEDULE_HINT, cleanText, fetchCompetition, logPushEvent, notifyUser, scheduleSchemaReady, RECURRENCE_HINT, RECURRENCE_RULE_LABELS, TEAM_HINT, buildDuplicatePayload, columnExists, competitionState, copySchemaReady, createNextOccurrence, getTrashCompetitionsHandler, hasRegistrationWindowContent, hasReviewFlagsContent, hasTaxonomyContent, hasTeamFieldsContent, isMissingColumnError, logAudit, logErrorToDb, mapUrlSchemaReady, normalizeCategory, normalizeRecurrenceRule, normalizeRegistrationWindow, normalizeReviewFlags, normalizeTags, normalizeTeamFields, recurrenceSchemaReady, registrationReviewSchemaReady, registrationWindowSchemaReady, requireAdmin, requireSuperAdmin, sanitizeInput, serverState, shouldIncludeRegistrationWindow, shouldIncludeTaxonomy, shouldIncludeTeamFields, supabase, taxonomySchemaReady, teamSchemaReady, optionalAuth, ADMIN_ROLES, allowPublicWrite, shareVisitsSchemaReady, shareSourceSchemaReady, SHARE_SOURCE_HINT, V390_HINT, seriesPointsSchemaReady, formFieldsSchemaReady, normalizeSeriesPointsPayload, normalizeFormFieldsPayload, hasSeriesPointsContent, hasFormFieldsContent } = ctx;
@@ -307,17 +308,25 @@ app.get('/api/series/:id/standings', async (req, res) => {
 
         const rows = (resultRows || [])
             .filter((row) => raceById[String(row.competition_id)])
-            .filter((row) => Number.isFinite(Number(row.rank)) && Number(row.rank) > 0 && row.status !== 'hidden')
+            .filter((row) => row.status !== 'hidden')
+            // v3.9.1：有名次的照算；**沒有名次但狀態是未完賽／未出賽／取消資格**的也要留下來。
+            // 超表在系列賽規則裡就是 0 分，整筆濾掉會讓「這個人這場有出賽」憑空消失（出席場次也算不出來）。
+            .filter((row) => {
+                const rank = Number(row.rank);
+                return (Number.isFinite(rank) && rank > 0) || CMResults.isNonFinish(row.status);
+            })
             .map((row) => {
                 const reg = regById[String(row.registration_id)] || {};
                 const race = raceById[String(row.competition_id)];
+                const rank = Number(row.rank);
                 return {
                     competition_id: row.competition_id,
                     competition_name: race.name || '',
                     date: race.date || '',
                     user_id: reg.user_id === undefined ? null : reg.user_id,
                     username: reg.username || row.username || '',
-                    rank: Number(row.rank)
+                    rank: (Number.isFinite(rank) && rank > 0) ? rank : null,
+                    status: CMResults.normalizeStatus(row.status)
                 };
             });
 

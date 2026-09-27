@@ -186,6 +186,28 @@ test('系列總積分：跨場次累加，並帶出每一場的名次', async ()
     assert.strictEqual(ming.races.length, 3);
 });
 
+test('★v3.9.1：只有超表紀錄的人也要出現在系列排行（0 分），不能整筆消失', async () => {
+    state.tables.registrations.push(
+        { id: 913, competition_id: 702, user_id: 5, username: '小美', status: 'confirmed', is_deleted: false }
+    );
+    state.tables.competition_results.push(
+        { id: 21, competition_id: 702, registration_id: 913, username: '小美', rank: null, status: 'dnf' },
+        // 「有 rank 但狀態是 hidden」= 主辦把它藏起來，仍然不可以洩漏到排行
+        { id: 22, competition_id: 702, registration_id: 913, username: '小美', rank: 1, status: 'hidden' }
+    );
+    const res = await fetch(`${base}/api/series/700/standings`);
+    assert.strictEqual(res.status, 200, JSON.stringify(await res.clone().json()));
+    const body = await res.json();
+    const mei = body.standings.find((s) => s.username === '小美');
+    assert.ok(mei, '只有未完賽紀錄的人也要出現');
+    assert.strictEqual(mei.total, 0, '超表＝0 分');
+    assert.strictEqual(mei.races.length, 1, '被隱藏的成績不算、超表那一場要算');
+    assert.strictEqual(mei.races[0].status, 'dnf');
+    assert.strictEqual(mei.races[0].rank, null);
+    assert.strictEqual(mei.races[0].points, 0);
+    assert.strictEqual(mei.races[0].name, '秋季系列 第三站', '要知道是哪一場');
+});
+
 test('系列總積分：從子場次查也回同一個系列（使用者是從哪一場點進來的都一樣）', async () => {
     const res = await fetch(`${base}/api/series/701/standings`);
     assert.strictEqual(res.status, 200);

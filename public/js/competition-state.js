@@ -551,7 +551,7 @@
     }
 
     /* 系列總積分：rows 每一筆＝某人在某場的名次
-       rows: [{ competition_id, user_id, username, rank }]
+       rows: [{ competition_id, user_id, user, rank }]（user＝報名者顯示名稱）
        options: { config, raceCount }（raceCount＝這個系列共幾場，用來顯示出席率） */
     function seriesStandings(rows, options) {
         const opts = options || {};
@@ -565,11 +565,14 @@
             }
             const person = people[key];
             const points = pointsForRank(config, row.rank);
+            // ★名次一定要是「正整數」才算有名次：Number(null) 是 0，直接轉會讓超表的人變成「第 0 名」
+            const rankNum = (row.rank === null || row.rank === undefined || row.rank === '') ? NaN : Number(row.rank);
             person.races.push({
                 competition_id: row.competition_id,
                 name: row.competition_name || '',
                 date: row.date || '',
-                rank: Number.isFinite(Number(row.rank)) ? Number(row.rank) : null,
+                rank: (Number.isFinite(rankNum) && rankNum > 0) ? rankNum : null,
+                status: row.status || '',     // v3.9.1：沒有名次時前端才知道要顯示「未完賽」還是「—」
                 points
             });
             person.total += points;
